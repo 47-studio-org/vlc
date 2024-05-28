@@ -75,6 +75,7 @@ typedef struct
     vlc_tick_t  i_pcr_inc;
 
     bool b_start_record;
+    char *record_dir_path;
 } demux_sys_t;
 
 static int Demux  ( demux_t *p_demux );
@@ -128,6 +129,7 @@ static int Open( vlc_object_t *p_this )
     p_sys->i_pcr_inc = 0;
 
     p_sys->b_start_record = false;
+    p_sys->record_dir_path = NULL;
 
     return VLC_SUCCESS;
 }
@@ -140,6 +142,7 @@ static void Close( vlc_object_t *p_this )
     demux_t     *p_demux = (demux_t*)p_this;
     demux_sys_t *p_sys = p_demux->p_sys;
 
+    free( p_sys->record_dir_path );
     free( p_sys );
 }
 
@@ -172,7 +175,8 @@ static int Demux( demux_t *p_demux )
             if( p_sys->b_start_record )
             {
                 /* Enable recording once synchronized */
-                vlc_stream_Control( p_demux->s, STREAM_SET_RECORD_STATE, true, "nsv" );
+                vlc_stream_Control( p_demux->s, STREAM_SET_RECORD_STATE, true,
+                                    p_sys->record_dir_path, "nsv" );
                 p_sys->b_start_record = false;
             }
 
@@ -183,7 +187,7 @@ static int Demux( demux_t *p_demux )
         else if( GetWLE( p_peek ) == 0xbeef )
         {
             /* Next frame of the current NSVs chunk */
-            if( vlc_stream_Read( p_demux->s, NULL, 2 ) < 2 )
+            if( vlc_stream_Read( p_demux->s, NULL, 2 ) != 2 )
             {
                 msg_Warn( p_demux, "cannot read" );
                 return VLC_DEMUXER_EOF;
@@ -237,7 +241,7 @@ static int Demux( demux_t *p_demux )
                     if( p_sys->p_sub )
                         es_out_Control( p_demux->out, ES_OUT_SET_ES, p_sys->p_sub );
                 }
-                if( vlc_stream_Read( p_demux->s, NULL, 2 ) < 2 )
+                if( vlc_stream_Read( p_demux->s, NULL, 2 ) != 2 )
                     return VLC_DEMUXER_EOF;
 
                 if( ( p_frame = vlc_stream_Block( p_demux->s, i_aux - 2 ) ) )
@@ -267,7 +271,7 @@ static int Demux( demux_t *p_demux )
             else
             {
                 /* We skip this extra data */
-                if( vlc_stream_Read( p_demux->s, NULL, i_aux ) < i_aux )
+                if( vlc_stream_Read( p_demux->s, NULL, i_aux ) != i_aux )
                 {
                     msg_Warn( p_demux, "cannot read" );
                     return VLC_DEMUXER_EOF;
@@ -408,13 +412,24 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_SET_RECORD_STATE:
+        {
             b_bool = (bool)va_arg( args, int );
+            const char *dir_path = va_arg( args, const char * );
+
+            free( p_sys->record_dir_path );
+            p_sys->record_dir_path = NULL;
 
             if( !b_bool )
                 vlc_stream_Control( p_demux->s, STREAM_SET_RECORD_STATE, false );
+            else if( dir_path != NULL )
+            {
+                p_sys->record_dir_path = strdup(dir_path);
+                if( p_sys->record_dir_path == NULL )
+                    return VLC_ENOMEM;
+            }
             p_sys->b_start_record = b_bool;
             return VLC_SUCCESS;
-
+        }
 
         case DEMUX_SET_TIME:
             return VLC_EGENERIC;
@@ -449,8 +464,7 @@ static int ReSynch( demux_t *p_demux )
             if( !memcmp( p_peek, "NSVf", 4 )
              || !memcmp( p_peek, "NSVs", 4 ) )
             {
-                if( i_skip > 0
-                 && vlc_stream_Read( p_demux->s, NULL, i_skip ) < i_skip )
+                if( i_skip > 0 && vlc_stream_Read( p_demux->s, NULL, i_skip ) != i_skip )
                     return VLC_EGENERIC;
                 return VLC_SUCCESS;
             }
@@ -458,7 +472,7 @@ static int ReSynch( demux_t *p_demux )
             i_skip++;
         }
 
-        if( vlc_stream_Read( p_demux->s, NULL, i_skip ) < i_skip )
+        if( vlc_stream_Read( p_demux->s, NULL, i_skip ) != i_skip )
             break;
     }
     return VLC_EGENERIC;
@@ -487,8 +501,7 @@ static int ReadNSVf( demux_t *p_demux )
     if( i_header_size > SSIZE_MAX )
         return VLC_EGENERIC;
 #endif
-    if ( vlc_stream_Read( p_demux->s, NULL, i_header_size )
-                                 < (ssize_t)i_header_size )
+    if ( vlc_stream_Read( p_demux->s, NULL, i_header_size ) != i_header_size )
          return VLC_EGENERIC;
     return VLC_SUCCESS;
 }

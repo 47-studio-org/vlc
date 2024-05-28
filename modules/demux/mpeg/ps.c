@@ -151,7 +151,7 @@ static int OpenCommon( vlc_object_t *p_this, bool b_force )
     const uint8_t *p_peek;
     ssize_t i_peek = 0;
     ssize_t i_offset = 0;
-    ssize_t i_skip = 0;
+    uint64_t i_skip = 0;
     unsigned i_max_packets = PS_PACKET_PROBE;
     int format = MPEG_PS;
     int i_mux_rate = 0;
@@ -220,7 +220,7 @@ static int OpenCommon( vlc_object_t *p_this, bool b_force )
         i_offset += i_pessize;
     }
 
-    if( i_skip > 0 && !p_demux->b_preparsing &&
+    if( i_skip && !p_demux->b_preparsing &&
         vlc_stream_Read( p_demux->s, NULL, i_skip ) != i_skip )
         return VLC_EGENERIC;
 
@@ -804,7 +804,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             {
                 vlc_tick_t i_time = va_arg( args, vlc_tick_t );
                 i_time -= p_sys->tk[p_sys->i_time_track_index].i_first_pts;
-                return demux_Control( p_demux, DEMUX_SET_POSITION, (double) i_time / p_sys->i_length );
+                return demux_SetPosition( p_demux, (double) i_time / p_sys->i_length, false, true );
             }
             break;
         }
@@ -865,8 +865,8 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
 static int ps_pkt_resynch( stream_t *s, int format, bool b_pack )
 {
     const uint8_t *p_peek;
-    int     i_peek;
-    int     i_skip;
+    ssize_t      i_peek;
+    unsigned int i_skip;
 
     if( vlc_stream_Peek( s, &p_peek, 4 ) < 4 )
     {
@@ -909,14 +909,14 @@ static int ps_pkt_resynch( stream_t *s, int format, bool b_pack )
             p_peek[3] >= PS_STREAM_ID_END_STREAM &&
             ( !b_pack || p_peek[3] == PS_STREAM_ID_PACK_HEADER ) )
         {
-            return vlc_stream_Read( s, NULL, i_skip ) == i_skip ? 1 : -1;
+            return vlc_stream_Read( s, NULL, i_skip ) != i_skip ? -1 : 1;
         }
 
         p_peek++;
         i_peek--;
         i_skip++;
     }
-    return vlc_stream_Read( s, NULL, i_skip ) == i_skip ? 0 : -1;
+    return vlc_stream_Read( s, NULL, i_skip ) != i_skip ? -1 : 0;
 }
 
 static block_t *ps_pkt_read( stream_t *s )

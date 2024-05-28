@@ -593,7 +593,7 @@ hxxx_helper_get_annexb_config( const struct hxxx_helper_nal *pp_nal_lists[],
 {
     static const uint8_t annexb_startcode[] = { 0x00, 0x00, 0x00, 0x01 };
 
-    block_t *p_block_list = NULL, *p_current;
+    block_t *p_block_list = NULL, *p_current = NULL;
     for (size_t i = 0; i < i_lists_size; ++i)
     {
         size_t i_nals_size = 0;
@@ -722,7 +722,7 @@ h264_helper_get_avcc_config(const struct hxxx_helper *hh)
 static block_t *
 hevc_helper_get_hvcc_config(const struct hxxx_helper *hh)
 {
-    struct hevc_dcr_params params = {};
+    struct hevc_dcr_params params = { .i_vps_count = 0 };
     const struct hxxx_helper_nal *p_nal;
 
     HELPER_FOREACH_NAL(p_nal, hh->hevc.vps_list, hh->hevc.i_vps_count,

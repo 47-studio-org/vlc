@@ -35,7 +35,6 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (int)appendItemToPlaylist:(VLCMediaLibraryMediaItem *)mediaItem playImmediately:(BOOL)playImmediately;
 - (int)appendItemsToPlaylist:(NSArray <VLCMediaLibraryMediaItem *> *)mediaItemArray playFirstItemImmediately:(BOOL)playFirstItemImmediately;
-- (void)showItemInFinder:(VLCMediaLibraryMediaItem *)mediaItem;
 
 - (int)addFolderWithFileURL:(NSURL *)fileURL;
 - (int)banFolderWithFileURL:(NSURL *)fileURL;
@@ -50,6 +49,12 @@ NS_ASSUME_NONNULL_BEGIN
  * @param descending sort ascending or descending.
  */
 - (void)sortByCriteria:(enum vlc_ml_sorting_criteria_t)sortCriteria andDescending:(bool)descending;
+
+/**
+ * @brief Filter the entire library representation based on:
+ * @param filterString the string that will be used to filter items
+ */
+- (void)filterByString:(NSString*)filterString;
 
 /**
  * Initially, the library is unsorted until the user decides to do so

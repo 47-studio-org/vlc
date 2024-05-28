@@ -1,7 +1,6 @@
 --[[
- $Id$
 
- Copyright © 2007-2022 the VideoLAN team
+ Copyright © 2007-2023 the VideoLAN team
 
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -114,8 +113,18 @@ end
 -- Descramble the "n" parameter using the javascript code that does that
 -- in the web page
 function n_descramble( nparam, js )
-    if not js then
-        return nil
+    if not js.stream then
+        if not js.url then
+            return nil
+        end
+        js.stream = vlc.stream( js_url )
+        if not js.stream then
+            -- Retry once for transient errors
+            js.stream = vlc.stream( js_url )
+            if not js.stream then
+                return nil
+            end
+        end
     end
 
     -- Look for the descrambler function's name
@@ -371,7 +380,7 @@ function n_descramble( nparam, js )
     -- as such into a table.
     local data = {}
     datac = datac..","
-    while datac ~= "" do
+    while datac and datac ~= "" do
         local el = nil
         -- Transformation functions
         if string.match( datac, "^function%(" ) then
@@ -397,6 +406,7 @@ function n_descramble( nparam, js )
                el == trans.compound1.func or
                el == trans.compound2.func then
                 datac = string.match( datac, '^.-},e%.split%(""%)%)},(.*)$' )
+                        or string.match( datac, "^.-},(.*)$" )
             else
                 datac = string.match( datac, "^.-},(.*)$" )
             end
@@ -460,6 +470,10 @@ function n_descramble( nparam, js )
     -- as a second argument. We parse and emulate those calls to follow
     -- the descrambling script.
     -- c[40](c[14],c[2]),c[25](c[48]),c[14](c[1],c[24],c[42]()), [...]
+    if not string.match( script, "c%[(%d+)%]%(c%[(%d+)%]([^)]-)%)" ) then
+        vlc.msg.dbg( "Couldn't parse and execute YouTube video throttling parameter descrambling rules" )
+        return nil
+    end
     for ifunc, itab, args in string.gmatch( script, "c%[(%d+)%]%(c%[(%d+)%]([^)]-)%)" ) do
         local iarg1 = string.match( args, "^,c%[(%d+)%]" )
         local iarg2 = string.match( args, "^,[^,]-,c%[(%d+)%]" )
@@ -494,8 +508,18 @@ end
 -- Descramble the URL signature using the javascript code that does that
 -- in the web page
 function sig_descramble( sig, js )
-    if not js then
-        return nil
+    if not js.stream then
+        if not js.url then
+            return nil
+        end
+        js.stream = vlc.stream( js.url )
+        if not js.stream then
+            -- Retry once for transient errors
+            js.stream = vlc.stream( js.url )
+            if not js.stream then
+                return nil
+            end
+        end
     end
 
     -- Look for the descrambler function's name
@@ -616,37 +640,47 @@ function pick_url( url_map, fmt, js_url )
     for stream in string.gmatch( url_map, "[^,]+" ) do
         local itag = string.match( stream, "itag=(%d+)" )
         if not fmt or not itag or tonumber( itag ) == tonumber( fmt ) then
-            return stream_url( stream, js_url )
+            return nil -- stream_url( stream, js_url )
         end
     end
     return nil
 end
 
--- Parse and pick our video stream URL (new-style parameters)
-function pick_stream( stream_map, js_url )
-    local pick = nil
+-- Pick suitable stream among available formats
+function pick_stream( formats, fmt )
+    if not formats then
+        return nil
+    end
 
-    local fmt = tonumber( get_url_param( vlc.path, "fmt" ) )
-    if fmt then
+    -- Remove subobject fields to ease parsing of stream object array
+    formats = string.gsub( formats, '"[^"]-":{[^{}]-},?', '' )
+
+    if tonumber( fmt ) then
         -- Legacy match from URL parameter
-        for stream in string.gmatch( stream_map, '{(.-)}' ) do
+        fmt = tonumber( fmt )
+        for stream in string.gmatch( formats, '{(.-)}' ) do
             local itag = tonumber( string.match( stream, '"itag":(%d+)' ) )
             if fmt == itag then
-                pick = stream
-                break
+                return stream
             end
         end
+        return nil
     else
         -- Compare the different available formats listed with our
         -- quality targets
         local prefres = vlc.var.inherit( nil, "preferred-resolution" )
-        local bestres = nil
-
-        for stream in string.gmatch( stream_map, '{(.-)}' ) do
+        local bestres, pick
+        for stream in string.gmatch( formats, '{(.-)}' ) do
             local height = tonumber( string.match( stream, '"height":(%d+)' ) )
 
+            -- We have no preference mechanism for audio formats,
+            -- so just pick the first one
+            if fmt == "audio" and not height then
+                return stream
+            end
+
             -- Better than nothing
-            if not pick or ( height and ( not bestres
+            if ( not pick and fmt ~= "video" ) or ( height and ( not bestres
                 -- Better quality within limits
                 or ( ( prefres < 0 or height <= prefres ) and height > bestres )
                 -- Lower quality more suited to limits
@@ -656,26 +690,59 @@ function pick_stream( stream_map, js_url )
                 pick = stream
             end
         end
+        return pick
+    end
+end
+
+-- Parse and pick our video stream URL (new-style parameters)
+function pick_stream_url( muxed, adaptive, js_url, fmt )
+    -- Shared JavaScript resources - lazy initialization
+    local js = { url = js_url, stream = nil, lines = {}, i = 0 }
+    if not js.url then
+        vlc.msg.warn( "Couldn't extract YouTube JavaScript player code URL, descrambling functions unavailable" )
+    end
+
+    local pick = nil
+    if tonumber( fmt ) then
+        -- Specific numeric itag, search in both lists
+        pick = pick_stream( muxed, fmt )
+        if not pick then
+            pick = pick_stream( adaptive, fmt )
+        end
+    elseif ( fmt == "audio" or fmt == "video" ) then
+        -- Specifically audio or video only, no fallback
+        pick = pick_stream( adaptive, fmt )
+    else
+        if fmt == "hd" then
+            -- Try and leverage full array of adaptive formats
+            local audio = pick_stream( adaptive, "audio" )
+            local video = pick_stream( adaptive, "video" )
+            if audio and video then
+                local audio_url = assemble_stream_url( audio, js )
+                local video_url = assemble_stream_url( video, js )
+                if audio_url and video_url then
+                    return video_url, audio_url
+                end
+            end
+        end
+
+        if not pick then
+            -- Default or fallback: safe old multiplexed streams,
+            -- but reduced to a single, low-definition format
+            -- available in some cases
+            pick = pick_stream( muxed, fmt )
+        end
     end
 
     if not pick then
         return nil
     end
+    return assemble_stream_url( pick, js )
+end
 
-    -- Fetch javascript code: we'll need this to descramble maybe the
-    -- URL signature, and normally always the "n" throttling parameter.
-    local js = nil
-    if js_url then
-        js = { stream = vlc.stream( js_url ), lines = {}, i = 0 }
-        if not js.stream then
-            -- Retry once for transient errors
-            js.stream = vlc.stream( js_url )
-            if not js.stream then
-                js = nil
-            end
-        end
-    end
-
+-- Parse, descramble and assemble elements of video stream URL
+function assemble_stream_url( pick, js )
+    -- 1/ URL signature
     -- Either the "url" or the "signatureCipher" parameter is present,
     -- depending on whether the URL signature is scrambled.
     local url
@@ -694,18 +761,19 @@ function pick_stream( stream_map, js_url )
         return nil
     end
 
+    -- 2/ Data transfer throttling
     -- The "n" parameter is scrambled too, and needs to be descrambled
     -- and replaced in place, otherwise the data transfer gets throttled
     -- down to between 40 and 80 kB/s, below real-time playability level.
     local n = string.match( url, "[?&]n=([^&]+)" )
     if n then
         n = vlc.strings.decode_uri( n )
-        local dn = n_descramble( n, js )
+        local dn = nil -- n_descramble( n, js )
         if dn then
             url = string.gsub( url, "([?&])n=[^&]+", "%1n="..vlc.strings.encode_uri_component( dn ), 1 )
         else
-            vlc.msg.dbg( "Couldn't descramble YouTube throttling URL parameter: data transfer will get throttled" )
-            vlc.msg.err( "Couldn't process youtube video URL, please check for updates to this script" )
+            vlc.msg.err( "Couldn't descramble YouTube throttling URL parameter: data transfer will get throttled" )
+            --vlc.msg.err( "Couldn't process youtube video URL, please check for updates to this script" )
         end
     end
 
@@ -723,6 +791,7 @@ function probe()
                string.match( vlc.path, "/watch%?" ) -- the html page
             or string.match( vlc.path, "/live$" ) -- user live stream html page
             or string.match( vlc.path, "/live%?" ) -- user live stream html page
+            or string.match( vlc.path, "/shorts/" ) -- YouTube Shorts HTML page
             or string.match( vlc.path, "/get_video_info%?" ) -- info API
             or string.match( vlc.path, "/v/" ) -- video in swf player
             or string.match( vlc.path, "/embed/" ) -- embedded player iframe
@@ -750,11 +819,15 @@ function parse()
     elseif string.match( vlc.path, "/watch%?" )
         or string.match( vlc.path, "/live$" )
         or string.match( vlc.path, "/live%?" )
+        or string.match( vlc.path, "/shorts/" )
     then -- This is the HTML page's URL
-        local js_url
-        -- fmt is the format of the video
-        -- (cf. http://en.wikipedia.org/wiki/YouTube#Quality_and_formats)
-        fmt = get_url_param( vlc.path, "fmt" )
+        local path, path2, title, description, artist, arturl, js_url
+
+        -- Retired YouTube API for video format itag parameter,
+        -- still supported and extended as youtube.lua API
+        -- https://en.wikipedia.org/w/index.php?title=YouTube&oldid=716878321#Quality_and_formats
+        local fmt = get_url_param( vlc.path, "fmt" )
+
         while true do
             -- The new HTML code layout has fewer and longer lines; always
             -- use the long line workaround until we get more visibility.
@@ -851,8 +924,10 @@ function parse()
             end
 
             -- JSON parameters, also formerly known as "swfConfig",
-            -- "SWF_ARGS", "swfArgs", "PLAYER_CONFIG", "playerConfig" ...
-            if string.match( line, "ytplayer%.config" ) then
+            -- "SWF_ARGS", "swfArgs", "PLAYER_CONFIG", "playerConfig",
+            -- "ytplayer.config" ...
+            if string.match( line, "ytInitialPlayerResponse ?= ?{" )
+                or string.match( line, "ytplayer%.config" ) then
 
                 -- Classic parameters - out of use since early 2020
                 if not fmt then
@@ -881,10 +956,19 @@ function parse()
                         stream_map = string.match( line, '"formats":%[(.-)%]' )
                     end
                     if stream_map then
-                        vlc.msg.dbg( "Found new-style parameters for youtube video stream, parsing..." )
                         -- FIXME: do this properly (see #24958)
                         stream_map = string.gsub( stream_map, "\\u0026", "&" )
-                        path = pick_stream( stream_map, js_url )
+                    end
+
+                    local adaptive_map = string.match( line, '"adaptiveFormats":%[(.-)%]' )
+                    if adaptive_map then
+                        -- FIXME: do this properly (see #24958)
+                        adaptive_map = string.gsub( adaptive_map, "\\u0026", "&" )
+                    end
+
+                    if stream_map or adaptive_map then
+                        vlc.msg.dbg( "Found new-style parameters for youtube video stream, parsing..." )
+                        path, path2 = pick_stream_url( stream_map, adaptive_map, js_url, fmt )
                     end
                 end
 
@@ -910,7 +994,11 @@ function parse()
             arturl = get_arturl()
         end
 
-        return { { path = path; name = title; description = description; artist = artist; arturl = arturl } }
+        local options = { }
+        if path2 then
+            table.insert( options, ":input-slave="..path2 )
+        end
+        return { { path = path; name = title; description = description; artist = artist; arturl = arturl; options = options } }
 
     elseif string.match( vlc.path, "/get_video_info%?" ) then
         -- video info API, retired since summer 2021
@@ -954,7 +1042,7 @@ function parse()
                 stream_map = vlc.strings.decode_uri( stream_map )
                 -- FIXME: do this properly (see #24958)
                 stream_map = string.gsub( stream_map, "\\u0026", "&" )
-                path = pick_stream( stream_map, js_url )
+                path = pick_stream_url( stream_map, nil, js_url, fmt )
             end
         end
 

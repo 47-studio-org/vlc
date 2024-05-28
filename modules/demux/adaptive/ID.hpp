@@ -20,8 +20,8 @@
 #ifndef ID_HPP
 #define ID_HPP
 
+#include <cstdint>
 #include <string>
-#include <inttypes.h>
 
 namespace adaptive
 {
@@ -33,6 +33,7 @@ namespace adaptive
             bool operator==(const ID &) const;
             bool operator<(const ID &) const;
             std::string str() const;
+            bool isValid() const;
 
         private:
             std::string id;

@@ -180,6 +180,7 @@ vlc_input_decoder_Decode
 vlc_input_decoder_Drain
 vlc_input_decoder_Flush
 vlc_input_decoder_SetSpuHighlight
+vlc_input_decoder_ChangeDelay
 input_item_AddInfo
 input_item_AddOption
 input_item_AddOptions
@@ -190,6 +191,7 @@ input_item_CreateFilename
 input_item_DelInfo
 input_item_GetDuration
 input_item_GetInfo
+input_item_GetInfoLocked
 input_item_GetMeta
 input_item_GetMetaLocked
 input_item_GetName
@@ -358,6 +360,11 @@ sout_StreamIdSend
 sout_StreamFlush
 sout_StreamSetPCR
 sout_StreamControlVa
+sout_ClockMainCreate
+sout_ClockMainDelete
+sout_ClockMainSetFirstPcr
+sout_ClockCreate
+sout_ClockDelete
 spu_Create
 spu_Destroy
 spu_PutSubpicture
@@ -448,6 +455,8 @@ vlc_memfd
 vlc_opendir
 vlc_readdir
 vlc_scandir
+vlc_closedir
+vlc_rewinddir
 vlc_stat
 vlc_strcasestr
 vlc_unlink
@@ -591,7 +600,6 @@ vlc_latch_init
 vlc_latch_is_ready
 vlc_latch_count_down
 vlc_latch_count_down_and_wait
-vlc_latch_is_ready
 vlc_latch_wait
 vlc_ml_instance_get
 vlc_ml_get
@@ -737,7 +745,6 @@ vlm_New
 vout_Close
 vout_Hold
 vout_Release
-vout_GetPicture
 vout_PutPicture
 vout_PutSubpicture
 vout_RegisterSubpictureChannel
@@ -813,7 +820,7 @@ vlc_encoder_Destroy
 vlc_thumbnailer_Create
 vlc_thumbnailer_RequestByTime
 vlc_thumbnailer_RequestByPos
-vlc_thumbnailer_Cancel
+vlc_thumbnailer_DestroyRequest
 vlc_thumbnailer_Release
 vlc_player_AddAssociatedMedia
 vlc_player_AddListener
@@ -992,10 +999,15 @@ vlc_media_source_provider_List
 vlc_media_source_meta_list_Count
 vlc_media_source_meta_list_Get
 vlc_media_source_meta_list_Delete
+vlc_media_tree_New
 vlc_media_tree_AddListener
 vlc_media_tree_RemoveListener
+vlc_media_tree_Hold
+vlc_media_tree_Release
 vlc_media_tree_Lock
 vlc_media_tree_Unlock
+vlc_media_tree_Add
+vlc_media_tree_Remove
 vlc_media_tree_Find
 vlc_media_tree_Preparse
 vlc_media_tree_PreparseCancel

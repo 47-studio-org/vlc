@@ -25,6 +25,8 @@
 #include "extensions.hpp"
 
 #include <vlc_modules.h>
+#include <vlc_interface.h>
+#include <vlc_playlist.h>
 #include "assert.h"
 
 #include <QMenu>
@@ -72,6 +74,8 @@ bool ExtensionsManager::loadExtensions()
             return false;
         }
 
+        vlc_playlist_t *playlist = vlc_intf_GetMainPlaylist(p_intf->intf);
+        p_extensions_manager->player = vlc_playlist_GetPlayer(playlist);
         p_extensions_manager->p_module =
                 module_need( p_extensions_manager, "extension", NULL, false );
 
@@ -184,7 +188,7 @@ void ExtensionsManager::menu( QMenu *current )
             }
 
             submenu->addSeparator();
-            action = submenu->addAction( QIcon( ":/toolbar/clear.svg" ),
+            action = submenu->addAction( QIcon( ":/menu/clear.svg" ),
                                          qtr( "Deactivate" ) );
             menuMapper->setMapping( action, MENU_MAP( 0, i_ext ) );
             connect( action, &QAction::triggered, menuMapper, QOverload<>::of(&QSignalMapper::map) );

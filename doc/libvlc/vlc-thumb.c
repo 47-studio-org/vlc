@@ -33,9 +33,7 @@
 #  define _POSIX_CLOCK_SELECTION (-1)
 #endif
 
-#if (_POSIX_CLOCK_SELECTION < 0)
-#   error Clock selection is not available!
-#endif
+static_assert (_POSIX_CLOCK_SELECTION >= 0, "Clock selection unavailable!");
 
 #include <vlc/vlc.h>
 
@@ -118,8 +116,9 @@ static void callback(const libvlc_event_t *ev, void *param)
     {
         libvlc_picture_t** pic = param;
         pthread_mutex_lock(&lock);
-        libvlc_picture_retain(ev->u.media_thumbnail_generated.p_thumbnail);
         *pic = ev->u.media_thumbnail_generated.p_thumbnail;
+        if (*pic != NULL)
+            libvlc_picture_retain(*pic);
         done = true;
         pthread_cond_signal(&wait);
         pthread_mutex_unlock(&lock);

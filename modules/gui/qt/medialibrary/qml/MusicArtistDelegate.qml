@@ -41,7 +41,7 @@ T.Control {
     // Aliases
     // Private
 
-    property alias _isHover: mouseArea.containsMouse
+    readonly property bool _isHover: contentItem.containsMouse || root.activeFocus
 
     // Signals
 
@@ -55,24 +55,24 @@ T.Control {
 
     // Childs
 
-    background: Widgets.AnimatedBackground {
-        id: background
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Item
 
+        focused: root.activeFocus
+        hovered: contentItem.containsMouse
+        enabled: root.enabled
+    }
+
+    background: Widgets.AnimatedBackground {
         active: visualFocus
 
-        backgroundColor: {
-            if (isCurrent)
-                return VLCStyle.colors.gridSelect;
-            else if (_isHover)
-                return VLCStyle.colors.listHover;
-            else
-                return VLCStyle.colors.setColorAlpha(VLCStyle.colors.listHover, 0);
-        }
+        animate: theme.initialized
+        backgroundColor: root.isCurrent ? theme.bg.highlight : theme.bg.primary
+        activeBorderColor: theme.visualFocus
     }
 
     contentItem: MouseArea {
-        id: mouseArea
-
         hoverEnabled: true
 
         drag.axis: Drag.XAndYAxis
@@ -151,20 +151,34 @@ T.Control {
 
                     border.width: VLCStyle.dp(1, VLCStyle.scale)
 
-                    border.color: (isCurrent || _isHover) ? VLCStyle.colors.accent
-                                                          : VLCStyle.colors.roundPlayCoverBorder
+                    border.color: (isCurrent || _isHover) ? theme.accent
+                                                          : theme.border
                 }
             }
 
-            Widgets.ListLabel {
-                text: (model.name) ? model.name
-                                   : I18n.qtr("Unknown artist")
+            Widgets.ScrollingText {
+                label: artistName
 
-                color: background.foregroundColor
+                forceScroll: root.isCurrent || root._isHover
+                clip: scrolling
 
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+
+                Widgets.ListLabel {
+                    id: artistName
+
+                    anchors {
+                        verticalCenter: parent.verticalCenter
+                    }
+
+                    text: (model.name) ? model.name
+                                       : I18n.qtr("Unknown artist")
+
+                    color: theme.fg.primary
+                }
             }
+
         }
     }
 }

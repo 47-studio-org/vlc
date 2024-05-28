@@ -43,6 +43,35 @@
 #include "rcu.h"
 #include "../libvlc.h"
 
+#ifdef _WIN32
+static const char msg_type[4][9] = { "", " error", " warning", " debug" };
+
+static void Win32DebugOutputMsg (int type, const vlc_log_t *p_item,
+                                 const char *format, va_list dol)
+{
+    char *msg = NULL;
+    int msg_len = vasprintf(&msg, format, dol);
+
+    if (unlikely(msg_len == -1))
+        return;
+
+    const char *ending = msg_len > 1 && msg[msg_len-1] == '\n' ? "" : "\n";
+
+    char* psz_msg = NULL;
+    if (asprintf(&psz_msg, "%s %s%s: %s%s", p_item->psz_module,
+                p_item->psz_object_type, msg_type[type], msg, ending) > 0) {
+        wchar_t* wmsg = ToWide(psz_msg);
+        if (likely(wmsg != NULL))
+        {
+            OutputDebugStringW(wmsg);
+            free(wmsg);
+        }
+        free(psz_msg);
+    }
+    free(msg);
+}
+#endif
+
 static void vlc_LogSpam(vlc_object_t *obj)
 {
     /* Announce who we are */
@@ -61,6 +90,14 @@ static void vlc_vaLogCallback(vlc_logger_t *logger, int type,
                               va_list ap)
 {
     if (logger != NULL) {
+#ifdef _WIN32
+        va_list dol;
+
+        va_copy (dol, ap);
+        Win32DebugOutputMsg (type, item, format, dol);
+        va_end (dol);
+#endif
+
         int canc = vlc_savecancel();
 
         logger->ops->log(logger, type, item, format, ap);
@@ -78,17 +115,16 @@ static void vlc_LogCallback(vlc_logger_t *logger, int type,
     va_end(ap);
 }
 
-#ifdef _WIN32
-static void Win32DebugOutputMsg (int , const vlc_log_t *,
-                                 const char *, va_list);
-#endif
-
 void vlc_vaLog(struct vlc_logger *const *loggerp, int type,
                const char *typename, const char *module,
                const char *file, unsigned line, const char *func,
                const char *format, va_list args)
 {
     struct vlc_logger *logger = *loggerp;
+    if (logger == NULL)
+        // nothing to do
+        return;
+
     /* Get basename from the module filename */
     char *p = strrchr(module, '/');
     if (p != NULL)
@@ -116,17 +152,8 @@ void vlc_vaLog(struct vlc_logger *const *loggerp, int type,
     msg.func = func;
     msg.tid = vlc_thread_id();
 
-#ifdef _WIN32
-    va_list ap;
-
-    va_copy (ap, args);
-    Win32DebugOutputMsg (type, &msg, format, ap);
-    va_end (ap);
-#endif
-
     /* Pass message to the callback */
-    if (logger != NULL)
-        vlc_vaLogCallback(logger, type, &msg, format, args);
+    vlc_vaLogCallback(logger, type, &msg, format, args);
 }
 
 void vlc_Log(struct vlc_logger *const *logger, int type,
@@ -140,48 +167,6 @@ void vlc_Log(struct vlc_logger *const *logger, int type,
     vlc_vaLog(logger, type, typename, module, file, line, func, format, ap);
     va_end(ap);
 }
-
-#ifdef _WIN32
-static const char msg_type[4][9] = { "", " error", " warning", " debug" };
-
-static void Win32DebugOutputMsg (int type, const vlc_log_t *p_item,
-                                 const char *format, va_list dol)
-{
-    VLC_UNUSED(p_item);
-
-    va_list dol2;
-    va_copy (dol2, dol);
-    int msg_len = vsnprintf(NULL, 0, format, dol2);
-    va_end (dol2);
-
-    if (msg_len <= 0)
-        return;
-
-    char *msg = malloc(msg_len + 1 + 1);
-    if (!msg)
-        return;
-
-    msg_len = vsnprintf(msg, msg_len+1, format, dol);
-    if (msg_len > 0){
-        if (msg[msg_len-1] != '\n') {
-            msg[msg_len] = '\n';
-            msg[msg_len + 1] = '\0';
-        }
-        char* psz_msg = NULL;
-        if (asprintf(&psz_msg, "%s %s%s: %s", p_item->psz_module,
-                    p_item->psz_object_type, msg_type[type], msg) > 0) {
-            wchar_t* wmsg = ToWide(psz_msg);
-            if (likely(wmsg != NULL))
-            {
-                OutputDebugStringW(wmsg);
-                free(wmsg);
-            }
-            free(psz_msg);
-        }
-    }
-    free(msg);
-}
-#endif
 
 /**
  * Early (latched) message log.
@@ -250,6 +235,7 @@ static void vlc_LogEarlyClose(void *d)
         vlc_LogCallback(sink, log->type, &log->meta, "%s",
                         (log->msg != NULL) ? log->msg : "message lost");
         free(log->msg);
+        free((char*)log->meta.psz_header); // local copy
         next = log->next;
         free(log);
     }
@@ -498,6 +484,9 @@ static const struct vlc_logger_operations header_ops = {
 struct vlc_logger *vlc_LogHeaderCreate(struct vlc_logger *parent,
                                        const char *str)
 {
+    if (parent == NULL)
+        return NULL;
+
     size_t len = strlen(str) + 1;
     struct vlc_logger_header *header = malloc(sizeof (*header) + len);
     if (unlikely(header == NULL))

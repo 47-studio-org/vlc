@@ -20,13 +20,12 @@
 
 import QtQuick 2.11
 
+import org.videolan.vlc 0.1
 import "qrc:///style/"
 
-TabButtonExt {
-    // Style
+ButtonExt {
+    id: control
 
-    backgroundColor: (hovered) ? VLCStyle.colors.buttonPrimaryHover
-                               : VLCStyle.colors.accent
-
-    foregroundColor: "white"
+    colorContext.colorSet: ColorContext.ButtonAccent
+    iconSize: VLCStyle.icon_actionButton
 }

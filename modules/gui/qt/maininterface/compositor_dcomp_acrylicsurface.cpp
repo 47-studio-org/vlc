@@ -32,6 +32,15 @@ namespace
 
 bool isTransparencyEnabled()
 {
+    HIGHCONTRAST constrastInfo;
+    constrastInfo.cbSize = sizeof(HIGHCONTRAST);
+
+    bool ret = SystemParametersInfoA(SPI_GETHIGHCONTRAST, constrastInfo.cbSize, &constrastInfo, 0);
+
+    bool useHighContrast = ret && ((constrastInfo.dwFlags & HCF_HIGHCONTRASTON) == HCF_HIGHCONTRASTON);
+    if (useHighContrast)
+        return false;
+
     static const char *TRANSPARENCY_SETTING_PATH = "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
     static const char *TRANSPARENCY_SETTING_KEY = "EnableTransparency";
 
@@ -104,7 +113,7 @@ CompositorDCompositionAcrylicSurface::~CompositorDCompositionAcrylicSurface()
         DestroyWindow(m_dummyWindow);
 }
 
-bool CompositorDCompositionAcrylicSurface::nativeEventFilter(const QByteArray &eventType, void *message, long *result)
+bool CompositorDCompositionAcrylicSurface::nativeEventFilter(const QByteArray &, void *message, long *)
 {
     MSG* msg = static_cast<MSG*>( message );
 
@@ -128,14 +137,13 @@ bool CompositorDCompositionAcrylicSurface::nativeEventFilter(const QByteArray &e
     {
         if (!lstrcmpW(LPCWSTR(msg->lParam), L"ImmersiveColorSet"))
         {
-            const auto transparencyEnabled = isTransparencyEnabled();
-            if (m_transparencyEnabled == transparencyEnabled)
-                break;
-
-            m_transparencyEnabled = transparencyEnabled;
-            m_mainCtx->setHasAcrylicSurface(m_transparencyEnabled);
-            setActive(m_transparencyEnabled && m_mainCtx->acrylicActive());
+            updateTransparencyState();
         }
+        break;
+    }
+    case WM_SYSCOLORCHANGE:
+    {
+        updateTransparencyState();
         break;
     }
     }
@@ -173,6 +181,17 @@ bool CompositorDCompositionAcrylicSurface::init(ID3D11Device *device)
     return true;
 }
 
+void CompositorDCompositionAcrylicSurface::updateTransparencyState()
+{
+    const auto transparencyEnabled = isTransparencyEnabled();
+    if (m_transparencyEnabled == transparencyEnabled)
+        return;
+
+    m_transparencyEnabled = transparencyEnabled;
+    m_mainCtx->setHasAcrylicSurface(m_transparencyEnabled);
+    setActive(m_transparencyEnabled && m_mainCtx->acrylicActive());
+}
+
 bool CompositorDCompositionAcrylicSurface::loadFunctions()
 try
 {
@@ -200,7 +219,7 @@ try
 }
 catch (std::exception &err)
 {
-    msg_Err(m_intf, err.what());
+    msg_Err(m_intf, "%s", err.what());
     return false;
 }
 

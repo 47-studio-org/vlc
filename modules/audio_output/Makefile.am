@@ -1,14 +1,39 @@
 aoutdir = $(pluginsdir)/audio_output
 aout_LTLIBRARIES =
 
-libopensles_android_plugin_la_SOURCES = audio_output/opensles_android.c
-libopensles_android_plugin_la_LIBADD = libandroid_utils.la $(LIBDL) $(LIBM)
+libvlc_android_audioformat_jni_la_SOURCES = \
+	audio_output/android/audioformat_jni.c \
+	audio_output/android/audioformat_jni.h
 
-libandroid_audiotrack_plugin_la_SOURCES = audio_output/audiotrack.c
-libandroid_audiotrack_plugin_la_LIBADD = libandroid_utils.la
+libvlc_android_dynamicsprocessing_jni_la_SOURCES = \
+	audio_output/android/dynamicsprocessing_jni.c \
+	audio_output/android/dynamicsprocessing_jni.h
 
 if HAVE_ANDROID
-aout_LTLIBRARIES += libandroid_audiotrack_plugin.la libopensles_android_plugin.la
+noinst_LTLIBRARIES += \
+	libvlc_android_audioformat_jni.la \
+	libvlc_android_dynamicsprocessing_jni.la
+endif
+
+libopensles_android_plugin_la_SOURCES = audio_output/android/opensles.c
+libopensles_android_plugin_la_LIBADD = libandroid_env.la $(LIBDL) $(LIBM)
+
+libandroid_audiotrack_plugin_la_SOURCES = audio_output/android/audiotrack.c audio_output/android/device.h
+libandroid_audiotrack_plugin_la_LIBADD = libandroid_env.la \
+	libvlc_android_audioformat_jni.la \
+	libvlc_android_dynamicsprocessing_jni.la
+
+libandroid_aaudio_plugin_la_SOURCES = audio_output/android/aaudio.c audio_output/android/device.h
+libandroid_aaudio_plugin_la_LIBADD = libandroid_env.la libvlc_android_dynamicsprocessing_jni.la $(LIBDL)
+
+libandroid_audiodevice_plugin_la_SOURCES = audio_output/android/device.c audio_output/android/device.h
+libandroid_audiodevice_plugin_la_LIBADD = libandroid_env.la \
+	libvlc_android_audioformat_jni.la \
+	libvlc_android_dynamicsprocessing_jni.la
+
+if HAVE_ANDROID
+aout_LTLIBRARIES += libandroid_audiodevice_plugin.la libopensles_android_plugin.la \
+	libandroid_audiotrack_plugin.la libandroid_aaudio_plugin.la
 endif
 
 libadummy_plugin_la_SOURCES = audio_output/adummy.c
@@ -71,13 +96,6 @@ aout_LTLIBRARIES += libmmdevice_plugin.la
 else
 aout_LTLIBRARIES += libwinstore_plugin.la
 endif
-endif
-
-libdirectsound_plugin_la_SOURCES = audio_output/directsound.c \
-	audio_output/windows_audio_common.h
-libdirectsound_plugin_la_LIBADD = -ldsound $(LIBCOM)
-if HAVE_WIN32_DESKTOP
-aout_LTLIBRARIES += libdirectsound_plugin.la
 endif
 
 libkai_plugin_la_SOURCES = audio_output/kai.c

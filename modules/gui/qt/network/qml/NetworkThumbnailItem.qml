@@ -26,79 +26,164 @@ import org.videolan.vlc 0.1
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-Item {
-    id: item
+Row {
+    id: root
+
+    // Properties
+
+    readonly property bool containsMouse: parent.containsMouse
+    readonly property bool currentlyFocused: parent.currentlyFocused
 
     property var rowModel: parent.rowModel
     property var model: parent.colModel
-    readonly property bool currentlyFocused: parent.currentlyFocused
-    readonly property bool containsMouse: parent.containsMouse
+
     readonly property int index: parent.index
 
     readonly property string artworkSource: !!rowModel ? rowModel.artwork : ""
+
+    readonly property ColorContext colorContext: parent.colorContext
+
+    readonly property bool selected: parent.selected
+
+    // Private
 
     readonly property bool _showPlayCover: (currentlyFocused || containsMouse)
                                            && !!rowModel
                                            && (rowModel.type !== NetworkMediaModel.TYPE_NODE)
                                            && (rowModel.type !== NetworkMediaModel.TYPE_DIRECTORY)
 
-    readonly property bool _showCustomCover: (!artworkSource) || (artwork.status != Image.Ready)
+    readonly property bool _showCustomCover: (!artworkSource) || (artwork.status !== Image.Ready)
+
+    // Signals
 
     signal playClicked(int index)
 
-    Widgets.ListCoverShadow {
-        anchors.fill: !item._showCustomCover ? artwork : background
+    // Settings
+
+    spacing: VLCStyle.margin_normal
+
+    // Functions
+
+    function getCriterias(colModel, rowModel) {
+        if (colModel === null || rowModel === null)
+            return ""
+
+        var criterias = colModel.subCriterias
+
+        if (criterias === undefined || criterias.length === 0)
+            return ""
+
+        var string = ""
+
+        for (var i = 0; i < criterias.length; i++) {
+            var criteria = criterias[i]
+
+            var value = rowModel[criteria]
+
+            if (value.toString() === "vlc://nop")
+                continue
+
+            if (i) string += " • "
+
+            string += value
+        }
+
+        return string
     }
 
-    Rectangle {
-        id: background
+    // Children
+
+    Item {
+        id: itemCover
 
         anchors.verticalCenter: parent.verticalCenter
-        color: VLCStyle.colors.bg
-        width: VLCStyle.listAlbumCover_width
-        height: VLCStyle.listAlbumCover_height
-        radius: VLCStyle.listAlbumCover_radius
-        visible: item._showCustomCover
+
+        width: artwork.width
+        height: artwork.height
+
+        Widgets.ListCoverShadow { anchors.fill: parent }
 
         NetworkCustomCover {
+            id: artwork
+
+            width: VLCStyle.listAlbumCover_width
+            height: VLCStyle.listAlbumCover_height
+
+            //radius: VLCStyle.listAlbumCover_radius
+
             networkModel: rowModel
-            anchors.fill: parent
-            iconSize: VLCStyle.icon_small
-        }
 
-        Widgets.PlayCover {
-            anchors.centerIn: parent
+            bgColor: root.colorContext.bg.secondary
+            color1: root.colorContext.fg.primary
+            accent: root.colorContext.accent
 
-            width: VLCStyle.play_cover_small
+            Widgets.PlayCover {
+                x: Math.round((artwork.width - width) / 2)
+                y: Math.round((artwork.height - height) / 2)
 
-            visible: item._showPlayCover
+                width: VLCStyle.play_cover_small
 
-            onClicked: playClicked(item.index)
+                visible: root._showPlayCover
+
+                onClicked: playClicked(root.index)
+            }
         }
     }
 
-    Widgets.ScaledImage {
-        id: artwork
+    Column {
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
 
-        x: Math.round((width - paintedWidth) / 2)
-        y: Math.round((parent.height - paintedHeight) / 2)
-        width: VLCStyle.listAlbumCover_width
-        height: VLCStyle.listAlbumCover_height
-        fillMode: Image.PreserveAspectFit
-        horizontalAlignment: Image.AlignLeft
-        verticalAlignment: Image.AlignTop
-        source: item.artworkSource
-        visible: !item._showCustomCover
+        anchors.topMargin: VLCStyle.margin_xxsmall
+        anchors.bottomMargin: VLCStyle.margin_xxsmall
 
-        Widgets.PlayCover {
-            x: Math.round((artwork.paintedWidth - width) / 2)
-            y: Math.round((artwork.paintedHeight - height) / 2)
+        width: Math.max(0, parent.width - x)
 
-            width: VLCStyle.play_cover_small
+        Widgets.ScrollingText {
+            id: itemText
 
-            visible: item._showPlayCover
+            anchors.left: parent.left
+            anchors.right: parent.right
 
-            onClicked: playClicked(item.index)
+            height: (itemCriterias.visible) ? Math.round(parent.height / 2)
+                                            : parent.height
+
+            visible: (listLabel.text)
+
+            clip: scrolling
+
+            label: listLabel
+
+            forceScroll: root.currentlyFocused
+
+            Widgets.ListLabel {
+                id: listLabel
+
+                anchors.verticalCenter: parent.verticalCenter
+
+                text: (root.rowModel && model.title) ? root.rowModel[model.title] : ""
+
+                color: root.selected
+                    ? root.colorContext.fg.highlight
+                    : root.colorContext.fg.primary
+            }
+        }
+
+        Widgets.MenuCaption {
+            id: itemCriterias
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+
+            height: itemText.height
+
+            visible: (text)
+
+            color: root.selected
+                ? root.colorContext.fg.highlight
+                : root.colorContext.fg.secondary
+
+            text: root.getCriterias(root.model, root.rowModel)
         }
     }
 }

@@ -1,5 +1,5 @@
 NVCODEC_HASH := 84483da70d903239d4536763fde8c7e6c4e80784
-NVCODEC_GITURL := https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
+NVCODEC_GITURL := $(VIDEOLAN_GIT)/ffmpeg/nv-codec-headers.git
 
 ifndef HAVE_DARWIN_OS
 PKGS += nvcodec
@@ -17,5 +17,5 @@ nvcodec: nvcodec-$(NVCODEC_HASH).tar.xz .sum-nvcodec
 	$(MOVE)
 
 .nvcodec: nvcodec-$(NVCODEC_HASH).tar.xz nvcodec
-	cd nvcodec && $(MAKE) install PREFIX="$(PREFIX)"
+	$(MAKE) -C nvcodec install PREFIX="$(PREFIX)"
 	touch $@

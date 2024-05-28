@@ -110,7 +110,7 @@ static cct_number_t cct_nums[] = { {CCT_ISO_6937_2, "ISO_6937-2"},
                                    {CCT_ISO_8859_7, "ISO_8859-7"},
                                    {CCT_ISO_8859_8, "ISO_8859-8"} };
 
-static text_style_t * CreateGroupStyle()
+static text_style_t * CreateGroupStyle(void)
 {
     text_style_t *p_style = text_style_Create(STYLE_NO_DEFAULTS);
     if(p_style)
@@ -435,14 +435,14 @@ static int Decode(decoder_t *p_dec, block_t *p_block)
 
 static int ParseGSI(decoder_t *dec, decoder_sys_t *p_sys)
 {
-    uint8_t *header = dec->fmt_in.p_extra;
+    uint8_t *header = dec->fmt_in->p_extra;
     if (!header) {
         msg_Err(dec, "NULL EBU header (GSI block)\n");
         return VLC_EGENERIC;
     }
 
-    if (GSI_BLOCK_SIZE != dec->fmt_in.i_extra) {
-        msg_Err(dec, "EBU header is not in expected size (%d)\n", dec->fmt_in.i_extra);
+    if (GSI_BLOCK_SIZE != dec->fmt_in->i_extra) {
+        msg_Err(dec, "EBU header is not in expected size (%d)\n", dec->fmt_in->i_extra);
         return VLC_EGENERIC;
     }
 
@@ -470,7 +470,7 @@ static int Open(vlc_object_t *object)
 {
     decoder_t *dec = (decoder_t*)object;
 
-    if (dec->fmt_in.i_codec != VLC_CODEC_EBU_STL)
+    if (dec->fmt_in->i_codec != VLC_CODEC_EBU_STL)
         return VLC_EGENERIC;
 
     decoder_sys_t *sys = calloc(1, sizeof(*sys));

@@ -39,23 +39,24 @@ const struct
     float f_pos;
     bool b_use_pos;
     bool b_fast_seek;
+    bool b_can_control_pace;
     vlc_tick_t i_timeout;
     bool b_expected_success;
 } test_params[] = {
     /* Simple test with a thumbnail at 60s, with a video track */
-    { 1, 0, VLC_TICK_INVALID, VLC_TICK_FROM_SEC( 60 ), .0f, false, true,
+    { 1, 0, VLC_TICK_INVALID, VLC_TICK_FROM_SEC( 60 ), .0f, false, true, true,
         VLC_TICK_FROM_SEC( 1 ), true },
     /* Test without fast-seek */
-    { 1, 0, VLC_TICK_INVALID, VLC_TICK_FROM_SEC( 60 ), .0f, false, false,
+    { 1, 0, VLC_TICK_INVALID, VLC_TICK_FROM_SEC( 60 ), .0f, false, false, true,
         VLC_TICK_FROM_SEC( 1 ), true },
     /* Seek by position test */
-    { 1, 0, VLC_TICK_INVALID, 0, .3f, true, true, VLC_TICK_FROM_SEC( 1 ), true },
+    { 1, 0, VLC_TICK_INVALID, 0, .3f, true, true, true, VLC_TICK_FROM_SEC( 1 ), true },
     /* Seek at a negative position */
-    { 1, 0, VLC_TICK_INVALID, -12345, .0f, false, true, VLC_TICK_FROM_SEC( 1 ), true },
+    { 1, 0, VLC_TICK_INVALID, -12345, .0f, false, true, true, VLC_TICK_FROM_SEC( 1 ), true },
     /* Take a thumbnail of a file without video, which should timeout. */
-    { 0, 1, VLC_TICK_INVALID, VLC_TICK_FROM_SEC( 60 ), .0f, false, true, VLC_TICK_FROM_MS( 100 ), false },
+    { 0, 1, VLC_TICK_INVALID, VLC_TICK_FROM_SEC( 60 ), .0f, false, true, false, VLC_TICK_FROM_MS( 100 ), false },
     /* Take a thumbnail of a file with a video track starting later */
-    { 1, 1, VLC_TICK_FROM_SEC( 60 ), VLC_TICK_FROM_SEC( 30 ), .0f, false, true,
+    { 1, 1, VLC_TICK_FROM_SEC( 60 ), VLC_TICK_FROM_SEC( 30 ), .0f, false, true, true,
         VLC_TICK_FROM_SEC( 2 ), true },
 };
 
@@ -123,38 +124,38 @@ static void test_thumbnails( libvlc_instance_t* p_vlc )
         ctx.b_done = false;
 
         if ( asprintf( &psz_mrl, "mock://video_track_count=%u;audio_track_count=%u"
-                       ";length=%" PRId64 ";video_chroma=ARGB;video_add_track_at=%" PRId64,
+                       ";length=%" PRId64 ";can_control_pace=%s;video_chroma=ARGB;video_add_track_at=%" PRId64,
                        test_params[i].i_nb_video_tracks,
                        test_params[i].i_nb_audio_tracks, MOCK_DURATION,
+                       test_params[i].b_can_control_pace ? "true" : "false",
                        test_params[i].i_add_video_track_at ) < 0 )
             assert( !"Failed to allocate mock mrl" );
         input_item_t* p_item = input_item_New( psz_mrl, "mock item" );
         assert( p_item != NULL );
 
         vlc_mutex_lock( &ctx.lock );
-        int res = 0;
 
+        vlc_thumbnailer_request_t* p_req;
         if ( test_params[i].b_use_pos )
         {
-            vlc_thumbnailer_RequestByPos( p_thumbnailer, test_params[i].f_pos,
+            p_req = vlc_thumbnailer_RequestByPos( p_thumbnailer, test_params[i].f_pos,
                 test_params[i].b_fast_seek ?
                     VLC_THUMBNAILER_SEEK_FAST : VLC_THUMBNAILER_SEEK_PRECISE,
                 p_item, test_params[i].i_timeout, thumbnailer_callback, &ctx );
         }
         else
         {
-            vlc_thumbnailer_RequestByTime( p_thumbnailer, test_params[i].i_time,
+            p_req = vlc_thumbnailer_RequestByTime( p_thumbnailer, test_params[i].i_time,
                 test_params[i].b_fast_seek ?
                     VLC_THUMBNAILER_SEEK_FAST : VLC_THUMBNAILER_SEEK_PRECISE,
                 p_item, test_params[i].i_timeout, thumbnailer_callback, &ctx );
         }
+        assert( p_req != NULL );
 
         while ( ctx.b_done == false )
-        {
-            vlc_tick_t timeout = vlc_tick_now() + VLC_TICK_FROM_SEC( 2 );
-            res = vlc_cond_timedwait( &ctx.cond, &ctx.lock, timeout );
-            assert( res != ETIMEDOUT );
-        }
+            vlc_cond_wait( &ctx.cond, &ctx.lock );
+
+        vlc_thumbnailer_DestroyRequest( p_thumbnailer, p_req );
         vlc_mutex_unlock( &ctx.lock );
 
         input_item_Release( p_item );
@@ -165,14 +166,10 @@ static void test_thumbnails( libvlc_instance_t* p_vlc )
 
 static void thumbnailer_callback_cancel( void* data, picture_t* p_thumbnail )
 {
-    struct test_ctx* p_ctx = data;
-    assert( p_thumbnail == NULL );
-    vlc_mutex_lock( &p_ctx->lock );
-    p_ctx->b_done = true;
-    vlc_mutex_unlock( &p_ctx->lock );
-    vlc_cond_signal( &p_ctx->cond );
+    (void) data; (void) p_thumbnail;
+    /* This callback should not be called since the request is cancelled */
+    vlc_assert_unreachable();
 }
-
 
 static void test_cancel_thumbnail( libvlc_instance_t* p_vlc )
 {
@@ -180,28 +177,22 @@ static void test_cancel_thumbnail( libvlc_instance_t* p_vlc )
                 VLC_OBJECT( p_vlc->p_libvlc_int ) );
     assert( p_thumbnailer != NULL );
 
-    struct test_ctx ctx;
-    ctx.b_done = false;
-    vlc_cond_init( &ctx.cond );
-    vlc_mutex_init( &ctx.lock );
-
-    const char* psz_mrl = "mock://video_track_count=1;audio_track_count=1";
+    const char* psz_mrl = "mock://video_track_count=0;audio_track_count=1;"
+                          /* force timeout: parsing will take the same time as length */
+                          "can_control_pace=false;"
+                          "length=200";
     input_item_t* p_item = input_item_New( psz_mrl, "mock item" );
     assert( p_item != NULL );
 
-    vlc_mutex_lock( &ctx.lock );
-    int res = 0;
     vlc_thumbnailer_request_t* p_req = vlc_thumbnailer_RequestByTime( p_thumbnailer,
-        VLC_TICK_FROM_SEC( 1 ), VLC_THUMBNAILER_SEEK_PRECISE, p_item,
-        VLC_TICK_INVALID, thumbnailer_callback_cancel, &ctx );
-    vlc_thumbnailer_Cancel( p_thumbnailer, p_req );
-    while ( ctx.b_done == false )
-    {
-        vlc_tick_t timeout = vlc_tick_now() + VLC_TICK_FROM_SEC( 1 );
-        res = vlc_cond_timedwait( &ctx.cond, &ctx.lock, timeout );
-        assert( res != ETIMEDOUT );
-    }
-    vlc_mutex_unlock( &ctx.lock );
+        VLC_TICK_INVALID, VLC_THUMBNAILER_SEEK_PRECISE, p_item,
+        VLC_TICK_INVALID, thumbnailer_callback_cancel, NULL );
+
+    vlc_thumbnailer_DestroyRequest( p_thumbnailer, p_req );
+
+    /* Check that thumbnailer_callback_cancel is not called, even after the
+     * normal termination of the parsing. */
+    (vlc_tick_sleep)(VLC_TICK_FROM_MS(250));
 
     input_item_Release( p_item );
 

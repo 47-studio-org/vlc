@@ -33,6 +33,7 @@
 #include <QAbstractListModel>
 
 #include "qt.hpp"
+#include "util/singleton.hpp"
 
 class DialogId
 {
@@ -54,13 +55,15 @@ public: // Variables
 Q_DECLARE_METATYPE(DialogId)
 
 
-class DialogErrorModel : public QAbstractListModel
+class DialogErrorModel : public QAbstractListModel, public Singleton<DialogErrorModel>
 {
     Q_OBJECT
 
     Q_ENUMS(DialogRoles)
 
     Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
+    Q_PROPERTY(QString notificationText READ notificationText NOTIFY countChanged FINAL)
+    Q_PROPERTY(int repeatedMessageCount READ repeatedMessageCount NOTIFY countChanged FINAL)
 
 public: // Enums
     enum DialogRoles
@@ -75,10 +78,12 @@ private:
         QString title;
         QString text;
     };
+    QString lastNotificationText;
+    int repeatedNotificationCount = 0;
 
 public:
     explicit DialogErrorModel(qt_intf_t* intf, QObject * parent = nullptr);
-    ~DialogErrorModel();
+    virtual ~DialogErrorModel();
 
 public: // QAbstractItemModel implementation
     QVariant data(const QModelIndex & index, int role = Qt::DisplayRole) const override;
@@ -100,10 +105,15 @@ signals:
 
 public: // Properties
     int count() const;
+    QString notificationText() const;
+    int repeatedMessageCount() const;
+    Q_INVOKABLE void resetRepeatedMessageCount();
 
 private: // Variables
     QList<DialogError> m_data;
     qt_intf_t* m_intf = nullptr;
+
+    friend class Singleton<DialogErrorModel>;
 };
 
 class DialogModel : public QObject

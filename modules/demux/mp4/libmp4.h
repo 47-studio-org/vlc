@@ -26,6 +26,10 @@
 #include <vlc_codecs.h>
 #include "coreaudio.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Use alias for scaled time */
 typedef int64_t stime_t;
 
@@ -133,6 +137,7 @@ typedef int64_t stime_t;
 #define ATOM_cprt VLC_FOURCC( 'c', 'p', 'r', 't' )
 #define ATOM_iods VLC_FOURCC( 'i', 'o', 'd', 's' )
 #define ATOM_pasp VLC_FOURCC( 'p', 'a', 's', 'p' )
+#define ATOM_clap VLC_FOURCC( 'c', 'l', 'a', 'p' )
 #define ATOM_mfra VLC_FOURCC( 'm', 'f', 'r', 'a' )
 #define ATOM_mfro VLC_FOURCC( 'm', 'f', 'r', 'o' )
 #define ATOM_tfra VLC_FOURCC( 't', 'f', 'r', 'a' )
@@ -416,6 +421,9 @@ typedef int64_t stime_t;
 #define ATOM_mdcv VLC_FOURCC( 'm', 'd', 'c', 'v' )
 #define ATOM_clli VLC_FOURCC( 'c', 'l', 'l', 'i' )
 #define ATOM_purl VLC_FOURCC( 'p', 'u', 'r', 'l' )
+#define ATOM_dvcC VLC_FOURCC( 'd', 'v', 'c', 'C' )
+#define ATOM_dvvC VLC_FOURCC( 'd', 'v', 'v', 'C' )
+#define ATOM_dvwC VLC_FOURCC( 'd', 'v', 'w', 'C' )
 
 #define ATOM_0x40PRM VLC_FOURCC( '@', 'P', 'R', 'M' )
 #define ATOM_0x40PRQ VLC_FOURCC( '@', 'P', 'R', 'Q' )
@@ -717,6 +725,17 @@ typedef struct
     uint16_t i_ccw_degrees;
 } MP4_Box_data_irot_t;
 
+typedef struct
+{
+    uint8_t i_version_major;
+    uint8_t i_version_minor;
+    uint8_t i_profile;
+    uint8_t i_level;
+    uint8_t i_rpu_present;
+    uint8_t i_el_present;
+    uint8_t i_bl_present;
+} MP4_Box_data_dvcC_t;
+
 #define SAMPLE_DESC_COMMON_HEADER \
     uint8_t  i_reserved1[6];\
     uint16_t i_data_reference_index
@@ -965,18 +984,19 @@ typedef struct MP4_Box_data_stdp_s
 
 } MP4_Box_data_stdp_t;
 
+typedef struct
+{
+    uint64_t i_segment_duration; /* movie timescale */
+    int64_t  i_media_time; /* media(track) timescale */
+    uint16_t i_media_rate_integer;
+    uint16_t i_media_rate_fraction;
+} MP4_Box_data_elst_entry_t;
+
 typedef struct MP4_Box_data_elst_s
 {
-    uint8_t  i_version;
-    uint32_t i_flags;
-
     uint32_t i_entry_count;
 
-    uint64_t *i_segment_duration; /* movie timescale */
-    int64_t  *i_media_time; /* media(track) timescale */
-    uint16_t *i_media_rate_integer;
-    uint16_t *i_media_rate_fraction;
-
+    MP4_Box_data_elst_entry_t *entries;
 
 } MP4_Box_data_elst_t;
 
@@ -1343,21 +1363,33 @@ typedef struct
     uint8_t i_stream_number;
 } MP4_Box_data_ASF_t;
 
+typedef union
+{
+    struct
+    {
+        uint8_t i_num_leading_samples_known;
+        uint8_t i_num_leading_samples;
+    } rap;
+    struct
+    {
+        int16_t i_roll_distance;
+    } roll;
+} MP4_Box_data_sgpd_entry_t;
+
 typedef struct
 {
     uint8_t i_version;
     uint32_t i_grouping_type;
     uint32_t i_default_sample_description_index;
     uint32_t i_entry_count;
-    union
-    {
-        struct
-        {
-            uint8_t i_num_leading_samples_known;
-            uint8_t i_num_leading_samples;
-        } rap;
-    } *p_entries;
+    MP4_Box_data_sgpd_entry_t *p_entries;
 } MP4_Box_data_sgpd_t;
+
+typedef struct
+{
+    uint32_t i_sample_count;
+    uint32_t i_group_description_index;
+} MP4_Box_data_sbgp_entry_t;
 
 typedef struct
 {
@@ -1365,11 +1397,7 @@ typedef struct
     uint32_t i_grouping_type;
     uint32_t i_grouping_type_parameter;
     uint32_t i_entry_count;
-    struct
-    {
-        uint32_t *pi_sample_count;
-        uint32_t *pi_group_description_index;
-    } entries;
+    MP4_Box_data_sbgp_entry_t *p_entries;
 } MP4_Box_data_sbgp_t;
 
 typedef struct
@@ -1474,6 +1502,14 @@ typedef struct
     uint32_t i_horizontal_spacing;
     uint32_t i_vertical_spacing;
 } MP4_Box_data_pasp_t;
+
+typedef struct
+{
+    uint32_t i_width;
+    uint32_t i_height;
+    uint32_t i_x_offset;
+    uint32_t i_y_offset;
+} MP4_Box_data_clap_t;
 
 typedef struct
 {
@@ -1752,6 +1788,7 @@ typedef union MP4_Box_data_s
     MP4_Box_data_iods_t *p_iods;
     MP4_Box_data_btrt_t *p_btrt;
     MP4_Box_data_pasp_t *p_pasp;
+    MP4_Box_data_clap_t *p_clap;
     MP4_Box_data_trex_t *p_trex;
     MP4_Box_data_mehd_t *p_mehd;
     MP4_Box_data_sdtp_t *p_sdtp;
@@ -1760,6 +1797,7 @@ typedef union MP4_Box_data_s
     MP4_Box_data_vpcC_t *p_vpcC;
     MP4_Box_data_SmDm_t *p_SmDm;
     MP4_Box_data_CoLL_t *p_CoLL;
+    MP4_Box_data_dvcC_t *p_dvcC;
 
     MP4_Box_data_tfra_t *p_tfra;
     MP4_Box_data_mfro_t *p_mfro;
@@ -1965,5 +2003,9 @@ int MP4_ReadBoxContainerRestricted( stream_t *p_stream, MP4_Box_t *p_container,
                                     const uint32_t excludelist[] );
 
 int MP4_ReadBox_sample_vide( stream_t *p_stream, MP4_Box_t *p_box );
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

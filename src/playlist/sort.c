@@ -37,6 +37,7 @@
  */
 struct vlc_playlist_item_meta {
     vlc_playlist_item_t *item;
+    size_t index;
     const char *title_or_name;
     vlc_tick_t duration;
     const char *artist;
@@ -52,6 +53,8 @@ struct vlc_playlist_item_meta {
     bool has_track_number;
     bool has_disc_number;
     bool has_rating;
+    int64_t file_size;
+    int64_t file_modified;
 };
 
 static int
@@ -65,6 +68,29 @@ vlc_playlist_item_meta_CopyString(const char **to, const char *from)
     }
     else
         *to = NULL;
+    return VLC_SUCCESS;
+}
+
+static int
+vlc_playlist_item_meta_GetNumber(const char * str, int64_t * to)
+{
+    // NOTE: When we have an empty string we apply the default value.
+    if (*str == '\0')
+    {
+        *to = 0;
+
+        return VLC_SUCCESS;
+    }
+
+    char *end;
+
+    int64_t value = strtoull(str, &end, 10);
+
+    if (*end != '\0')
+        return VLC_EGENERIC;
+
+    *to = value;
+
     return VLC_SUCCESS;
 }
 
@@ -154,6 +180,32 @@ vlc_playlist_item_meta_InitField(struct vlc_playlist_item_meta *meta,
                 meta->rating = atoll(str);
             return VLC_SUCCESS;
         }
+        case VLC_PLAYLIST_SORT_KEY_FILE_SIZE:
+        {
+            char *str = input_item_GetInfoLocked(media, ".stat", "size");
+
+            if (str == NULL)
+                return VLC_EGENERIC;
+
+            int result = vlc_playlist_item_meta_GetNumber(str, &(meta->file_size));
+
+            free(str);
+
+            return result;
+        }
+        case VLC_PLAYLIST_SORT_KEY_FILE_MODIFIED:
+        {
+            char *str = input_item_GetInfoLocked(media, ".stat", "mtime");
+
+            if (str == NULL)
+                return VLC_EGENERIC;
+
+            int result = vlc_playlist_item_meta_GetNumber(str, &(meta->file_modified));
+
+            free(str);
+
+            return result;
+        }
         default:
             assert(!"Unknown sort key");
             vlc_assert_unreachable();
@@ -189,7 +241,7 @@ vlc_playlist_item_meta_InitFields(struct vlc_playlist_item_meta *meta,
 }
 
 static struct vlc_playlist_item_meta *
-vlc_playlist_item_meta_New(vlc_playlist_item_t *item,
+vlc_playlist_item_meta_New(size_t index, vlc_playlist_item_t *item,
                            const struct vlc_playlist_sort_criterion criteria[],
                            size_t count)
 {
@@ -199,6 +251,7 @@ vlc_playlist_item_meta_New(vlc_playlist_item_t *item,
         return NULL;
 
     meta->item = item;
+    meta->index = index;
 
     vlc_mutex_lock(&item->media->lock);
     int ret = vlc_playlist_item_meta_InitFields(meta, criteria, count);
@@ -305,6 +358,10 @@ CompareMetaByKey(const struct vlc_playlist_item_meta *a,
         case VLC_PLAYLIST_SORT_KEY_RATING:
             return CompareOptionalIntegers(a->has_rating, a->rating,
                                            b->has_rating, b->rating);
+        case VLC_PLAYLIST_SORT_KEY_FILE_SIZE:
+            return CompareIntegers(a->file_size, b->file_size);
+        case VLC_PLAYLIST_SORT_KEY_FILE_MODIFIED:
+            return CompareIntegers(a->file_modified, b->file_modified);
         default:
             assert(!"Unknown sort key");
             vlc_assert_unreachable();
@@ -339,7 +396,11 @@ compare_meta(const void *lhs, const void *rhs, void *userdata)
             return ret;
         }
     }
-    return 0;
+
+    /* If the items are equals regarding the sorting criteria, keep their
+     * initial relative order, to make the sort stable. */
+    assert(a->index != b->index);
+    return a->index < b->index ? -1 : 1;
 }
 
 static void
@@ -364,7 +425,7 @@ vlc_playlist_NewMetaArray(vlc_playlist_t *playlist,
     size_t i;
     for (i = 0; i < playlist->items.size; ++i)
     {
-        array[i] = vlc_playlist_item_meta_New(playlist->items.data[i],
+        array[i] = vlc_playlist_item_meta_New(i, playlist->items.data[i],
                                               criteria, count);
         if (unlikely(!array[i]))
             break;

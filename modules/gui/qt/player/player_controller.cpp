@@ -35,6 +35,7 @@
 #include <QFile>
 #include <QDir>
 #include <QSignalMapper>
+#include <QThreadPool>
 
 #include <assert.h>
 
@@ -154,6 +155,16 @@ void PlayerControllerPrivate::UpdateProgram(enum vlc_player_list_action action, 
 {
     Q_Q(PlayerController);
     m_programList.updatePrograms( action, prgm );
+
+    bool hasPrograms = (m_programList.getCount() > 1);
+
+    if (m_hasPrograms != hasPrograms)
+    {
+        m_hasPrograms = hasPrograms;
+
+        emit q->hasProgramsChanged(hasPrograms);
+    }
+
     emit q->isEncryptedChanged( prgm->scrambled );
 }
 
@@ -175,6 +186,19 @@ void PlayerControllerPrivate::UpdateTrackSelection(vlc_es_id_t *trackid, bool se
 void PlayerControllerPrivate::UpdateMeta( input_item_t *p_item )
 {
     Q_Q(PlayerController);
+
+    {
+        vlc_mutex_locker locker(&p_item->lock);
+
+        if (p_item->p_meta)
+        {
+            m_title   = vlc_meta_Get(p_item->p_meta, vlc_meta_Title);
+            m_artist  = vlc_meta_Get(p_item->p_meta, vlc_meta_Artist);
+            m_album   = vlc_meta_Get(p_item->p_meta, vlc_meta_Album);
+            m_artwork = vlc_meta_Get(p_item->p_meta, vlc_meta_ArtworkURL);
+        }
+    }
+
     emit q->currentMetaChanged( p_item  );
 }
 
@@ -355,6 +379,9 @@ static void on_player_state_changed(vlc_player_t *, enum vlc_player_state state,
             emit q->artChanged( "" );
             emit q->infoChanged( NULL );
             emit q->currentMetaChanged( (input_item_t *)NULL );
+
+            that->m_hasPrograms =false;
+            emit q->hasProgramsChanged( false );
 
             that->m_encrypted =false;
             emit q->isEncryptedChanged( false );
@@ -694,7 +721,7 @@ static void on_player_stats_changed(vlc_player_t *, const struct input_stats_t *
     });
 }
 
-static void on_player_atobloop_changed(vlc_player_t *, enum vlc_player_abloop state, vlc_tick_t time, float, void *data)
+static void on_player_atobloop_changed(vlc_player_t *, enum vlc_player_abloop state, vlc_tick_t time, double, void *data)
 {
     PlayerControllerPrivate* that = static_cast<PlayerControllerPrivate*>(data);
     msg_Dbg( that->p_intf, "on_player_atobloop_changed");
@@ -1246,7 +1273,7 @@ void PlayerController::jumpToTime(VLCTick i_time)
     vlc_player_locker lock{ d->m_player };
     if( !isCurrentItemSynced() )
         return;
-    vlc_player_JumpTime( d->m_player, vlc_tick_from_sec( i_time ) );
+    vlc_player_JumpTime( d->m_player, i_time );
 }
 
 void PlayerController::jumpToPos( float new_pos )
@@ -1771,14 +1798,29 @@ void PlayerController::setRecording( bool recording )
 {
     Q_D(PlayerController);
     vlc_player_locker lock{ d->m_player };
-    vlc_player_SetRecordingEnabled( d->m_player, recording );
+    vlc_player_SetRecordingEnabled( d->m_player, recording, NULL );
 }
 
 void PlayerController::snapshot()
 {
     VoutPtr vout = getVout();
     if (vout)
-        var_TriggerCallback(vout.get(), "video-snapshot");
+    {
+        /* Passing a lambda directly would require Qt 5.15:
+         * <https://doc.qt.io/qt-5/qthreadpool.html#start-1>
+         */
+        struct SnapshotTask : public QRunnable
+        {
+            VoutPtr vout;
+            SnapshotTask(VoutPtr vout) : vout(std::move(vout)) {}
+            void run() override
+            {
+                var_TriggerCallback(vout.get(), "video-snapshot");
+            }
+        };
+
+        QThreadPool::globalInstance()->start(new SnapshotTask(std::move(vout)));
+    }
 }
 
 
@@ -1867,7 +1909,7 @@ void PlayerController::setArt( input_item_t *p_item, QString fileUrl )
         QString old_url = decodeArtURL( p_item );
         old_url = QDir( old_url ).canonicalPath();
 
-        if( old_url.startsWith( QString::fromUtf8( psz_cachedir ) ) )
+        if( psz_cachedir != nullptr && old_url.startsWith( QString::fromUtf8( psz_cachedir ) ) )
             QFile( old_url ).remove(); /* Purge cached artwork */
 
         free( psz_cachedir );
@@ -1875,6 +1917,11 @@ void PlayerController::setArt( input_item_t *p_item, QString fileUrl )
         input_item_SetArtURL( p_item , fileUrl.toUtf8().constData() );
         d->UpdateArt( p_item );
     }
+}
+
+bool PlayerController::associateSubtitleFile(const QString &uri)
+{
+    return AddAssociatedMedia(SPU_ES, uri, true, true, true) == VLC_SUCCESS;
 }
 
 int PlayerController::AddAssociatedMedia(es_format_category_e cat, const QString &uri, bool select, bool notify, bool check_ext)
@@ -1947,6 +1994,7 @@ PRIMITIVETYPE_GETTER(bool, hasChapters, m_hasChapters)
 PRIMITIVETYPE_GETTER(bool, hasMenu, m_hasMenu)
 PRIMITIVETYPE_GETTER(bool, isMenu, m_isMenu)
 PRIMITIVETYPE_GETTER(bool, isInteractive, m_isInteractive)
+PRIMITIVETYPE_GETTER(bool, hasPrograms, m_hasPrograms)
 PRIMITIVETYPE_GETTER(bool, isEncrypted, m_encrypted)
 PRIMITIVETYPE_GETTER(bool, isRecording, m_recording)
 PRIMITIVETYPE_GETTER(PlayerController::ABLoopState, getABloopState, m_ABLoopState)
@@ -1956,6 +2004,10 @@ PRIMITIVETYPE_GETTER(bool, isTeletextEnabled, m_teletextEnabled)
 PRIMITIVETYPE_GETTER(bool, isTeletextAvailable, m_teletextAvailable)
 PRIMITIVETYPE_GETTER(int, getTeletextPage, m_teletextPage)
 PRIMITIVETYPE_GETTER(bool, getTeletextTransparency, m_teletextTransparent)
+PRIMITIVETYPE_GETTER(QString, getTitle, m_title)
+PRIMITIVETYPE_GETTER(QString, getArtist, m_artist)
+PRIMITIVETYPE_GETTER(QString, getAlbum, m_album)
+PRIMITIVETYPE_GETTER(QUrl, getArtwork, m_artwork)
 
 // High resolution time fed by SMPTE timer
 PRIMITIVETYPE_GETTER(QString, highResolutionTime, m_highResolutionTime)

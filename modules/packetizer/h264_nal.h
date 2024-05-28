@@ -24,6 +24,10 @@
 # include <vlc_es.h>
 # include <vlc_bits.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define PROFILE_H264_BASELINE             66
 #define PROFILE_H264_MAIN                 77
 #define PROFILE_H264_EXTENDED             88
@@ -75,6 +79,11 @@ enum h264_nal_unit_type_e
     H264_NAL_RESERVED_22 = 22,
     H264_NAL_RESERVED_23 = 23,
 };
+
+static inline enum h264_nal_unit_type_e h264_getNALType(const uint8_t *p)
+{
+    return (enum h264_nal_unit_type_e) (*p & 0x1f);
+}
 
 typedef struct h264_sequence_parameter_set_t h264_sequence_parameter_set_t;
 typedef struct h264_picture_parameter_set_t h264_picture_parameter_set_t;
@@ -216,5 +225,9 @@ typedef struct
 } h264_sei_recovery_point_t;
 
 bool h264_decode_sei_recovery_point( bs_t *, h264_sei_recovery_point_t * );
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* H264_NAL_H */

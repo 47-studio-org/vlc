@@ -40,50 +40,74 @@ MainInterface.MainTableView {
     //---------------------------------------------------------------------------------------------
     // Private
 
-    readonly property int _nbCols: VLCStyle.gridColumnsForWidth(listView_id.availableRowWidth)
+    readonly property int _nbCols: VLCStyle.gridColumnsForWidth(availableRowWidth)
 
-    //---------------------------------------------------------------------------------------------
-    // Settings
-    //---------------------------------------------------------------------------------------------
+    property var _modelSmall: [{
+        size: Math.max(2, _nbCols),
 
-    sortModel: [{
-        type: "image",
+        model: ({
+            criteria: mainCriteria,
 
-        criteria: "thumbnail",
+            subCriterias: [ "duration" ],
 
-        width: VLCStyle.colWidth(1),
+            showSection: "title",
 
-        showSection: "",
+            text: I18n.qtr("Title"),
 
-        placeHolder: VLCStyle.noArtVideoCover,
+            placeHolder: VLCStyle.noArtVideoCover,
 
-        headerDelegate: tableColumns.titleHeaderDelegate,
-        colDelegate   : tableColumns.titleDelegate,
-    }, {
-        isPrimary: true,
-        criteria: mainCriteria,
-
-        width: VLCStyle.colWidth(Math.max(listView_id._nbCols - 2, 1)),
-
-        showSection: "title",
-
-        text: I18n.qtr("Title")
-    }, {
-        criteria: "duration",
-
-        width: VLCStyle.colWidth(1),
-
-        showSection: "",
-
-        headerDelegate: tableColumns.timeHeaderDelegate, showContextButton: true,
-        colDelegate   : tableColumns.timeColDelegate
+            headerDelegate: tableColumns.titleHeaderDelegate,
+            colDelegate   : tableColumns.titleDelegate
+        })
     }]
+
+    property var _modelMedium: [{
+        size: 1,
+
+        model: ({
+            type: "image",
+
+            criteria: "thumbnail",
+
+            showSection: "",
+
+            placeHolder: VLCStyle.noArtVideoCover,
+
+            headerDelegate: tableColumns.titleHeaderDelegate,
+            colDelegate   : tableColumns.titleDelegate
+        })
+    }, {
+        size: Math.max(1, _nbCols - 2),
+
+        model: ({
+            criteria: mainCriteria,
+
+            showSection: "title",
+
+            text: I18n.qtr("Title")
+        })
+    }, {
+        size: 1,
+
+        model: ({
+            criteria: "duration",
+
+            showSection: "",
+            showContextButton: true,
+
+            headerDelegate: tableColumns.timeHeaderDelegate,
+            colDelegate   : tableColumns.timeColDelegate
+        })
+    }]
+
+    // Settings
+
+    sortModel: (availableRowWidth < VLCStyle.colWidth(4)) ? _modelSmall
+                                                          : _modelMedium
 
     section.property: "title_first_symbol"
 
     rowHeight: VLCStyle.tableCoverRow_height
-
-    headerColor: VLCStyle.colors.bg
 
     //---------------------------------------------------------------------------------------------
     // Connections
@@ -125,7 +149,11 @@ MainInterface.MainTableView {
     Widgets.TableColumns {
         id: tableColumns
 
-        showTitleText: false
+        showTitleText: (listView_id.sortModel === listView_id._modelSmall)
+        showCriterias: showTitleText
+
+        criteriaCover: "thumbnail"
+
         titleCover_height: VLCStyle.listAlbumCover_height
         titleCover_width: VLCStyle.listAlbumCover_width
         titleCover_radius: VLCStyle.listAlbumCover_radius

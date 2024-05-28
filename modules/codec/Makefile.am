@@ -62,10 +62,10 @@ libfluidsynth_plugin_la_LDFLAGS += -Wl,-framework,CoreFoundation,-framework,Core
 endif
 
 libaudiotoolboxmidi_plugin_la_SOURCES = codec/audiotoolbox_midi.c
-libaudiotoolboxmidi_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
-libaudiotoolboxmidi_plugin_la_LDFLAGS += -Wl,-framework,CoreFoundation,-framework,AudioToolbox
-EXTRA_LTLIBRARIES += libaudiotoolboxmidi_plugin.la
-codec_LTLIBRARIES += $(LTLIBaudiotoolboxmidi)
+libaudiotoolboxmidi_plugin_la_LDFLAGS = $(AM_LDFLAGS) -Wl,-framework,CoreFoundation,-framework,AudioToolbox
+if HAVE_DARWIN
+codec_LTLIBRARIES += libaudiotoolboxmidi_plugin.la
+endif
 
 liblpcm_plugin_la_SOURCES = codec/lpcm.c
 codec_LTLIBRARIES += liblpcm_plugin.la
@@ -240,6 +240,7 @@ if ENABLE_CSS
 # dependency: we need grammar build first
 BUILT_SOURCES += codec/webvtt/CSSGrammar.h
 libwebvtt_plugin_la_CFLAGS = $(AM_CFLAGS) -I$(srcdir)/codec/webvtt/ -I$(builddir)/codec/webvtt/
+libwebvtt_plugin_la_LFLAGS = $(AM_LFLAGS) --outfile=lex.yy.c
 libwebvtt_plugin_la_SOURCES += codec/webvtt/CSSGrammar.y \
                                codec/webvtt/CSSLexer.l \
                                codec/webvtt/css_parser.c \
@@ -248,6 +249,7 @@ libwebvtt_plugin_la_SOURCES += codec/webvtt/CSSGrammar.y \
                                codec/webvtt/css_style.h \
                                codec/webvtt/css_bridge.h
 css_parser_test_CFLAGS = $(libwebvtt_plugin_la_CFLAGS)
+css_parser_test_LFLAGS = $(AM_LFLAGS) --outfile=lex.yy.c
 css_parser_test_SOURCES = codec/webvtt/css_test.c \
                           codec/webvtt/css_parser.c \
                           codec/webvtt/CSSGrammar.y \
@@ -348,18 +350,22 @@ liboggspots_plugin_la_LIBADD = $(OGGSPOTS_LIBS)
 EXTRA_LTLIBRARIES += liboggspots_plugin.la
 codec_LTLIBRARIES += $(LTLIBoggspots)
 
-libvideotoolbox_plugin_la_SOURCES = codec/videotoolbox.c
-libvideotoolbox_plugin_la_CFLAGS = $(AM_CFLAGS)
-if HAVE_IOS
-libvideotoolbox_plugin_la_CFLAGS += -miphoneos-version-min=9.0
-endif
-if HAVE_TVOS
-libvideotoolbox_plugin_la_CFLAGS += -mtvos-version-min=10.2
-endif
+libvideotoolbox_plugin_la_SOURCES = codec/videotoolbox/decoder.c
 libvideotoolbox_plugin_la_LIBADD = libchroma_copy.la libvlc_hxxxhelper.la libvlc_vtutils.la
-libvideotoolbox_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)' -Wl,-framework,CoreFoundation -Wl,-framework,VideoToolbox -Wl,-framework,CoreMedia -Wl,-framework,CoreVideo
-EXTRA_LTLIBRARIES += libvideotoolbox_plugin.la
-codec_LTLIBRARIES += $(LTLIBvideotoolbox)
+libvideotoolbox_plugin_la_LDFLAGS = $(AM_LDFLAGS) -Wl,-framework,CoreFoundation -Wl,-framework,VideoToolbox -Wl,-framework,CoreMedia -Wl,-framework,CoreVideo
+if HAVE_DARWIN
+codec_LTLIBRARIES += libvideotoolbox_plugin.la
+endif
+
+libvideotoolbox_enc_plugin_la_SOURCES = codec/videotoolbox/encoder.c
+libvideotoolbox_enc_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) # Trigger MODULE_NAME declaration
+libvideotoolbox_enc_plugin_la_LIBADD = libvlc_hxxxhelper.la libvlc_vtutils.la
+libvideotoolbox_enc_plugin_la_LDFLAGS = $(AM_LDFLAGS) -Wl,-framework,CoreFoundation -Wl,-framework,VideoToolbox -Wl,-framework,CoreMedia -Wl,-framework,CoreVideo
+if HAVE_DARWIN
+if ENABLE_SOUT
+codec_LTLIBRARIES += libvideotoolbox_enc_plugin.la
+endif
+endif
 
 ### FFmpeg/libav ###
 libavcodec_common_la_SOURCES = codec/avcodec/fourcc.c codec/avcodec/avcommon.h \
@@ -425,7 +431,7 @@ libdxva2_plugin_la_SOURCES = \
 	packetizer/h264_nal.c packetizer/h264_nal.h \
 	packetizer/hevc_nal.c packetizer/hevc_nal.h \
 	codec/avcodec/dxva_blocklist.c
-libdxva2_plugin_la_LIBADD = libd3d9_common.la $(LIBCOM) -lshlwapi -luuid
+libdxva2_plugin_la_LIBADD = libd3d9_common.la $(LIBCOM) -luuid
 if !HAVE_WINSTORE
 if HAVE_AVCODEC_DXVA2
 codec_LTLIBRARIES += libdxva2_plugin.la
@@ -481,7 +487,8 @@ libmediacodec_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/codec/omxil
 libmediacodec_plugin_la_SOURCES = codec/omxil/mediacodec.c codec/omxil/mediacodec.h \
 	codec/omxil/mediacodec_jni.c codec/omxil/mediacodec_ndk.c codec/omxil/utils.c \
 	codec/omxil/omxil_utils.h codec/omxil/qcom.c codec/omxil/qcom.h
-libmediacodec_plugin_la_LIBADD = libchroma_copy.la libvlc_hxxxhelper.la libandroid_utils.la $(LIBDL)
+libmediacodec_plugin_la_LIBADD = libchroma_copy.la libvlc_hxxxhelper.la \
+	libandroid_env.la libandroid_utils.la $(LIBDL) $(GLES2_LIBS) $(EGL_LIBS)
 codec_LTLIBRARIES += $(LTLIBomxil)
 EXTRA_LTLIBRARIES += libomxil_plugin.la
 if HAVE_ANDROID
@@ -502,7 +509,7 @@ codec_LTLIBRARIES += $(LTLIBx265)
 libx262_plugin_la_SOURCES = codec/x264.c
 libx262_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DPLUGIN_X262
 libx262_plugin_la_CFLAGS = $(AM_CFLAGS) $(CFLAGS_x262)
-libx262_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(LDFLAGS_x262) -rpath '$(codecdir)'
+libx262_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(SYMBOLIC_LDFLAGS) -rpath '$(codecdir)'
 libx262_plugin_la_LIBADD = $(LIBS_x262) $(LIBM)
 EXTRA_LTLIBRARIES += libx262_plugin.la
 codec_LTLIBRARIES += $(LTLIBx262)
@@ -510,7 +517,7 @@ codec_LTLIBRARIES += $(LTLIBx262)
 libx264_plugin_la_SOURCES = codec/x264.c
 libx264_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) $(CPPFLAGS_x264) -DPLUGIN_X264
 libx264_plugin_la_CFLAGS = $(AM_CFLAGS) $(CFLAGS_x264)
-libx264_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(LDFLAGS_x264) -rpath '$(codecdir)'
+libx264_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(SYMBOLIC_LDFLAGS) -rpath '$(codecdir)'
 libx264_plugin_la_LIBADD = $(LIBS_x264) $(LIBM)
 EXTRA_LTLIBRARIES += libx264_plugin.la
 codec_LTLIBRARIES += $(LTLIBx264)
@@ -518,7 +525,7 @@ codec_LTLIBRARIES += $(LTLIBx264)
 libx26410b_plugin_la_SOURCES = codec/x264.c
 libx26410b_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DPLUGIN_X264_10B
 libx26410b_plugin_la_CFLAGS = $(AM_CFLAGS) $(CFLAGS_x26410b)
-libx26410b_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(LDFLAGS_x26410b) -rpath '$(codecdir)'
+libx26410b_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(SYMBOLIC_LDFLAGS) -rpath '$(codecdir)'
 libx26410b_plugin_la_LIBADD = $(LIBS_x26410b) $(LIBM)
 EXTRA_LTLIBRARIES += libx26410b_plugin.la
 codec_LTLIBRARIES += $(LTLIBx26410b)
@@ -618,6 +625,9 @@ libgstdecode_plugin_la_SOURCES = codec/gstreamer/gstdecode.c \
 								 codec/gstreamer/gstvlcvideopool.h \
 								 codec/gstreamer/gstvlcvideosink.c \
 								 codec/gstreamer/gstvlcvideosink.h \
+								 codec/gstreamer/gstcopypicture.c \
+								 codec/gstreamer/gstcopypicture.h \
+								 codec/gstreamer/gst_mem.h \
 								 codec/gstreamer/fourcc.c
 libgstdecode_plugin_la_CFLAGS = $(AM_CFLAGS) $(GST_VIDEO_CFLAGS) $(GST_APP_CFLAGS)
 libgstdecode_plugin_la_LIBADD = $(GST_VIDEO_LIBS) $(GST_APP_LIBS)

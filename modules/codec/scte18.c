@@ -73,7 +73,7 @@ typedef struct scte18_cea_t
  ****************************************************************************/
 #define BUF_ADVANCE(n) p_buffer += n; i_buffer -= n;
 
-static inline scte18_cea_t * scte18_cea_New()
+static inline scte18_cea_t * scte18_cea_New(void)
 {
     return calloc( 1, sizeof(scte18_cea_t) );
 }
@@ -221,7 +221,7 @@ static int Open( vlc_object_t *object )
 {
     decoder_t *dec = (decoder_t *)object;
 
-    if ( dec->fmt_in.i_codec != VLC_CODEC_SCTE_18 )
+    if ( dec->fmt_in->i_codec != VLC_CODEC_SCTE_18 )
         return VLC_EGENERIC;
 
     decoder_sys_t *p_sys = malloc( sizeof(decoder_sys_t) );

@@ -92,6 +92,11 @@ ListView {
             drag.source.dndView.model.remove(drag.source.DelegateModel.itemsIndex)
         }
     }
+
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.View
+    }
     
     MouseEventFilter {
         target: playerBtnDND
@@ -115,7 +120,11 @@ ListView {
         anchors.verticalCenter: parent.verticalCenter
 
         implicitHeight: VLCStyle.icon_medium
-        implicitWidth: Math.max(implicitHeight, playerBtnDND.width - x)
+
+        BindingCompat on implicitWidth {
+            delayed: true
+            value: Math.max(implicitHeight, playerBtnDND.width - x)
+        }
 
         property alias dropVisible: footerDropArea.containsDrag
 
@@ -129,7 +138,7 @@ ListView {
             implicitWidth: VLCStyle.dp(2, VLCStyle.scale)
 
             visible: dropVisible
-            color: VLCStyle.colors.accent
+            color: theme.accent
         }
 
         DropArea {

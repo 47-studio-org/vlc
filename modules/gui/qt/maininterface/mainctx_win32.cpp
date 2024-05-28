@@ -32,13 +32,15 @@
 #include "playlist/playlist_controller.hpp"
 #include "dialogs/dialogs_provider.hpp"
 #include "widgets/native/interface_widgets.hpp"
+#include "util/csdbuttonmodel.hpp"
 
 #include <QBitmap>
+#include <QTimer>
 
 #include <assert.h>
 
 #include <QWindow>
-#include <qpa/qplatformnativeinterface.h>
+#include QPNI_HEADER
 
 #include <dwmapi.h>
 
@@ -83,6 +85,13 @@
 #define GET_FLAGS_LPARAM(lParam)      (LOWORD(lParam))
 #define GET_KEYSTATE_LPARAM(lParam)   GET_FLAGS_LPARAM(lParam)
 
+
+// XXX: Cygwin (at least) doesn't define these macros. Too bad...
+#ifndef GET_X_LPARAM
+    #define GET_X_LPARAM(a) ((int16_t)(a))
+    #define GET_Y_LPARAM(a) ((int16_t)((a)>>16))
+#endif
+
 using namespace vlc::playlist;
 
 #ifndef WM_NCUAHDRAWCAPTION
@@ -106,13 +115,111 @@ HWND WinId( QWindow *windowHandle )
         return 0;
 }
 
+
+bool isWindowFixedSize(const QWindow *window)
+{
+    if (window->flags() & Qt::MSWindowsFixedSizeDialogHint)
+        return true;
+
+    const auto minSize = window->minimumSize();
+    const auto maxSize = window->maximumSize();
+
+    return minSize.isValid() && maxSize.isValid() && minSize == maxSize;
+}
+
+
+class WinSystemMenuButton : public SystemMenuButton
+{
+public:
+    WinSystemMenuButton(QWindow *window, QObject *parent)
+        : SystemMenuButton {parent}
+        , m_window {window}
+    {
+        connect(this, &CSDButton::clicked, this, &WinSystemMenuButton::handleClick);
+        connect(this, &CSDButton::doubleClicked, this, &WinSystemMenuButton::handleDoubleClick);
+    }
+
+    void showSystemMenu() override
+    {
+        HWND hwnd = (HWND)m_window->winId();
+        HMENU hmenu = ::GetSystemMenu(hwnd, FALSE);
+        if (!hmenu)
+            return;
+
+        // Tweak the menu items according to the current window status.
+        const auto winState = m_window->windowStates();
+        const bool maxOrFull = (winState.testFlag(Qt::WindowMaximized) || winState.testFlag(Qt::WindowFullScreen));
+        const bool fixedSize = isWindowFixedSize(m_window);
+
+        EnableMenuItem(hmenu, SC_MOVE, (MF_BYCOMMAND | (!maxOrFull ? MFS_ENABLED : MFS_DISABLED)));
+        EnableMenuItem(hmenu, SC_SIZE, (MF_BYCOMMAND | ((!maxOrFull && !fixedSize) ? MFS_ENABLED : MFS_DISABLED)));
+
+        EnableMenuItem(hmenu, SC_RESTORE, (MF_BYCOMMAND | ((maxOrFull && !fixedSize) ? MFS_ENABLED : MFS_DISABLED)));
+        EnableMenuItem(hmenu, SC_MINIMIZE, (MF_BYCOMMAND | MFS_ENABLED));
+        EnableMenuItem(hmenu, SC_MAXIMIZE, (MF_BYCOMMAND | ((!maxOrFull && !fixedSize) ? MFS_ENABLED : MFS_DISABLED)));
+        EnableMenuItem(hmenu, SC_CLOSE, (MF_BYCOMMAND | MFS_ENABLED));
+
+        // calculate screen point 'margin' down from system menu button's rect
+        const QPoint margin {0, 4};
+        const auto bottomLeft = rect().bottomLeft();
+        const auto screenPoints = m_window->mapToGlobal(bottomLeft) + margin;
+
+        const auto alignment = (QGuiApplication::isRightToLeft() ? TPM_RIGHTALIGN : TPM_LEFTALIGN);
+
+        // show menu
+        emit systemMenuVisibilityChanged(true);
+
+        const int action = TrackPopupMenu(hmenu, (TPM_RETURNCMD | alignment)
+                                          , screenPoints.x(), screenPoints.y()
+                                          , NULL, hwnd, 0);
+
+        // unlike native system menu which sends WM_SYSCOMMAND, TrackPopupMenu sends WM_COMMAND
+        // imitate native system menu by sending the action manually as WM_SYSCOMMAND
+        PostMessageW(hwnd, WM_SYSCOMMAND, action, 0);
+
+        emit systemMenuVisibilityChanged(false);
+    }
+
+private:
+    // target window
+    QWindow *m_window = {};
+
+    // used to reject click() incase a doubleClick() is followed
+    bool m_triggerSystemMenu = false;
+
+    void handleClick()
+    {
+        // delay the show of sytem menu to check if this 'click' is
+        // a double click, 'm_triggerSystemMenu' is used to reject the
+        // queued 'showSystemMenu' call in case this is a double click
+
+        m_triggerSystemMenu = true;
+        QTimer::singleShot(100, this, [this]()
+        {
+            if (!m_triggerSystemMenu)
+                return;
+
+            showSystemMenu();
+        });
+    }
+
+    void handleDoubleClick()
+    {
+        // reject any queued showSystemMenu call
+        m_triggerSystemMenu = false;
+
+        m_window->close();
+    }
+};
+
 class CSDWin32EventHandler : public QObject, public QAbstractNativeEventFilter
 {
 public:
-    CSDWin32EventHandler(const bool useClientSideDecoration, const bool isWin7Compositor, QWindow *window, QObject *parent)
+    CSDWin32EventHandler(const bool useClientSideDecoration, const bool isWin7Compositor, QWindow *window, CSDButtonModel *buttonmodel, QObject *parent)
         : QObject {parent}
         , m_useClientSideDecoration {useClientSideDecoration}
         , m_window {window}
+        , m_buttonmodel {buttonmodel}
         , m_isWin7Compositor {isWin7Compositor}
     {
         QApplication::instance()->installNativeEventFilter(this);
@@ -144,7 +251,9 @@ public:
         if ( !m_useClientSideDecoration || (msg->hwnd != WinId(m_window)) )
             return false;
 
-        if ( msg->message == WM_NCCALCSIZE )
+        switch ( msg->message )
+        {
+        case WM_NCCALCSIZE:
         {
             /* This is used to remove the decoration instead of using FramelessWindowHint because
              * frameless window don't support areo snapping
@@ -185,13 +294,107 @@ public:
             return true;
         }
 
-        // These undocumented messages are sent to draw themed window
-        // borders. Block them to prevent drawing borders over the client
-        // area.
-        if ( msg->message == WM_NCUAHDRAWCAPTION || msg->message == WM_NCUAHDRAWFRAME)
+        case WM_NCUAHDRAWCAPTION:
+        case WM_NCUAHDRAWFRAME:
         {
-             *result = 0;
-             return true;
+            // These undocumented messages are sent to draw themed window
+            // borders. Block them to prevent drawing borders over the client
+            // area.
+
+            *result = 0;
+            return true;
+        }
+
+        case WM_NCHITTEST:
+        {
+            // send to determine on what part of UI is mouse ON
+            // handle it to relay if mouse is on the CSD buttons
+            // required for snap layouts menu (WINDOWS 11)
+
+            setAllUnhovered();
+
+            // Get the point in screen coordinates.
+            POINT point = { GET_X_LPARAM(msg->lParam), GET_Y_LPARAM(msg->lParam) };
+
+            // Map the point to client coordinates.
+            ::MapWindowPoints(nullptr, msg->hwnd, &point, 1);
+
+            const QPoint qtPoint {point.x, point.y};
+            auto button = overlappingButton(qtPoint);
+            if (!button)
+                return false;
+
+            switch (button->type())
+            {
+            case CSDButton::Close:
+                *result = HTCLOSE;
+                return true;
+            case CSDButton::Minimize:
+                *result = HTMINBUTTON;
+                return true;
+            case CSDButton::MaximizeRestore:
+                *result = HTMAXBUTTON;
+                return true;
+            default:
+                vlc_assert_unreachable();
+                return false;
+            }
+
+            break;
+        }
+
+        case WM_NCMOUSEMOVE:
+        {
+            // when we handle WM_NCHITTEST, that makes the OS to capture the mouse events
+            // and WM_NCMOUSEMOVE is sent in this case, manually handle them here and relay
+            // to UI to draw correct button state
+            switch ( msg->wParam )
+            {
+            case HTCLOSE:
+                setHovered(CSDButton::Close);
+                break;
+            case HTMINBUTTON:
+                setHovered(CSDButton::Minimize);
+                break;
+            case HTMAXBUTTON:
+                setHovered(CSDButton::MaximizeRestore);
+                break;
+            }
+
+            // If we haven't previously asked for mouse tracking, request mouse
+            // tracking. We need to do this so we can get the WM_NCMOUSELEAVE
+            // message when the mouse leave the titlebar. Otherwise, we won't always
+            // get that message (especially if the user moves the mouse _real
+            // fast_).
+            const bool onSystemButton = (msg->wParam == HTCLOSE || msg->wParam == HTMINBUTTON || msg->wParam == HTMAXBUTTON);
+            if (!m_trackingMouse && onSystemButton)
+            {
+                TRACKMOUSEEVENT ev{};
+                ev.cbSize = sizeof(TRACKMOUSEEVENT);
+                // TME_NONCLIENT is absolutely critical here. In my experimentation,
+                // we'd get WM_MOUSELEAVE messages after just a HOVER_DEFAULT
+                // timeout even though we're not requesting TME_HOVER, which kinda
+                // ruined the whole point of this.
+                ev.dwFlags = TME_LEAVE | TME_NONCLIENT;
+                ev.hwndTrack = msg->hwnd;
+                ev.dwHoverTime = HOVER_DEFAULT; // we don't _really_ care about this.
+                TrackMouseEvent(&ev); // TODO check return?
+                m_trackingMouse = true;
+            }
+
+            break;
+        }
+
+        case WM_NCMOUSELEAVE:
+        case WM_MOUSELEAVE:
+        {
+            m_trackingMouse = false;
+
+            // release all buttons we may have captured
+            setAllUnhovered();
+
+            break;
+        }
         }
 
         return false;
@@ -228,7 +431,9 @@ private:
         }
 
         // add back shadows
-        const MARGINS m {0, 0, (m_useClientSideDecoration ? 1 : 0) /* top margin */ , 0};
+        // with positive margins, snap layouts menu (windows 11) won't appear
+        const int margin = (m_useClientSideDecoration ? - 1 : 0);
+        const MARGINS m {margin, margin, margin, margin};
         DwmExtendFrameIntoClientArea(winId, &m);
 
         SetWindowPos(winId, NULL, 0, 0, 0, 0,
@@ -237,9 +442,41 @@ private:
             SWP_NOSENDCHANGING | SWP_NOSIZE | SWP_NOZORDER);
     }
 
+    CSDButton *overlappingButton(const QPoint point)
+    {
+        for (auto button : m_buttonmodel->windowCSDButtons())
+        {
+            if (button->rect().contains(point))
+                return button;
+        }
+        return nullptr;
+    }
+
+    void setHovered(CSDButton::ButtonType type)
+    {
+        for (auto button : m_buttonmodel->windowCSDButtons()) {
+            if (button->type() == type) {
+                button->setShowHovered(true);
+                return ;
+            }
+        }
+
+        vlc_assert_unreachable();
+    }
+
+    void setAllUnhovered()
+    {
+        for (auto button : m_buttonmodel->windowCSDButtons())
+        {
+            button->setShowHovered(false);
+        }
+    }
+
     DWORD m_nonCSDGwlStyle = 0;
     bool m_useClientSideDecoration;
     QWindow *m_window;
+    CSDButtonModel *m_buttonmodel;
+    bool m_trackingMouse = false;
     const bool m_isWin7Compositor;
 };
 
@@ -511,10 +748,13 @@ InterfaceWindowHandlerWin32::InterfaceWindowHandlerWin32(qt_intf_t *_p_intf, Mai
 #if QT_CLIENT_SIDE_DECORATION_AVAILABLE
     , m_CSDWindowEventHandler(new CSDWin32EventHandler(mainCtx->useClientSideDecoration(),
                                                        _p_intf->p_compositor->type() == vlc::Compositor::Win7Compositor,
-                                                       window, window))
+                                                       window, mainCtx->csdButtonModel(), window))
 #endif
 
 {
+    auto systemMenuButton = std::make_shared<WinSystemMenuButton>(mainCtx->intfMainWindow(), nullptr);
+    mainCtx->csdButtonModel()->setSystemMenuButton(systemMenuButton);
+
     QApplication::instance()->installNativeEventFilter(this);
 }
 
@@ -614,7 +854,7 @@ bool InterfaceWindowHandlerWin32::eventFilter(QObject* obj, QEvent* ev)
     return ret;
 }
 
-bool InterfaceWindowHandlerWin32::nativeEventFilter(const QByteArray &eventType, void *message, long *result)
+bool InterfaceWindowHandlerWin32::nativeEventFilter(const QByteArray &, void *message, long *result)
 {
     MSG* msg = static_cast<MSG*>( message );
 

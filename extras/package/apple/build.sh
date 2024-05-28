@@ -423,11 +423,11 @@ gen_vlc_static_module_list()
     done
 
     printf "\
-#include <stddef.h>\\n\
-#define VLC_ENTRY_FUNC(funcname)\
-int funcname(int (*)(void *, void *, int, ...), void *)\\n\
+#include \"config.h\"\\n\
+#include <vlc_common.h>\\n\
+#include <vlc_plugin.h>\\n\
 %b\\n\
-const void *vlc_static_modules[] = {\\n
+const vlc_plugin_cb vlc_static_modules[] = {\\n
 %b
     NULL\\n
 };" \
@@ -494,15 +494,6 @@ done
 export MAKEFLAGS="-j${VLC_USE_NUMBER_OF_CORES} ${MAKEFLAGS}"
 if [ "${VLC_REQUESTED_CORE_COUNT}" != "0" ]; then
     export MAKEFLAGS="${MAKEFLAGS} -j${VLC_REQUESTED_CORE_COUNT}"
-fi
-
-# Validate arguments
-if [ "$VLC_MAKE_PREBUILT_CONTRIBS" -gt "0" ] &&
-   [ "$VLC_USE_PREBUILT_CONTRIBS" -gt "0" ]; then
-    echo >&2 "ERROR: The --package-contribs and --with-prebuilt-contribs options"
-    echo >&2 "       can not be used together."
-    usage
-    exit 1
 fi
 
 # Check for some required tools before proceeding
@@ -591,21 +582,11 @@ echo "Building needed tools (if missing)"
 cd "$VLC_SRC_DIR/extras/tools" || abort_err "Failed cd to tools dir"
 ./bootstrap || abort_err "Bootstrapping tools failed"
 $MAKE || abort_err "Building tools failed"
-if [ $VLC_HOST_ARCH = "armv7" ]; then
-$MAKE .buildgas \
-    || abort_err "Building gas-preprocessor tool failed"
-fi
 echo ""
 
 ##########################################################
 #                     Contribs build                     #
 ##########################################################
-if [ "$VLC_USE_PREBUILT_CONTRIBS" -gt "0" ]; then
-    echo "Fetching prebuilt contribs"
-else
-    echo "Building contribs for $VLC_HOST_ARCH"
-fi
-
 # Combine settings from config file
 VLC_CONTRIB_OPTIONS=( "${VLC_CONTRIB_OPTIONS_BASE[@]}" )
 
@@ -641,18 +622,23 @@ fi
     "${VLC_CONTRIB_OPTIONS[@]}" \
 || abort_err "Bootstrapping contribs failed"
 
+# Print list of contribs that will be built
+$MAKE list
+
 if [ "$VLC_USE_PREBUILT_CONTRIBS" -gt "0" ]; then
+    echo "Fetching prebuilt contribs"
     # Fetch prebuilt contribs
     if [ -z "$VLC_PREBUILT_CONTRIBS_URL" ]; then
-        $MAKE prebuilt || abort_err "Fetching prebuilt contribs failed"
+        $MAKE prebuilt || PREBUILT_FAILED=yes && echo "ERROR: Fetching prebuilt contribs failed" >&2
     else
         $MAKE prebuilt PREBUILT_URL="$VLC_PREBUILT_CONTRIBS_URL" \
-            || abort_err "Fetching prebuilt contribs from ${VLC_PREBUILT_CONTRIBS_URL} failed"
+             || PREBUILT_FAILED=yes && echo "ERROR: Fetching prebuilt contribs from ${VLC_PREBUILT_CONTRIBS_URL} failed" >&2
     fi
 else
-    # Print list of contribs that will be built
-    $MAKE list
-
+    PREBUILT_FAILED=yes
+fi
+if [ -n "$PREBUILT_FAILED" ]; then
+    echo "Building contribs for $VLC_HOST_ARCH"
     # Download source packages
     $MAKE fetch
 
@@ -663,6 +649,8 @@ else
     if [ "$VLC_MAKE_PREBUILT_CONTRIBS" -gt "0" ]; then
         $MAKE package || abort_err "Creating prebuilt contribs package failed"
     fi
+else
+    $MAKE tools
 fi
 
 echo ""
@@ -792,7 +780,7 @@ VLC_STATIC_MODULELIST_NAME="static-module-list"
 rm -f "${VLC_STATIC_MODULELIST_NAME}.c" "${VLC_STATIC_MODULELIST_NAME}.o"
 gen_vlc_static_module_list "${VLC_STATIC_MODULELIST_NAME}.c" "${VLC_PLUGINS_SYMBOL_LIST[@]}"
 
-${VLC_HOST_CC:-cc} -c  ${CFLAGS} "${VLC_STATIC_MODULELIST_NAME}.c" \
+${VLC_HOST_CC:-cc} -c  ${CFLAGS} -I"${VLC_SRC_DIR}/include" -I"${VLC_BUILD_DIR}/build" "${VLC_STATIC_MODULELIST_NAME}.c" \
   || abort_err "Compiling module list file failed"
 
 echo "${VLC_BUILD_DIR}/static-lib/${VLC_STATIC_MODULELIST_NAME}.o" \

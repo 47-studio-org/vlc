@@ -35,9 +35,13 @@ ifndef HAVE_WIN32
 endif
 	$(MOVE)
 
+X265_CONF := -DENABLE_SHARED=OFF -DENABLE_CLI=OFF
+
 .x265: x265 toolchain.cmake
 	$(REQUIRE_GPL)
-	cd $</source && $(HOSTVARS_PIC) $(CMAKE) -DENABLE_SHARED=OFF -DCMAKE_SYSTEM_PROCESSOR=$(ARCH) -DENABLE_CLI=OFF
-	+$(CMAKEBUILD) $</source --target install
-	sed -e s/'[^ ]*clang_rt[^ ]*'//g -i.orig "$(PREFIX)/lib/pkgconfig/x265.pc"
+	$(CMAKECLEAN)
+	$(HOSTVARS) $(CMAKE) -S $</source $(X265_CONF)
+	+$(CMAKEBUILD)
+	sed -e s/'[^ ]*clang_rt[^ ]*'//g -i.orig "$(BUILD_DIR)/x265.pc"
+	$(CMAKEINSTALL)
 	touch $@

@@ -31,6 +31,7 @@
 # include "config.h"
 #endif
 
+#include <assert.h>
 #include <limits.h>
 
 #include <vlc_common.h>
@@ -184,11 +185,11 @@ static const char *const ts_standards_list_text[] =
 #define SOUT_CFG_PREFIX "sout-ts-"
 #define MAX_PMT 64       /* Maximum number of programs. FIXME: I just chose an arbitrary number. Where is the maximum in the spec? */
 #define MAX_PMT_PID 64       /* Maximum pids in each pmt.  FIXME: I just chose an arbitrary number. Where is the maximum in the spec? */
-#if MAX_SDT_DESC < MAX_PMT
-  #error "MAX_SDT_DESC < MAX_PMT"
-#endif
+
+static_assert (MAX_SDT_DESC >= MAX_PMT, "MAX_SDT_DESC < MAX_PMT");
 
 #define BLOCK_FLAG_NO_KEYFRAME (1 << BLOCK_FLAG_PRIVATE_SHIFT) /* This is not a key frame for bitrate shaping */
+#define BLOCK_FLAG_FOR_PCR     (1 << (BLOCK_FLAG_PRIVATE_SHIFT+1))
 
 vlc_module_begin ()
     set_description( N_("TS muxer (libdvbpsi)") )
@@ -255,7 +256,7 @@ typedef struct pmt_map_t   /* Holds the mapping between the pmt-pid/pmt table */
 
 typedef struct
 {
-    int     i_depth;
+    size_t   i_depth;
     block_t *p_first;
     block_t **pp_last;
 } sout_buffer_chain_t;
@@ -269,51 +270,33 @@ static inline void BufferChainInit  ( sout_buffer_chain_t *c )
 
 static inline void BufferChainAppend( sout_buffer_chain_t *c, block_t *b )
 {
-    *c->pp_last = b;
-    c->i_depth++;
-
-    while( b->p_next )
-    {
-        b = b->p_next;
+    for( block_t *bb = b; bb; bb = bb->p_next )
         c->i_depth++;
-    }
-    c->pp_last = &b->p_next;
+    block_ChainLastAppend( &c->pp_last, b );
 }
 
 static inline block_t *BufferChainGet( sout_buffer_chain_t *c )
 {
     block_t *b = c->p_first;
-
     if( b )
     {
         c->i_depth--;
         c->p_first = b->p_next;
-
-        if( c->p_first == NULL )
-        {
-            c->pp_last = &c->p_first;
-        }
-
         b->p_next = NULL;
+        if( c->p_first == NULL )
+            c->pp_last = &c->p_first;
     }
     return b;
 }
 
 static inline block_t *BufferChainPeek( sout_buffer_chain_t *c )
 {
-    block_t *b = c->p_first;
-
-    return b;
+    return c->p_first;
 }
 
 static inline void BufferChainClean( sout_buffer_chain_t *c )
 {
-    block_t *b;
-
-    while( ( b = BufferChainGet( c ) ) )
-    {
-        block_Release( b );
-    }
+    block_ChainRelease(c->p_first);
     BufferChainInit( c );
 }
 
@@ -1698,7 +1681,7 @@ static void TSSchedule( sout_mux_t *p_mux, sout_buffer_chain_t *p_chain_ts,
             i_max_diff = i_new_dts - p_ts->i_dts;
             i_cut_dts = p_ts->i_dts;
         }
-        msg_Dbg( p_mux, "adjusting rate at %"PRId64"/%"PRId64" (%d/%d)",
+        msg_Dbg( p_mux, "adjusting rate at %"PRId64"/%"PRId64" (%zu/%zu)",
                  i_cut_dts - i_pcr_dts, i_pcr_length, new_chain.i_depth,
                  p_chain_ts->i_depth );
         if ( new_chain.i_depth )
@@ -1737,7 +1720,7 @@ static void TSDate( sout_mux_t *p_mux, sout_buffer_chain_t *p_chain_ts,
         p_ts->i_dts    = i_new_dts;
         p_ts->i_length = i_pcr_length / i_packet_count;
 
-        if( p_ts->i_flags & BLOCK_FLAG_CLOCK )
+        if( p_ts->i_flags & BLOCK_FLAG_FOR_PCR )
         {
             /* msg_Dbg( p_mux, "pcr=%lld ms", p_ts->i_dts / 1000 ); */
             TSSetPCR( p_ts, p_ts->i_dts - p_sys->first_dts );
@@ -1805,7 +1788,7 @@ static block_t *TSNew( sout_mux_t *p_mux, sout_input_sys_t *p_stream,
         int i_stuffing = i_payload_max - i_payload;
         if( b_pcr )
         {
-            p_ts->i_flags |= BLOCK_FLAG_CLOCK;
+            p_ts->i_flags |= BLOCK_FLAG_FOR_PCR;
 
             p_ts->p_buffer[4] = 7 + i_stuffing;
             p_ts->p_buffer[5] = 1 << 4; /* PCR_flag */

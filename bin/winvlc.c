@@ -36,9 +36,6 @@
 #include <windows.h>
 #include <shellapi.h>
 
-#ifndef _WIN32_IE
-#  define  _WIN32_IE 0x501
-#endif
 #include <fcntl.h>
 #include <io.h>
 #include <shlobj.h>
@@ -97,7 +94,7 @@ static void PrioritizeSystem32(void)
     } PROCESS_MITIGATION_IMAGE_LOAD_POLICY;
 #endif
 #if _WIN32_WINNT < _WIN32_WINNT_WIN8
-    BOOL WINAPI (*SetProcessMitigationPolicy)(PROCESS_MITIGATION_POLICY, PVOID, SIZE_T);
+    BOOL (WINAPI *SetProcessMitigationPolicy)(PROCESS_MITIGATION_POLICY, PVOID, SIZE_T);
     HINSTANCE h_Kernel32 = GetModuleHandle(TEXT("kernel32.dll"));
     if ( !h_Kernel32 )
         return;

@@ -1,5 +1,5 @@
 /*****************************************************************************
- * Copyright (C) 2020 VLC authors and VideoLAN
+ * Copyright (C) 2022 VLC authors and VideoLAN
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,37 +21,72 @@ import QtGraphicalEffects 1.0
 
 import "qrc:///style/"
 
-Rectangle {
+// This item can be used as a layer effect.
+// Right now, it has the following limitations:
+// * The blur effect is processed for the whole source,
+//   even though it is only shown for the area denoted
+//   by effectRect. This is caused by FastBlur not
+//   accepting a source rectangle.
+// * The source is sampled and displayed as a whole,
+//   however it is stacked below of the blur effect
+//   so it is only partly seen as intended.
+// * As a corollary of the previous limitation, you should
+//   always have a solid background for the source item.
+//   otherwise, the effect can not work properly.
+Item {
     id: effect
 
-    property alias source: effectSource.sourceItem
-    property alias sourceRect: effectSource.sourceRect
-    property alias recursive: effectSource.recursive
-    property alias blurRadius: blurEffect.radius
-    property alias tint: effect.color
+    property var source
 
-    property real tintStrength: 0.7
+    // Rectangular area where the effect should be applied:
+    property alias effectRect: blurProxy.sourceRect
+
+    property alias blurRadius: blurEffect.radius
+
+    property color tint: "transparent"
+    property real tintStrength: Qt.colorEqual(tint, "transparent") ? 0.0 : 0.7
     property real noiseStrength: 0.02
     property real exclusionStrength: 0.09
+
+    ShaderEffect {
+        anchors.fill: parent
+
+        property alias source: effect.source
+
+        cullMode: ShaderEffect.BackFaceCulling
+    }
 
     FastBlur {
         id: blurEffect
 
         anchors.fill: parent
 
-        source: ShaderEffectSource {
-            id: effectSource
-            sourceItem: effect.source
-            sourceRect: effect.mapToItem(effect.source,
-                                         effect.x,
-                                         effect.y,
-                                         effect.width,
-                                         effect.height)
-            visible: false
-            samples: 0
-        }
+        source: effect.source
 
         radius: 64
+
+        visible: false
+    }
+
+    ShaderEffectSource {
+        id: blurProxy
+
+        x: Math.floor(sourceRect.x)
+        y: Math.floor(sourceRect.y)
+        width: sourceRect.width > 0 ? Math.ceil(sourceRect.width)
+                                    : implicitWidth
+        height: sourceRect.height > 0 ? Math.ceil(sourceRect.height)
+                                      : implicitHeight
+
+        implicitWidth: Math.ceil(parent.width)
+        implicitHeight: Math.ceil(parent.height)
+
+        sourceItem: blurEffect
+        recursive: false
+        samples: 0
+        smooth: false
+
+        mipmap: false
 
         layer.enabled: true
         layer.effect: ShaderEffect {
@@ -60,9 +95,13 @@ Rectangle {
             readonly property real noiseStrength: effect.noiseStrength
             readonly property real exclusionStrength: effect.exclusionStrength
 
+            cullMode: ShaderEffect.BackFaceCulling
+
             fragmentShader: "
                 uniform lowp sampler2D source; // this item
                 varying highp vec2 qt_TexCoord0;
+
+                uniform lowp float qt_Opacity;
 
                 uniform lowp vec4  tint;
 
@@ -88,7 +127,7 @@ Rectangle {
 
                    blurred = exclude(blurred, exclColor);
 
-                   gl_FragColor = mix(blurred, tint, tintStrength) + noise;
+                   gl_FragColor = (mix(blurred, tint, tintStrength) + noise) * qt_Opacity;
                 }"
         }
     }

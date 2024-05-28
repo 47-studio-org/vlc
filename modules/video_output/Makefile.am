@@ -119,6 +119,12 @@ vout_LTLIBRARIES += \
 	libcaeagl_ios_plugin.la
 endif
 
+libglinterop_gst_mem_plugin_la_SOURCES = video_output/opengl/interop_gst_mem.c \
+	video_output/opengl/interop.h codec/gstreamer/gst_mem.h
+libglinterop_gst_mem_plugin_la_CFLAGS = $(AM_CFLAGS) $(GL_CFLAGS) $(GST_VIDEO_CFLAGS) \
+	$(GST_APP_CFLAGS)
+libglinterop_gst_mem_plugin_la_LIBADD = $(GST_VIDEO_LIBS) $(GST_APP_LIBS)
+
 libglinterop_vaapi_plugin_la_SOURCES = video_output/opengl/interop_vaapi.c \
 	video_output/opengl/interop.h \
 	hw/vaapi/vlc_vaapi.c hw/vaapi/vlc_vaapi.h
@@ -134,6 +140,10 @@ if HAVE_GL
 if HAVE_EGL
 if HAVE_VAAPI
 vout_LTLIBRARIES += libglinterop_vaapi_plugin.la
+endif
+
+if HAVE_GST_DECODE
+vout_LTLIBRARIES += libglinterop_gst_mem_plugin.la
 endif
 endif # HAVE_EGL
 
@@ -204,6 +214,7 @@ libglwin32_plugin_la_SOURCES = $(OPENGL_VOUT_COMMONSOURCES) \
 	video_output/win32/events.c video_output/win32/events.h \
 	video_output/win32/sensors.cpp \
 	video_output/win32/win32touch.c video_output/win32/win32touch.h
+libglwin32_plugin_la_CXXFLAGS = $(AM_CXXFLAGS) $(LIBCOMCXXFLAGS)
 libwgl_plugin_la_SOURCES = video_output/win32/wgl.c
 
 libglwin32_plugin_la_LIBADD = libchroma_copy.la -lopengl32 -lgdi32 $(LIBCOM) -luuid libvlc_opengl.la
@@ -244,12 +255,15 @@ vout_LTLIBRARIES += libegl_win32_plugin.la
 endif
 endif
 
-libdrawable_plugin_la_SOURCES = video_output/win32/drawable.c
+libdrawable_plugin_la_SOURCES = video_output/win32/drawable.c \
+	video_output/wasync_resize_compressor.h
 if HAVE_WIN32_DESKTOP
 vout_LTLIBRARIES += libdrawable_plugin.la
 endif
 
-libwin32_window_plugin_la_SOURCES = video_output/win32/window.c
+libwin32_window_plugin_la_SOURCES = video_output/win32/window.c \
+	video_output/wasync_resize_compressor.h
+libwin32_window_plugin_la_LIBADD = -lgdi32
 if HAVE_WIN32_DESKTOP
 vout_LTLIBRARIES += libwin32_window_plugin.la
 endif
@@ -277,24 +291,34 @@ endif
 libandroid_utils_la_SOURCES = video_output/android/utils.c video_output/android/utils.h
 libandroid_utils_la_CFLAGS = $(AM_CFLAGS) $(GLES2_CFLAGS) $(EGL_CFLAGS)
 libandroid_utils_la_LIBADD = $(GLES2_LIBS) $(EGL_LIBS)
+
+libandroid_env_la_SOURCES = \
+	video_output/android/env.c \
+	video_output/android/env.h
 if HAVE_ANDROID
-noinst_LTLIBRARIES += libandroid_utils.la
+noinst_LTLIBRARIES += \
+	libandroid_utils.la \
+	libandroid_env.la
 endif
 
 libegl_android_plugin_la_SOURCES = video_output/opengl/egl.c
 libegl_android_plugin_la_CFLAGS = $(AM_CFLAGS) $(EGL_CFLAGS) -DUSE_PLATFORM_ANDROID=1
-libegl_android_plugin_la_LIBADD = $(EGL_LIBS) libandroid_utils.la
+libegl_android_plugin_la_LIBADD = libandroid_env.la $(EGL_LIBS) libandroid_utils.la
 
-libandroid_window_plugin_la_SOURCES = video_output/android/window.c
-libandroid_window_plugin_la_LIBADD = libandroid_utils.la $(LIBDL)
+libandroid_window_plugin_la_SOURCES = video_output/android/window.c \
+	video_output/wasync_resize_compressor.h
+libandroid_window_plugin_la_LIBADD = \
+	libandroid_env.la libandroid_utils.la $(LIBDL) $(EGL_LIBS) $(GLES2_LIBS)
 
 libandroid_display_plugin_la_SOURCES = video_output/android/display.c
-libandroid_display_plugin_la_LIBADD = libandroid_utils.la $(LIBDL)
+libandroid_display_plugin_la_CFLAGS = $(AM_CFLAGS) $(GLES2_CFLAGS) -DUSE_OPENGL_ES2
+libandroid_display_plugin_la_LIBADD = libvlc_opengles.la $(EGL_LIBS) $(GLES2_LIBS)
 
 libglinterop_android_plugin_la_SOURCES = video_output/opengl/interop_android.c \
 	video_output/opengl/interop.h
 libglinterop_android_plugin_la_CFLAGS = $(AM_CFLAGS) -DUSE_OPENGL_ES2
-libglinterop_android_plugin_la_LIBADD = libandroid_utils.la
+libglinterop_android_plugin_la_LIBADD = libandroid_env.la libandroid_utils.la \
+	$(EGL_LIBS) $(GLES2_LIBS)
 
 if HAVE_ANDROID
 vout_LTLIBRARIES += libandroid_window_plugin.la libandroid_display_plugin.la

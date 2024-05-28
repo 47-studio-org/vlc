@@ -52,21 +52,31 @@ T.Popup {
 
     // Children
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: popupTheme
+        colorSet: ColorContext.Window
+    }
+
     T.Overlay.modal: null
 
     background: Rectangle {
         opacity: 0.8
-        color: "#212121"
+        color: popupTheme.bg.primary
     }
 
     contentItem: StackView {
-        id: view
-
         focus: true
         clip: true
 
         initialItem: frontPage
 
+        //erf, popup are weird, content is not parented to the root
+        //so, duplicate the context here for the childrens
+        readonly property ColorContext colorContext: ColorContext {
+            id: theme
+            colorSet: popupTheme.colorSet
+            palette: popupTheme.palette
+        }
 
         onCurrentItemChanged: currentItem.forceActiveFocus()
 
@@ -154,7 +164,7 @@ T.Popup {
                 }]
 
                 delegate: Widgets.IconTrackButton {
-                    size: (index === 0) ? VLCStyle.dp(24, VLCStyle.scale)
+                    size: (index === 0) ? VLCStyle.fontSize_large
                                         : VLCStyle.dp(40, VLCStyle.scale)
 
                     x: (column.width - width) / 2
@@ -213,8 +223,7 @@ T.Popup {
                            width: VLCStyle.margin_xxxsmall
 
                            height: tracksListContainer.height
-                           color: "white"
-                           opacity: .1
+                           color: theme.border
                        }
                     }
 
@@ -240,13 +249,13 @@ T.Popup {
                                    - parent.rightPadding
 
                             text: modelData.title
-                            color: "white"
+                            color: theme.fg.primary
                         }
 
                         Widgets.IconTrackButton {
                             id: button
 
-                            size: VLCStyle.icon_normal
+                            size: VLCStyle.icon_track
 
                             focus: true
 

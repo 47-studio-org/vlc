@@ -50,14 +50,10 @@ FocusScope {
     // Example usage can be found in 'Playlist/PlaylistOverlayMenu.qml' file
     property var model: undefined
 
-    property VLCColors colors: VLCStyle.colors
-
     onModelChanged: {
         listView.currentModel = model
         listView.resetStack()
     }
-
-    property alias effectSource: effect.source
 
     property alias scrollBarActive: scrollBar.active
 
@@ -79,6 +75,11 @@ FocusScope {
             close()
             event.accepted = true
         }
+    }
+
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Window
     }
 
     Rectangle {
@@ -103,8 +104,10 @@ FocusScope {
         }
     }
 
-    Item {
+    Rectangle {
         id: parentItem
+
+        color: theme.bg.primary
 
         anchors {
             top: parent.top
@@ -114,23 +117,12 @@ FocusScope {
             left: isRight ? undefined : parent.left
         }
 
+        // TODO: Qt >= 5.12 use TapHandler
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
 
             acceptedButtons: Qt.NoButton
-        }
-
-        FrostedGlassEffect {
-            id: effect
-            anchors.fill: parent
-
-            source: backgroundItem
-
-            color: VLCStyle.colors.topBanner
-
-            tintStrength: 0.0
-            exclusionStrength: 0.1
         }
 
         ListView {
@@ -193,7 +185,7 @@ FocusScope {
                 font.pixelSize: VLCStyle.fontSize_xlarge
                 text: listView.currentModel.title
 
-                color: colors.text
+                color: theme.fg.primary
 
                 leftPadding: root.leftPadding
                 rightPadding: root.rightPadding
@@ -253,8 +245,8 @@ FocusScope {
                     Loader {
                         id: icon
 
-                        Layout.preferredWidth: VLCStyle.icon_small
-                        Layout.preferredHeight: VLCStyle.icon_small
+                        Layout.preferredWidth: VLCStyle.icon_normal
+                        Layout.preferredHeight: VLCStyle.icon_normal
                         Layout.alignment: Qt.AlignHCenter
 
                         active: (!!modelData.icon.source || !!modelData.fontIcon || modelData.tickMark === true)
@@ -272,7 +264,7 @@ FocusScope {
                             IconLabel {
                                 horizontalAlignment: Text.AlignHCenter
                                 text: modelData.fontIcon
-                                color: colors.text
+                                color: theme.fg.primary
                             }
                         }
 
@@ -281,7 +273,7 @@ FocusScope {
                             ListLabel {
                                 horizontalAlignment: Text.AlignHCenter
                                 text: "✓"
-                                color: colors.text
+                                color: theme.fg.primary
                             }
                         }
 
@@ -303,7 +295,7 @@ FocusScope {
 
                         font.weight: Font.Normal
                         text: modelData.text
-                        color: colors.text
+                        color: theme.fg.primary
                     }
 
                     ListLabel {
@@ -317,13 +309,13 @@ FocusScope {
                                                                       : button.yieldsAnotherModel ? "➜"
                                                                                                   : ""
 
-                        color: colors.text
+                        color: theme.fg.primary
                     }
                 }
             }
 
             highlight: Rectangle {
-                color: colors.accent
+                color: theme.accent
                 opacity: 0.8
             }
 

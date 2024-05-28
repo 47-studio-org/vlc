@@ -35,7 +35,7 @@
 #include <ctype.h>
 #include <assert.h>
 
-#include "substext.h"
+#include "../substext.h"
 #include "ttml.h"
 #include "imageupdater.h"
 #include "ttmlpes.h"
@@ -131,7 +131,7 @@ static void ttml_style_Delete( ttml_style_t* p_ttml_style )
     free( p_ttml_style );
 }
 
-static ttml_style_t * ttml_style_New( )
+static ttml_style_t * ttml_style_New( void )
 {
     ttml_style_t *p_ttml_style = calloc( 1, sizeof( ttml_style_t ) );
     if( unlikely( !p_ttml_style ) )
@@ -1371,7 +1371,7 @@ int tt_OpenDecoder( vlc_object_t *p_this )
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_TTML &&
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_TTML &&
         !TTML_in_PES(p_dec) )
         return VLC_EGENERIC;
 

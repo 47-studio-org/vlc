@@ -39,6 +39,79 @@ const long long int VLCMediaLibraryMediaItemDurationDenominator = 1000;
 
 NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryID";
 
+typedef vlc_ml_media_list_t* (*library_mediaitem_list_fetch_f)(vlc_medialibrary_t*, const vlc_ml_query_params_t*, int64_t);
+typedef vlc_ml_album_list_t* (*library_album_list_fetch_f)(vlc_medialibrary_t*, const vlc_ml_query_params_t*, int64_t);
+typedef vlc_ml_artist_list_t* (*library_artist_list_fetch_f)(vlc_medialibrary_t*, const vlc_ml_query_params_t*, int64_t);
+
+static vlc_medialibrary_t *getMediaLibrary()
+{
+    intf_thread_t *p_intf = getIntf();
+    if (!p_intf) {
+        return nil;
+    }
+    return vlc_ml_instance_get(p_intf);
+}
+
+static NSArray<VLCMediaLibraryMediaItem *> *fetchMediaItemsForLibraryItem(library_mediaitem_list_fetch_f fetchFunction, int64_t itemId)
+{
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
+    if(!p_mediaLibrary) {
+        return nil;
+    }
+    vlc_ml_media_list_t *p_mediaList = fetchFunction(p_mediaLibrary, NULL, itemId);
+    if(!p_mediaList) {
+        return nil;
+    }
+
+    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_mediaList->i_nb_items];
+    for (size_t x = 0; x < p_mediaList->i_nb_items; x++) {
+        VLCMediaLibraryMediaItem *mediaItem = [[VLCMediaLibraryMediaItem alloc] initWithMediaItem:&p_mediaList->p_items[x]];
+        [mutableArray addObject:mediaItem];
+    }
+    vlc_ml_media_list_release(p_mediaList);
+    return [mutableArray copy];
+}
+
+static NSArray<VLCMediaLibraryAlbum *> *fetchAlbumsForLibraryItem(library_album_list_fetch_f fetchFunction, int64_t itemId)
+{
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
+    if(!p_mediaLibrary) {
+        return nil;
+    }
+    vlc_ml_album_list_t *p_albumList = fetchFunction(p_mediaLibrary, NULL, itemId);
+    if(!p_albumList) {
+        return nil;
+    }
+
+    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_albumList->i_nb_items];
+    for (size_t x = 0; x < p_albumList->i_nb_items; x++) {
+        VLCMediaLibraryAlbum *album = [[VLCMediaLibraryAlbum alloc] initWithAlbum:&p_albumList->p_items[x]];
+        [mutableArray addObject:album];
+    }
+    vlc_ml_album_list_release(p_albumList);
+    return [mutableArray copy];
+}
+
+static NSArray<VLCMediaLibraryArtist *> *fetchArtistsForLibraryItem(library_artist_list_fetch_f fetchFunction, int64_t itemId)
+{
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
+    if(!p_mediaLibrary) {
+        return nil;
+    }
+    vlc_ml_artist_list_t *p_artistList = fetchFunction(p_mediaLibrary, NULL, itemId);
+    if(!p_artistList) {
+        return nil;
+    }
+
+    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_artistList->i_nb_items];
+    for (size_t x = 0; x < p_artistList->i_nb_items; x++) {
+        VLCMediaLibraryArtist *artist = [[VLCMediaLibraryArtist alloc] initWithArtist:&p_artistList->p_items[x]];
+        [mutableArray addObject:artist];
+    }
+    vlc_ml_artist_list_release(p_artistList);
+    return [mutableArray copy];
+}
+
 @implementation VLCMediaLibraryFile
 
 - (instancetype)initWithFile:(struct vlc_ml_file_t *)p_file
@@ -50,6 +123,7 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
         _external = p_file->b_external;
         _removable = p_file->b_removable;
         _present = p_file->b_present;
+        _lastModificationDate = p_file->i_last_modification_date;
     }
     return self;
 }
@@ -178,16 +252,69 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 @end
 
+#pragma mark - Media library item classes
+
+@interface VLCAbstractMediaLibraryItem ()
+
+@property (readwrite, assign) int64_t libraryID;
+@property (readwrite, assign) BOOL smallArtworkGenerated;
+@property (readwrite, atomic, strong) NSString *smallArtworkMRL;
+
+@end
+
+@implementation VLCAbstractMediaLibraryItem
+
+- (NSImage *)smallArtworkImage
+{
+    NSImage *image = [VLCLibraryImageCache thumbnailForLibraryItem:self];
+    if (!image) {
+        image = [NSImage imageNamed:@"noart.png"];
+    }
+    return image;
+}
+
+@end
+
+@implementation VLCAbstractMediaLibraryAudioGroup
+
+- (NSArray <VLCMediaLibraryMediaItem *> *)tracksAsMediaItems
+{
+    [self doesNotRecognizeSelector:_cmd];
+    return nil;
+}
+
+- (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock
+{
+    [self doesNotRecognizeSelector:_cmd];
+}
+
+- (VLCMediaLibraryMediaItem *)firstMediaItem
+{
+    return [[self tracksAsMediaItems] firstObject];
+}
+
+- (void)moveToTrash
+{
+    [self iterateMediaItemsWithBlock:^(VLCMediaLibraryMediaItem* childMediaItem) {
+        [childMediaItem moveToTrash];
+    }];
+}
+
+- (void)revealInFinder
+{
+    [self.firstMediaItem revealInFinder];
+}
+
+@end
+
 @implementation VLCMediaLibraryArtist
+
+@synthesize numberOfTracks = _numberOfTracks;
 
 + (nullable instancetype)artistWithID:(int64_t)artistID
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return nil;
-    }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
-    if (!p_mediaLibrary) {
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
+    if(!p_mediaLibrary) {
         return nil;
     }
     vlc_ml_artist_t *p_artist = vlc_ml_get_artist(p_mediaLibrary, artistID);
@@ -202,10 +329,12 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 {
     self = [super init];
     if (self && p_artist != NULL) {
-        _artistID = p_artist->i_id;
+        self.libraryID = p_artist->i_id;
+        self.smallArtworkGenerated = p_artist->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl != NULL;
+        self.smallArtworkMRL = self.smallArtworkGenerated ? toNSStr(p_artist->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl) : nil;
+
         _name = toNSStr(p_artist->psz_name);
         _shortBiography = toNSStr(p_artist->psz_shortbio);
-        _artworkMRL = toNSStr(p_artist->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl);
         _musicBrainzID = toNSStr(p_artist->psz_mb_id);
         _numberOfAlbums = p_artist->i_nb_album;
         _numberOfTracks = p_artist->i_nb_tracks;
@@ -213,24 +342,46 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     return self;
 }
 
+- (NSString *)displayString
+{
+    return _name;
+}
+
+- (NSString *)detailString
+{
+    return [self durationString];
+}
+
+- (NSString *)durationString
+{
+    NSString *countMetadataString;
+    if (_numberOfAlbums > 1) {
+        countMetadataString = [NSString stringWithFormat:_NS("%u albums"), _numberOfAlbums];
+    } else {
+        countMetadataString = _NS("1 album");
+    }
+    if (_numberOfTracks > 1) {
+        countMetadataString = [countMetadataString stringByAppendingFormat:@", %@", [NSString stringWithFormat:_NS("%u songs"), _numberOfTracks]];
+    } else {
+        countMetadataString = [countMetadataString stringByAppendingFormat:@", %@", _NS("1 song")];
+    }
+
+    return countMetadataString;
+}
+
+- (NSArray<VLCMediaLibraryArtist *> *)artists
+{
+    return @[self];
+}
+
 - (NSArray<VLCMediaLibraryAlbum *> *)albums
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return @[];
-    }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
-    if (!p_mediaLibrary) {
-        return @[];
-    }
-    vlc_ml_album_list_t *p_albumList = vlc_ml_list_artist_albums(p_mediaLibrary, NULL, _artistID);
-    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_albumList->i_nb_items];
-    for (size_t x = 0; x < p_albumList->i_nb_items; x++) {
-        VLCMediaLibraryAlbum *album = [[VLCMediaLibraryAlbum alloc] initWithAlbum:&p_albumList->p_items[x]];
-        [mutableArray addObject:album];
-    }
-    vlc_ml_album_list_release(p_albumList);
-    return [mutableArray copy];
+    return fetchAlbumsForLibraryItem(vlc_ml_list_artist_albums, self.libraryID);
+}
+
+- (NSArray<VLCMediaLibraryMediaItem *> *)tracksAsMediaItems
+{
+    return fetchMediaItemsForLibraryItem(vlc_ml_list_artist_tracks, self.libraryID);
 }
 
 - (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock;
@@ -244,14 +395,32 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 @implementation VLCMediaLibraryAlbum
 
+@synthesize numberOfTracks = _numberOfTracks;
+
++ (nullable instancetype)albumWithID:(int64_t)albumID
+{
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
+    if(!p_mediaLibrary) {
+        return nil;
+    }
+    vlc_ml_album_t *p_album = vlc_ml_get_album(p_mediaLibrary, albumID);
+    VLCMediaLibraryAlbum *album = nil;
+    if (p_album) {
+        album = [[VLCMediaLibraryAlbum alloc] initWithAlbum:p_album];
+    }
+    return album;
+}
+
 - (instancetype)initWithAlbum:(struct vlc_ml_album_t *)p_album
 {
     self = [super init];
     if (self && p_album != NULL) {
-        _albumID = p_album->i_id;
+        self.libraryID = p_album->i_id;
+        self.smallArtworkGenerated = p_album->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl != NULL;
+        self.smallArtworkMRL = self.smallArtworkGenerated ? toNSStr(p_album->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl) : nil;
+
         _title = toNSStr(p_album->psz_title);
         _summary = toNSStr(p_album->psz_summary);
-        _artworkMRL = toNSStr(p_album->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl);
         _artistName = toNSStr(p_album->psz_artist);
         _artistID = p_album->i_artist_id;
         _numberOfTracks = p_album->i_nb_tracks;
@@ -261,24 +430,34 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     return self;
 }
 
+- (NSString *)displayString
+{
+    return _title;
+}
+
+- (NSString *)detailString
+{
+    return _artistName;
+}
+
+- (NSString *)durationString
+{
+    return [NSString stringWithTime:_duration / VLCMediaLibraryMediaItemDurationDenominator];
+}
+
+- (NSArray<VLCMediaLibraryArtist *> *)artists
+{
+    return @[[VLCMediaLibraryArtist artistWithID:_artistID]];
+}
+
+- (NSArray<VLCMediaLibraryAlbum *> *)albums
+{
+    return @[self];
+}
+
 - (NSArray<VLCMediaLibraryMediaItem *> *)tracksAsMediaItems
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return @[];
-    }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
-    if (!p_mediaLibrary) {
-        return @[];
-    }
-    vlc_ml_media_list_t *p_mediaList = vlc_ml_list_album_tracks(p_mediaLibrary, NULL, _albumID);
-    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_mediaList->i_nb_items];
-    for (size_t x = 0; x < p_mediaList->i_nb_items; x++) {
-        VLCMediaLibraryMediaItem *mediaItem = [[VLCMediaLibraryMediaItem alloc] initWithMediaItem:&p_mediaList->p_items[x]];
-        [mutableArray addObject:mediaItem];
-    }
-    vlc_ml_media_list_release(p_mediaList);
-    return [mutableArray copy];
+    return fetchMediaItemsForLibraryItem(vlc_ml_list_album_tracks, self.libraryID);
 }
 
 - (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock
@@ -292,75 +471,69 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 @implementation VLCMediaLibraryGenre
 
+@synthesize numberOfTracks = _numberOfTracks;
+
 - (instancetype)initWithGenre:(struct vlc_ml_genre_t *)p_genre
 {
     self = [super init];
     if (self && p_genre != NULL) {
-        _genreID = p_genre->i_id;
+        self.libraryID = p_genre->i_id;
+        self.smallArtworkGenerated = p_genre->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl != NULL;
+        self.smallArtworkMRL = self.smallArtworkGenerated ? toNSStr(p_genre->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl) : nil;
+
         _name = toNSStr(p_genre->psz_name);
         _numberOfTracks = p_genre->i_nb_tracks;
     }
     return self;
 }
 
-- (NSArray<VLCMediaLibraryAlbum *> *)albums
++ (nullable instancetype)genreWithID:(int64_t)genreID
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return @[];
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
+    if(!p_mediaLibrary) {
+        return nil;
     }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
-    if (!p_mediaLibrary) {
-        return @[];
+    vlc_ml_genre_t *p_genre = vlc_ml_get_genre(p_mediaLibrary, genreID);
+    VLCMediaLibraryGenre *genre = nil;
+    if (p_genre) {
+        genre = [[VLCMediaLibraryGenre alloc] initWithGenre:p_genre];
     }
-    vlc_ml_album_list_t *p_albumList = vlc_ml_list_genre_albums(p_mediaLibrary, NULL, _genreID);
-    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_albumList->i_nb_items];
-    for (size_t x = 0; x < p_albumList->i_nb_items; x++) {
-        VLCMediaLibraryAlbum *album = [[VLCMediaLibraryAlbum alloc] initWithAlbum:&p_albumList->p_items[x]];
-        [mutableArray addObject:album];
-    }
-    vlc_ml_album_list_release(p_albumList);
-    return [mutableArray copy];
+    return genre;
 }
 
-- (NSArray<VLCMediaLibraryAlbum *> *)artists
+- (NSString *)displayString
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return @[];
+    return _name;
+}
+
+- (NSString *)detailString
+{
+    return [self durationString];
+}
+
+- (NSString *)durationString
+{
+    if (_numberOfTracks > 1) {
+        return [NSString stringWithFormat:_NS("%u songs"), _numberOfTracks];
+    } else {
+        return _NS("1 song");
     }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
-    if (!p_mediaLibrary) {
-        return @[];
-    }
-    vlc_ml_artist_list_t *p_artistList = vlc_ml_list_genre_artists(p_mediaLibrary, NULL, _genreID);
-    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_artistList->i_nb_items];
-    for (size_t x = 0; x < p_artistList->i_nb_items; x++) {
-        VLCMediaLibraryArtist *artist = [[VLCMediaLibraryArtist alloc] initWithArtist:&p_artistList->p_items[x]];
-        [mutableArray addObject:artist];
-    }
-    vlc_ml_artist_list_release(p_artistList);
-    return [mutableArray copy];
+}
+
+- (NSArray<VLCMediaLibraryAlbum *> *)albums
+{
+    return fetchAlbumsForLibraryItem(vlc_ml_list_genre_albums, self.libraryID);
+}
+
+- (NSArray<VLCMediaLibraryArtist *> *)artists
+{
+
+    return fetchArtistsForLibraryItem(vlc_ml_list_genre_artists, self.libraryID);
 }
 
 - (NSArray<VLCMediaLibraryMediaItem *> *)tracksAsMediaItems
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return @[];
-    }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
-    if (!p_mediaLibrary) {
-        return @[];
-    }
-    vlc_ml_media_list_t *p_mediaList = vlc_ml_list_genre_tracks(p_mediaLibrary, NULL, _genreID);
-    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:p_mediaList->i_nb_items];
-    for (size_t x = 0; x < p_mediaList->i_nb_items; x++) {
-        VLCMediaLibraryMediaItem *mediaItem = [[VLCMediaLibraryMediaItem alloc] initWithMediaItem:&p_mediaList->p_items[x]];
-        [mutableArray addObject:mediaItem];
-    }
-    vlc_ml_media_list_release(p_mediaList);
-    return [mutableArray copy];
+    return fetchMediaItemsForLibraryItem(vlc_ml_list_genre_tracks, self.libraryID);
 }
 
 - (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock
@@ -371,29 +544,22 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock orderedBy:(int)mediaItemParentType
 {
+    NSArray<id<VLCMediaLibraryItemProtocol>> *childItems;
     switch(mediaItemParentType) {
         case VLC_ML_PARENT_ARTIST:
-        {
-            for(VLCMediaLibraryArtist *artist in self.artists) {
-                [artist iterateMediaItemsWithBlock:mediaItemBlock];
-            }
+            childItems = self.artists;
             break;
-        }
         case VLC_ML_PARENT_ALBUM:
-        {
-            for(VLCMediaLibraryAlbum *album in self.albums) {
-                [album iterateMediaItemsWithBlock:mediaItemBlock];
-            }
+            childItems = self.albums;
             break;
-        }
         case VLC_ML_PARENT_UNKNOWN:
         default:
-        {
-            for(VLCMediaLibraryMediaItem *mediaItem in self.tracksAsMediaItems) {
-                mediaItemBlock(mediaItem);
-            }
+            childItems = self.tracksAsMediaItems;
             break;
-        }
+    }
+
+    for(id<VLCMediaLibraryItemProtocol> childItem in childItems) {
+        [childItem iterateMediaItemsWithBlock:mediaItemBlock];
     }
 }
 
@@ -411,12 +577,8 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 + (nullable instancetype)mediaItemForLibraryID:(int64_t)libraryID
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return nil;
-    }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
-    if (!p_mediaLibrary) {
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
+    if(!p_mediaLibrary) {
         return nil;
     }
     vlc_ml_media_t *p_mediaItem = vlc_ml_get_media(p_mediaLibrary, libraryID);
@@ -429,11 +591,11 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 + (nullable instancetype)mediaItemForURL:(NSURL *)url
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
+    if (url == nil) {
         return nil;
     }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
+
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
     if (!p_mediaLibrary) {
         return nil;
     }
@@ -448,11 +610,11 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (nullable instancetype)initWithMediaItem:(struct vlc_ml_media_t *)p_mediaItem
 {
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
+    if (p_mediaItem == NULL) {
         return nil;
     }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
+
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
     if (!p_mediaLibrary) {
         return nil;
     }
@@ -465,9 +627,12 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 - (instancetype)initWithMediaItem:(struct vlc_ml_media_t *)p_mediaItem library:(vlc_medialibrary_t *)p_mediaLibrary
 {
     self = [super init];
-    if (self) {
+    if (self && p_mediaItem != NULL && p_mediaLibrary != NULL) {
+        self.libraryID = p_mediaItem->i_id;
+        self.smallArtworkGenerated = p_mediaItem->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl != NULL;
+        self.smallArtworkMRL = self.smallArtworkGenerated ? toNSStr(p_mediaItem->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl) : nil;
+
         _p_mediaLibrary = p_mediaLibrary;
-        _libraryID = p_mediaItem->i_id;
         _mediaType = p_mediaItem->i_type;
         _mediaSubType = p_mediaItem->i_subtype;
         NSMutableArray *mutArray = [[NSMutableArray alloc] initWithCapacity:p_mediaItem->p_files->i_nb_items];
@@ -495,12 +660,6 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
         _lastPlayedDate = p_mediaItem->i_last_played_date;
         _progress = p_mediaItem->f_progress;
         _title = toNSStr(p_mediaItem->psz_title);
-        _smallArtworkGenerated = p_mediaItem->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl != NULL;
-        if (_smallArtworkGenerated) {
-            _smallArtworkMRL = toNSStr(p_mediaItem->thumbnails[VLC_ML_THUMBNAIL_SMALL].psz_mrl);
-        } else {
-            _smallArtworkMRL = nil;
-        }
         _favorited = p_mediaItem->b_is_favorite;
 
         switch (p_mediaItem->i_subtype) {
@@ -529,16 +688,16 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (nullable instancetype)initWithExternalURL:(NSURL *)url
 {
+    if (url == nil) {
+        return nil;
+    }
+
     NSString *urlString = url.absoluteString;
     if (!urlString) {
         return self;
     }
 
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return nil;
-    }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
     if (!p_mediaLibrary) {
         return nil;
     }
@@ -552,16 +711,16 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (nullable instancetype)initWithStreamURL:(NSURL *)url
 {
+    if (url == nil) {
+        return nil;
+    }
+
     NSString *urlString = url.absoluteString;
     if (!urlString) {
         return self;
     }
 
-    intf_thread_t *p_intf = getIntf();
-    if (!p_intf) {
-        return nil;
-    }
-    vlc_medialibrary_t *p_mediaLibrary = vlc_ml_instance_get(p_intf);
+    vlc_medialibrary_t *p_mediaLibrary = getMediaLibrary();
     if (!p_mediaLibrary) {
         return nil;
     }
@@ -575,6 +734,10 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (instancetype)initWithCoder:(NSCoder *)aDecoder
 {
+    if (aDecoder == nil) {
+        return nil;
+    }
+
     int64_t libraryID = [aDecoder decodeInt64ForKey:VLCMediaLibraryMediaItemLibraryID];
     self = [VLCMediaLibraryMediaItem mediaItemForLibraryID:libraryID];
     return self;
@@ -582,13 +745,17 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (void)encodeWithCoder:(NSCoder *)aCoder
 {
-    [aCoder encodeInt64:_libraryID forKey:VLCMediaLibraryMediaItemLibraryID];
+    if (aCoder == nil) {
+        return;
+    }
+
+    [aCoder encodeInt64:self.libraryID forKey:VLCMediaLibraryMediaItemLibraryID];
 }
 
 - (NSString *)description
 {
     return [NSString stringWithFormat:@"%@ — title: %@, ID: %lli, type: %i, artwork: %@",
-            NSStringFromClass([self class]), _title, _libraryID, _mediaType, _smallArtworkMRL];
+            NSStringFromClass([self class]), _title, self.libraryID, _mediaType, self.smallArtworkMRL];
 }
 
 - (NSString *)readableMediaType
@@ -629,14 +796,45 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     }
 }
 
-- (NSImage *)smallArtworkImage
+- (NSString *)displayString
 {
-    return [VLCLibraryImageCache thumbnailForMediaItem:self];
+    return _title;
+}
+
+- (NSString *)detailString
+{
+   if (_mediaSubType == VLC_ML_MEDIA_SUBTYPE_SHOW_EPISODE) {
+        VLCInputItem *inputItem = [self inputItem];
+        if (inputItem) {
+            NSString *showName = inputItem.showName;
+            return showName.length > 0 ? showName : [self durationString];
+        }
+   } else if (_mediaSubType == VLC_ML_MEDIA_SUBTYPE_MOVIE) {
+        VLCInputItem *inputItem = [self inputItem];
+        if (inputItem) {
+            NSString *directorString = inputItem.director;
+            return directorString.length > 0 ? directorString : [self durationString];
+        }
+    } else if (_mediaSubType == VLC_ML_MEDIA_SUBTYPE_ALBUMTRACK) {
+        VLCMediaLibraryArtist *artist = [VLCMediaLibraryArtist artistWithID:_artistID];
+        if (artist) {
+            NSString *artistName = artist.name;
+            return artistName.length > 0 ? artistName : [self durationString];
+        }
+    }
+
+    return [self durationString];
+}
+
+- (NSString *)durationString
+{
+    return [NSString stringWithTime:_duration / VLCMediaLibraryMediaItemDurationDenominator];
+
 }
 
 - (VLCInputItem *)inputItem
 {
-    input_item_t *p_inputItem = vlc_ml_get_input_item(_p_mediaLibrary, _libraryID);
+    input_item_t *p_inputItem = vlc_ml_get_input_item(_p_mediaLibrary, self.libraryID);
     VLCInputItem *inputItem = nil;
     if (p_inputItem) {
         inputItem = [[VLCInputItem alloc] initWithInputItem:p_inputItem];
@@ -645,11 +843,21 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     return inputItem;
 }
 
+- (VLCMediaLibraryMediaItem *)firstMediaItem
+{
+    return self;
+}
+
+- (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock;
+{
+    mediaItemBlock(self);
+}
+
 #pragma mark - preference setters / getters
 
 - (int)setIntegerPreference:(int)value forKey:(enum vlc_ml_playback_state)key
 {
-    return vlc_ml_media_set_playback_state(_p_mediaLibrary, _libraryID, key, [[[NSNumber numberWithInt:value] stringValue] UTF8String]);
+    return vlc_ml_media_set_playback_state(_p_mediaLibrary, self.libraryID, key, [[[NSNumber numberWithInt:value] stringValue] UTF8String]);
 }
 
 - (int)integerPreferenceForKey:(enum vlc_ml_playback_state)key
@@ -657,7 +865,7 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     int ret = 0;
     char *psz_value;
 
-    if (vlc_ml_media_get_playback_state(_p_mediaLibrary, _libraryID, key, &psz_value) == VLC_SUCCESS && psz_value != NULL) {
+    if (vlc_ml_media_get_playback_state(_p_mediaLibrary, self.libraryID, key, &psz_value) == VLC_SUCCESS && psz_value != NULL) {
         ret = atoi(psz_value);
         free(psz_value);
     }
@@ -667,7 +875,7 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (int)setFloatPreference:(float)value forKey:(enum vlc_ml_playback_state)key
 {
-    return vlc_ml_media_set_playback_state(_p_mediaLibrary, _libraryID, key, [[[NSNumber numberWithFloat:value] stringValue] UTF8String]);
+    return vlc_ml_media_set_playback_state(_p_mediaLibrary, self.libraryID, key, [[[NSNumber numberWithFloat:value] stringValue] UTF8String]);
 }
 
 - (float)floatPreferenceForKey:(enum vlc_ml_playback_state)key
@@ -675,7 +883,7 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     float ret = .0;
     char *psz_value;
 
-    if (vlc_ml_media_get_playback_state(_p_mediaLibrary, _libraryID, key, &psz_value) == VLC_SUCCESS && psz_value != NULL) {
+    if (vlc_ml_media_get_playback_state(_p_mediaLibrary, self.libraryID, key, &psz_value) == VLC_SUCCESS && psz_value != NULL) {
         ret = atof(psz_value);
         free(psz_value);
     }
@@ -685,7 +893,7 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 
 - (int)setStringPreference:(NSString *)value forKey:(enum vlc_ml_playback_state)key
 {
-    return vlc_ml_media_set_playback_state(_p_mediaLibrary, _libraryID, key, [value UTF8String]);
+    return vlc_ml_media_set_playback_state(_p_mediaLibrary, self.libraryID, key, [value UTF8String]);
 }
 
 - (NSString *)stringPreferenceForKey:(enum vlc_ml_playback_state)key
@@ -693,7 +901,7 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     NSString *ret = @"";
     char *psz_value;
 
-    if (vlc_ml_media_get_playback_state(_p_mediaLibrary, _libraryID, key, &psz_value) == VLC_SUCCESS && psz_value != NULL) {
+    if (vlc_ml_media_get_playback_state(_p_mediaLibrary, self.libraryID, key, &psz_value) == VLC_SUCCESS && psz_value != NULL) {
         ret = toNSStr(psz_value);
         free(psz_value);
     }
@@ -863,6 +1071,28 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
     [self setIntegerPreference:lastSubtitleDelay forKey:VLC_ML_PLAYBACK_STATE_SUBTITLE_DELAY];
 }
 
+- (void)revealInFinder
+{
+    VLCMediaLibraryFile *firstFile = _files.firstObject;
+
+    if (firstFile) {
+        NSURL *URL = [NSURL URLWithString:firstFile.MRL];
+        if (URL) {
+            [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[URL]];
+        }
+    }
+}
+
+- (void)moveToTrash
+{
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    for (VLCMediaLibraryFile *fileToTrash in _files) {
+        [fileManager trashItemAtURL:fileToTrash.fileURL
+                   resultingItemURL:nil
+                              error:nil];
+    }
+}
+
 @end
 
 @implementation VLCMediaLibraryEntryPoint
@@ -884,6 +1114,39 @@ NSString *VLCMediaLibraryMediaItemLibraryID = @"VLCMediaLibraryMediaItemLibraryI
 {
     return [NSString stringWithFormat:@"%@ — MRL: %@, present: %i, banned: %i",
             NSStringFromClass([self class]), _MRL, _isPresent, _isBanned];
+}
+
+@end
+
+@implementation VLCMediaLibraryDummyItem
+
+@synthesize detailString = _detailString;
+@synthesize displayString = _displayString;
+@synthesize durationString = _durationString;
+@synthesize firstMediaItem = _firstMediaItem;
+@synthesize libraryID = _libraryId;
+@synthesize smallArtworkGenerated = _smallArtworkGenerated;
+@synthesize smallArtworkImage = _smallArtworkImage;
+@synthesize smallArtworkMRL = _smallArtworkMRL;
+
+
+- (instancetype)initWithDisplayString:(NSString*)displayString
+                     withDetailString:(NSString*)detailString
+{
+    self = [super init];
+    if (self) {
+        _displayString = displayString;
+        _detailString = detailString;
+        _durationString = @"";
+        _libraryId = -1;
+        _smallArtworkGenerated = NO;
+        _smallArtworkMRL = @"";
+    }
+    return self;
+}
+
+- (void)iterateMediaItemsWithBlock:(nonnull void (^)(VLCMediaLibraryMediaItem * _Nonnull))mediaItemBlock {
+    return;
 }
 
 @end

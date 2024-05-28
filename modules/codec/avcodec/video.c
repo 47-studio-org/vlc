@@ -50,6 +50,10 @@
 # include <libavutil/dovi_meta.h>
 #endif
 
+#if LIBAVUTIL_VERSION_CHECK( 56, 25, 100 )
+# include <libavutil/hdr_dynamic_metadata.h>
+#endif
+
 #include "../cc.h"
 #define FRAME_INFO_DEPTH 64
 
@@ -178,16 +182,16 @@ static int lavc_GetVideoFormat(decoder_t *dec, video_format_t *restrict fmt,
 
     fmt->i_width = width;
     fmt->i_height = height;
-    if ( dec->fmt_in.video.i_visible_width != 0 &&
-         dec->fmt_in.video.i_visible_width <= (unsigned)ctx->width &&
-         dec->fmt_in.video.i_visible_height != 0 &&
-         dec->fmt_in.video.i_visible_height <= (unsigned)ctx->height )
+    if ( dec->fmt_in->video.i_visible_width != 0 &&
+         dec->fmt_in->video.i_visible_width <= (unsigned)ctx->width &&
+         dec->fmt_in->video.i_visible_height != 0 &&
+         dec->fmt_in->video.i_visible_height <= (unsigned)ctx->height )
     {
         /* the demuxer/packetizer provided crop info that are lost in lavc */
-        fmt->i_visible_width  = dec->fmt_in.video.i_visible_width;
-        fmt->i_visible_height = dec->fmt_in.video.i_visible_height;
-        fmt->i_x_offset       = dec->fmt_in.video.i_x_offset;
-        fmt->i_y_offset       = dec->fmt_in.video.i_y_offset;
+        fmt->i_visible_width  = dec->fmt_in->video.i_visible_width;
+        fmt->i_visible_height = dec->fmt_in->video.i_visible_height;
+        fmt->i_x_offset       = dec->fmt_in->video.i_x_offset;
+        fmt->i_y_offset       = dec->fmt_in->video.i_y_offset;
     }
     else
     {
@@ -198,10 +202,10 @@ static int lavc_GetVideoFormat(decoder_t *dec, video_format_t *restrict fmt,
     }
 
     /* If an aspect-ratio was specified in the input format then force it */
-    if (dec->fmt_in.video.i_sar_num > 0 && dec->fmt_in.video.i_sar_den > 0)
+    if (dec->fmt_in->video.i_sar_num > 0 && dec->fmt_in->video.i_sar_den > 0)
     {
-        fmt->i_sar_num = dec->fmt_in.video.i_sar_num;
-        fmt->i_sar_den = dec->fmt_in.video.i_sar_den;
+        fmt->i_sar_num = dec->fmt_in->video.i_sar_num;
+        fmt->i_sar_den = dec->fmt_in->video.i_sar_den;
     }
     else
     {
@@ -212,11 +216,11 @@ static int lavc_GetVideoFormat(decoder_t *dec, video_format_t *restrict fmt,
             fmt->i_sar_num = fmt->i_sar_den = 1;
     }
 
-    if (dec->fmt_in.video.i_frame_rate > 0
-     && dec->fmt_in.video.i_frame_rate_base > 0)
+    if (dec->fmt_in->video.i_frame_rate > 0
+     && dec->fmt_in->video.i_frame_rate_base > 0)
     {
-        fmt->i_frame_rate = dec->fmt_in.video.i_frame_rate;
-        fmt->i_frame_rate_base = dec->fmt_in.video.i_frame_rate_base;
+        fmt->i_frame_rate = dec->fmt_in->video.i_frame_rate;
+        fmt->i_frame_rate_base = dec->fmt_in->video.i_frame_rate_base;
     }
     else if (ctx->framerate.num > 0 && ctx->framerate.den > 0)
     {
@@ -269,13 +273,15 @@ static int lavc_UpdateVideoFormat(decoder_t *dec, AVCodecContext *ctx,
     es_format_Change(&dec->fmt_out, VIDEO_ES, i_chroma);
     dec->fmt_out.video = fmt_out;
     dec->fmt_out.video.i_chroma = i_chroma;
-    dec->fmt_out.video.orientation = dec->fmt_in.video.orientation;
-    dec->fmt_out.video.projection_mode = dec->fmt_in.video.projection_mode;
-    dec->fmt_out.video.multiview_mode = dec->fmt_in.video.multiview_mode;
-    dec->fmt_out.video.pose = dec->fmt_in.video.pose;
-    if ( dec->fmt_in.video.mastering.max_luminance )
-        dec->fmt_out.video.mastering = dec->fmt_in.video.mastering;
-    dec->fmt_out.video.lighting = dec->fmt_in.video.lighting;
+    dec->fmt_out.video.orientation = dec->fmt_in->video.orientation;
+    dec->fmt_out.video.projection_mode = dec->fmt_in->video.projection_mode;
+    dec->fmt_out.video.multiview_mode = dec->fmt_in->video.multiview_mode;
+    dec->fmt_out.video.pose = dec->fmt_in->video.pose;
+    if ( dec->fmt_in->video.mastering.max_luminance )
+        dec->fmt_out.video.mastering = dec->fmt_in->video.mastering;
+    if ( dec->fmt_in->video.dovi.version_major )
+        dec->fmt_out.video.dovi = dec->fmt_in->video.dovi;
+    dec->fmt_out.video.lighting = dec->fmt_in->video.lighting;
     p_sys->decoder_width  = dec->fmt_out.video.i_width;
     p_sys->decoder_height = dec->fmt_out.video.i_height;
 
@@ -368,24 +374,24 @@ static int OpenVideoCodec( decoder_t *p_dec )
         }
     }
 
-    ctx->width  = p_dec->fmt_in.video.i_visible_width;
-    ctx->height = p_dec->fmt_in.video.i_visible_height;
+    ctx->width  = p_dec->fmt_in->video.i_visible_width;
+    ctx->height = p_dec->fmt_in->video.i_visible_height;
 
-    ctx->coded_width = p_dec->fmt_in.video.i_width;
-    ctx->coded_height = p_dec->fmt_in.video.i_height;
+    ctx->coded_width = p_dec->fmt_in->video.i_width;
+    ctx->coded_height = p_dec->fmt_in->video.i_height;
 
-    ctx->bits_per_coded_sample = p_dec->fmt_in.video.i_bits_per_pixel;
+    ctx->bits_per_coded_sample = p_dec->fmt_in->video.i_bits_per_pixel;
     p_sys->pix_fmt = AV_PIX_FMT_NONE;
     p_sys->profile = -1;
     p_sys->level = -1;
     cc_Init( &p_sys->cc );
 
-    set_video_color_settings( &p_dec->fmt_in.video, ctx );
+    set_video_color_settings( &p_dec->fmt_in->video, ctx );
     if( var_InheritBool(p_dec, "low-delay") ||
-      ( p_dec->fmt_in.video.i_frame_rate_base &&
-        p_dec->fmt_in.video.i_frame_rate &&
-        (double) p_dec->fmt_in.video.i_frame_rate /
-                 p_dec->fmt_in.video.i_frame_rate_base < 6 ) )
+      ( p_dec->fmt_in->video.i_frame_rate_base &&
+        p_dec->fmt_in->video.i_frame_rate &&
+        (double) p_dec->fmt_in->video.i_frame_rate /
+                 p_dec->fmt_in->video.i_frame_rate_base < 6 ) )
     {
         ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
     }
@@ -447,8 +453,8 @@ int InitVideoDec( vlc_object_t *obj )
     vlc_mutex_init( &p_sys->lock );
 
     /* ***** Fill p_context with init values ***** */
-    p_context->codec_tag = ffmpeg_CodecTag( p_dec->fmt_in.i_original_fourcc ?
-                                p_dec->fmt_in.i_original_fourcc : p_dec->fmt_in.i_codec );
+    p_context->codec_tag = ffmpeg_CodecTag( p_dec->fmt_in->i_original_fourcc ?
+                                p_dec->fmt_in->i_original_fourcc : p_dec->fmt_in->i_codec );
 
     /*  ***** Get configuration of ffmpeg plugin ***** */
     p_context->workaround_bugs =
@@ -575,13 +581,13 @@ int InitVideoDec( vlc_object_t *obj )
     }
     p_dec->fmt_out.i_codec = p_dec->fmt_out.video.i_chroma;
 
-    p_dec->fmt_out.video.orientation = p_dec->fmt_in.video.orientation;
+    p_dec->fmt_out.video.orientation = p_dec->fmt_in->video.orientation;
 
-    if( p_dec->fmt_in.video.p_palette ) {
+    if( p_dec->fmt_in->video.p_palette ) {
         p_sys->palette_sent = false;
         p_dec->fmt_out.video.p_palette = malloc( sizeof(video_palette_t) );
         if( p_dec->fmt_out.video.p_palette )
-            *p_dec->fmt_out.video.p_palette = *p_dec->fmt_in.video.p_palette;
+            *p_dec->fmt_out.video.p_palette = *p_dec->fmt_in->video.p_palette;
     } else
         p_sys->palette_sent = true;
 
@@ -599,11 +605,6 @@ int InitVideoDec( vlc_object_t *obj )
     p_dec->pf_decode = DecodeVideo;
     p_dec->pf_flush  = Flush;
 
-    /* XXX: Writing input format makes little sense. */
-    if( p_context->profile != FF_PROFILE_UNKNOWN )
-        p_dec->fmt_in.i_profile = p_context->profile;
-    if( p_context->level != FF_LEVEL_UNKNOWN )
-        p_dec->fmt_in.i_level = p_context->level;
     return VLC_SUCCESS;
 }
 
@@ -755,6 +756,39 @@ static void map_dovi_metadata( vlc_video_dovi_metadata_t *out,
     memcpy(out->nlq,    vdm->nlq,    sizeof(out->nlq));
     for( int i = 0; i < ARRAY_SIZE( out->curves ); i++)
         assert( out->curves[i].num_pivots <= ARRAY_SIZE( out->curves[i].pivots ));
+}
+#endif
+
+#if LIBAVUTIL_VERSION_CHECK( 56, 25, 100 )
+static void map_hdrplus_metadata( vlc_video_hdr_dynamic_metadata_t *out,
+                                  const AVDynamicHDRPlus *data )
+{
+    out->country_code = data->itu_t_t35_country_code;
+    out->application_version = data->application_version;
+    out->targeted_luminance = av_q2d( data->targeted_system_display_maximum_luminance );
+
+    assert( data->num_windows > 0 );
+    const AVHDRPlusColorTransformParams *pars = &data->params[0];
+    for ( size_t i = 0; i < ARRAY_SIZE( out->maxscl ); i++ )
+        out->maxscl[i] = av_q2d( pars->maxscl[i] );
+    out->average_maxrgb = av_q2d( pars->average_maxrgb );
+    out->num_histogram = pars->num_distribution_maxrgb_percentiles;
+    assert( out->num_histogram < ARRAY_SIZE( out->histogram ));
+    for ( size_t i = 0; i < out->num_histogram; i++ ) {
+        const AVHDRPlusPercentile pct = pars->distribution_maxrgb[i];
+        out->histogram[i].percentage = pct.percentage;
+        out->histogram[i].percentile = av_q2d( pct.percentile );
+    }
+    out->fraction_bright_pixels = av_q2d( pars->fraction_bright_pixels );
+    out->tone_mapping_flag = pars->tone_mapping_flag;
+    if ( out->tone_mapping_flag ) {
+        out->knee_point_x = av_q2d( pars->knee_point_x );
+        out->knee_point_y = av_q2d( pars->knee_point_y );
+        out->num_bezier_anchors = pars->num_bezier_curve_anchors;
+        assert( out->num_bezier_anchors < ARRAY_SIZE( out->bezier_curve_anchors ));
+        for ( size_t i = 0; i < out->num_bezier_anchors; i++ )
+            out->bezier_curve_anchors[i] = av_q2d( pars->bezier_curve_anchors[i] );
+    }
 }
 #endif
 
@@ -923,6 +957,18 @@ static int DecodeSidedata( decoder_t *p_dec, const AVFrame *frame, picture_t *p_
     }
 #endif
 
+#if LIBAVUTIL_VERSION_CHECK( 56, 25, 100 )
+    const AVFrameSideData *p_hdrplus = av_frame_get_side_data( frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS );
+    if( p_hdrplus )
+    {
+        vlc_video_hdr_dynamic_metadata_t *dst;
+        dst = picture_AttachNewAncillary( p_pic, VLC_ANCILLARY_ID_HDR10PLUS, sizeof(*dst) );
+        if( !dst )
+            return VLC_ENOMEM;
+        map_hdrplus_metadata( dst, (AVDynamicHDRPlus *) p_hdrplus->data );
+    }
+#endif
+
     const AVFrameSideData *p_icc = av_frame_get_side_data( frame, AV_FRAME_DATA_ICC_PROFILE );
     if( p_icc )
     {
@@ -952,7 +998,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t **pp_block )
 
     block_t *p_block = pp_block ? *pp_block : NULL;
 
-    if( !p_context->extradata_size && p_dec->fmt_in.i_extra )
+    if( !p_context->extradata_size && p_dec->fmt_in->i_extra )
     {
         ffmpeg_InitCodec( p_dec );
         if( !avcodec_is_open( p_context ) && OpenVideoCodec(p_dec) < 0 )
@@ -1048,7 +1094,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t **pp_block )
             {
                 uint8_t *pal = av_packet_new_side_data(pkt, AV_PKT_DATA_PALETTE, AVPALETTE_SIZE);
                 if (pal) {
-                    memcpy(pal, p_dec->fmt_in.video.p_palette->palette, AVPALETTE_SIZE);
+                    memcpy(pal, p_dec->fmt_in->video.p_palette->palette, AVPALETTE_SIZE);
                     p_sys->palette_sent = true;
                 }
             }
@@ -1242,7 +1288,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t **pp_block )
             }
         }
 
-        if( !p_dec->fmt_in.video.i_sar_num || !p_dec->fmt_in.video.i_sar_den )
+        if( !p_dec->fmt_in->video.i_sar_num || !p_dec->fmt_in->video.i_sar_den )
         {
             /* Fetch again the aspect ratio in case it changed */
             p_dec->fmt_out.video.i_sar_num
@@ -1354,7 +1400,7 @@ void EndVideoDec( vlc_object_t *obj )
 static void ffmpeg_InitCodec( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
-    size_t i_size = p_dec->fmt_in.i_extra;
+    size_t i_size = p_dec->fmt_in->i_extra;
 
     if( !i_size ) return;
 
@@ -1371,7 +1417,7 @@ static void ffmpeg_InitCodec( decoder_t *p_dec )
 
         memcpy( &p[0],  "SVQ3", 4 );
         memset( &p[4], 0, 8 );
-        memcpy( &p[12], p_dec->fmt_in.p_extra, i_size );
+        memcpy( &p[12], p_dec->fmt_in->p_extra, i_size );
 
         /* Now remove all atoms before the SMI one */
         if( p_sys->p_context->extradata_size > 0x5a &&
@@ -1406,7 +1452,7 @@ static void ffmpeg_InitCodec( decoder_t *p_dec )
         if( p_sys->p_context->extradata )
         {
             memcpy( p_sys->p_context->extradata,
-                    p_dec->fmt_in.p_extra, i_size );
+                    p_dec->fmt_in->p_extra, i_size );
             memset( p_sys->p_context->extradata + i_size,
                     0, FF_INPUT_BUFFER_PADDING_SIZE );
         }
@@ -1726,7 +1772,7 @@ no_reuse:
         p_dec->fmt_out.video.i_chroma = 0; // make sure the va sets its output chroma
         vlc_video_context *vctx_out;
         vlc_va_t *va = vlc_va_New(VLC_OBJECT(p_dec), p_context, hwfmt, src_desc,
-                                  &p_dec->fmt_in, init_device,
+                                  p_dec->fmt_in, init_device,
                                   &p_dec->fmt_out.video, &vctx_out);
         if (init_device)
             vlc_decoder_device_Release(init_device);

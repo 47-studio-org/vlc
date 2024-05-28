@@ -185,14 +185,14 @@ static int OpenInternal( demux_t *p_demux, bool trust_cues )
                 }
             }
 
-            DIR *p_src_dir = vlc_opendir(s_path.c_str());
+            vlc_DIR *p_src_dir = vlc_opendir(s_path.c_str());
 
             if (p_src_dir != NULL)
             {
                 const char *psz_file;
                 while ((psz_file = vlc_readdir(p_src_dir)) != NULL)
                 {
-                    if (strlen(psz_file) > 4)
+                    if (strnlen(psz_file, 4+1) > 4)
                     {
                         s_filename = s_path + DIR_SEP_CHAR + psz_file;
 
@@ -245,7 +245,7 @@ static int OpenInternal( demux_t *p_demux, bool trust_cues )
                         }
                     }
                 }
-                closedir( p_src_dir );
+                vlc_closedir( p_src_dir );
             }
         }
 

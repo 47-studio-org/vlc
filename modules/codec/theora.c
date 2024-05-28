@@ -146,7 +146,7 @@ static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_THEORA )
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_THEORA )
     {
         return VLC_EGENERIC;
     }
@@ -259,7 +259,7 @@ static int ProcessHeaders( decoder_t *p_dec )
     const void *pp_data[XIPH_MAX_HEADER_COUNT];
     unsigned i_count;
     if( xiph_SplitHeaders( pi_size, pp_data, &i_count,
-                           p_dec->fmt_in.i_extra, p_dec->fmt_in.p_extra) )
+                           p_dec->fmt_in->i_extra, p_dec->fmt_in->p_extra) )
         return VLC_EGENERIC;
     if( i_count < 3 )
         return VLC_EGENERIC;
@@ -408,7 +408,7 @@ static int ProcessHeaders( decoder_t *p_dec )
     else
     {
         void* p_extra = realloc( p_dec->fmt_out.p_extra,
-                                 p_dec->fmt_in.i_extra );
+                                 p_dec->fmt_in->i_extra );
         if( unlikely( p_extra == NULL ) )
         {
             /* Clean up the decoder setup info... we're done with it */
@@ -416,9 +416,9 @@ static int ProcessHeaders( decoder_t *p_dec )
             return VLC_ENOMEM;
         }
         p_dec->fmt_out.p_extra = p_extra;
-        p_dec->fmt_out.i_extra = p_dec->fmt_in.i_extra;
+        p_dec->fmt_out.i_extra = p_dec->fmt_in->i_extra;
         memcpy( p_dec->fmt_out.p_extra,
-                p_dec->fmt_in.p_extra, p_dec->fmt_out.i_extra );
+                p_dec->fmt_in->p_extra, p_dec->fmt_out.i_extra );
     }
 
     /* Clean up the decoder setup info... we're done with it */
@@ -687,7 +687,6 @@ static int OpenEncoder( vlc_object_t *p_this )
     /* Allocate the memory needed to store the encoder's structure */
     if( ( p_sys = malloc(sizeof(encoder_sys_t)) ) == NULL )
         return VLC_ENOMEM;
-    p_enc->p_sys = p_sys;
 
     p_enc->fmt_in.i_codec = VLC_CODEC_I420;
     p_enc->fmt_out.i_codec = VLC_CODEC_THEORA;
@@ -783,7 +782,7 @@ static int OpenEncoder( vlc_object_t *p_this )
     /* Create and store headers */
     while ( ( status = th_encode_flushheader( p_sys->tcx, &p_sys->tc, &header ) ) )
     {
-        if ( status < 0 ) return VLC_EGENERIC;
+        if ( status < 0 ) goto error;
         if( xiph_AppendHeaders( &p_enc->fmt_out.i_extra, &p_enc->fmt_out.p_extra,
                                 header.bytes, header.packet ) )
         {
@@ -798,7 +797,15 @@ static int OpenEncoder( vlc_object_t *p_this )
         .encode_video = Encode,
     };
     p_enc->ops = &ops;
+    p_enc->p_sys = p_sys;
+
     return VLC_SUCCESS;
+error:
+    th_info_clear(&p_sys->ti);
+    th_comment_clear(&p_sys->tc);
+    th_encode_free(p_sys->tcx);
+    free(p_sys);
+    return VLC_EGENERIC;
 }
 
 /****************************************************************************

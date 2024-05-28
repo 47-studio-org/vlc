@@ -122,7 +122,8 @@ static void Close(vlc_gl_t *gl)
         }                                                          \
     } while( 0 )
 
-static int Open(vlc_gl_t *gl, unsigned width, unsigned height)
+static int Open(vlc_gl_t *gl, unsigned width, unsigned height,
+                const struct vlc_gl_cfg *gl_cfg)
 {
     vout_display_sys_t * sys;
 
@@ -130,6 +131,12 @@ static int Open(vlc_gl_t *gl, unsigned width, unsigned height)
     if ( engineType != libvlc_video_engine_opengl &&
          engineType != libvlc_video_engine_gles2 )
         return VLC_ENOTSUP;
+
+    if (gl_cfg->need_alpha)
+    {
+        msg_Err(gl, "Cannot support alpha yet");
+        return VLC_ENOTSUP;
+    }
 
     /* Allocate structure */
     gl->sys = sys = vlc_obj_calloc(VLC_OBJECT(gl), 1, sizeof(*sys));
@@ -146,7 +153,7 @@ static int Open(vlc_gl_t *gl, unsigned width, unsigned height)
 
     if( sys->setupCb )
     {
-        libvlc_video_setup_device_cfg_t setup_cfg = {};
+        libvlc_video_setup_device_cfg_t setup_cfg = { .hardware_decoding = false };
         libvlc_video_setup_device_info_t configured_cfg;
         if( !sys->setupCb(&sys->opaque, &setup_cfg, &configured_cfg) )
         {
@@ -181,12 +188,11 @@ vlc_module_begin()
     set_description("GL texture output")
     set_subcategory(SUBCAT_VIDEO_VOUT)
 
-    set_capability("opengl", 0)
-    set_callback(Open)
+    set_callback_opengl(Open, 0)
+
     add_shortcut("vglmem")
 
     add_submodule()
-    set_capability("opengl es2", 0)
-    set_callback(Open)
+    set_callback_opengl_es2(Open, 0)
     add_shortcut("vglmem")
 vlc_module_end()

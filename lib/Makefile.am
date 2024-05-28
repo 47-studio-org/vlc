@@ -2,7 +2,7 @@ AUTOMAKE_OPTIONS = subdir-objects
 pkgconfigdir = $(libdir)/pkgconfig
 AM_CFLAGS = $(CFLAGS_libvlc)
 
-SUFFIXES = .pc.in .pc
+SUFFIXES = .pc.in .pc .rc.in .rc
 
 BUILT_SOURCES = $(nodist_pkginclude_HEADERS)
 CLEANFILES = $(BUILT_SOURCES) $(pkgconfig_DATA)
@@ -20,13 +20,8 @@ pkginclude_HEADERS = \
 	../include/vlc/libvlc_media_track.h \
 	../include/vlc/libvlc_renderer_discoverer.h \
 	../include/vlc/libvlc_picture.h \
+	../include/vlc/libvlc_version.h \
 	../include/vlc/vlc.h
-
-nodist_pkginclude_HEADERS = ../include/vlc/libvlc_version.h
-
-../include/vlc/libvlc_version.h: ../include/vlc/libvlc_version.h.in $(top_builddir)/config.status
-	$(AM_V_GEN)cd "$(top_builddir)" && \
-	$(SHELL) ./config.status --file="src/$@"
 
 lib_LTLIBRARIES = libvlc.la
 
@@ -55,18 +50,31 @@ libvlc_la_SOURCES = \
 	media_discoverer.c \
 	picture.c \
 	../src/revision.c
-EXTRA_DIST = libvlc.pc.in libvlc.sym ../include/vlc/libvlc_version.h.in
+EXTRA_DIST = libvlc.pc.in libvlc.sym
+
+if HAVE_WIN32
+noinst_DATA = libvlc_win32_rc.rc
+endif
+EXTRA_DIST += libvlc_win32_rc.rc.in
+
+libvlc_win32_rc.rc: libvlc_win32_rc.rc.in $(top_builddir)/config.status
+	$(AM_V_GEN)cd "$(top_builddir)" && \
+	$(SHELL) ./config.status --file="lib/$@"
 
 libvlc_la_LIBADD = ../src/libvlccore.la ../compat/libcompat.la $(LIBM)
 libvlc_la_LDFLAGS = \
 	$(LDFLAGS_libvlc) \
 	-no-undefined \
-	-version-info 12:0:0 \
+	-version-number @LIBVLC_ABI_MAJOR@:@LIBVLC_ABI_MINOR@:@LIBVLC_ABI_MICRO@ \
 	-export-symbols $(srcdir)/libvlc.sym
 libvlc_la_DEPENDENCIES = libvlc.sym
+libvlc_la_CPPFLAGS = $(AM_CPPFLAGS)
 if HAVE_WIN32
-libvlc_la_DEPENDENCIES += ../src/libvlc_win32_rc.$(OBJEXT)
-libvlc_la_LDFLAGS += -Wl,../src/libvlc_win32_rc.$(OBJEXT) -avoid-version -Wc,-static
+libvlc_la_DEPENDENCIES += libvlc_win32_rc.$(OBJEXT)
+libvlc_la_LDFLAGS += -Wl,libvlc_win32_rc.$(OBJEXT) -avoid-version -Wc,-static
+if HAVE_DYNAMIC_PLUGINS
+libvlc_la_CPPFLAGS += -DLIBVLC_DLL_EXPORT
+endif
 endif
 if HAVE_OS2
 libvlc_la_LDFLAGS += -avoid-version
@@ -89,6 +97,9 @@ pkgconfig_DATA = libvlc.pc
 libvlc.pc: libvlc.pc.in $(top_builddir)/config.status
 	$(AM_V_GEN)cd "$(top_builddir)" && \
 	$(SHELL) ./config.status --file="lib/$@"
+
+libvlc_win32_rc.$(OBJEXT): libvlc_win32_rc.rc $(top_srcdir)/extras/package/win32/libvlc.dll.manifest
+	$(WINDRES) --include-dir $(top_srcdir)/share --include-dir $(top_srcdir)/extras/package/win32 -i $< -o $@
 
 check-local:
 	$(SHELL) $(top_srcdir)/src/check_headers $(pkginclude_HEADERS)

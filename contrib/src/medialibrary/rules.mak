@@ -1,4 +1,4 @@
-MEDIALIBRARY_VERSION := 0.12.0
+MEDIALIBRARY_VERSION := 0.12.3
 MEDIALIBRARY_URL := https://code.videolan.org/videolan/medialibrary/-/archive/$(MEDIALIBRARY_VERSION)/medialibrary-$(MEDIALIBRARY_VERSION).tar.bz2
 
 PKGS += medialibrary
@@ -18,8 +18,8 @@ medialibrary: medialibrary-$(MEDIALIBRARY_VERSION).tar.bz2 .sum-medialibrary
 	$(MOVE)
 
 .medialibrary: medialibrary crossfile.meson
-	cd $< && $(HOSTVARS_MESON) $(MESON) -Dlibvlc=disabled -Dlibtool_workaround=true build
-	ninja -C $</build
-	cd $< && cd build && ninja install
+	$(MESONCLEAN)
+	$(HOSTVARS_MESON) $(MESON) -Dlibvlc=disabled -Dlibtool_workaround=true
+	+$(MESONBUILD)
 	touch $@
 

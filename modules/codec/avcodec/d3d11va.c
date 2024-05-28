@@ -70,9 +70,6 @@ vlc_module_begin()
     set_va_callback(Open, 110)
 vlc_module_end()
 
-#include <initguid.h> /* must be last included to not redefine existing GUIDs */
-DEFINE_GUID(DXVA2_NoEncrypt,                        0x1b81bed0, 0xa0c7, 0x11d3, 0xb9, 0x84, 0x00, 0xc0, 0x4f, 0x2e, 0x73, 0xc5);
-
 typedef struct
 {
     d3d11_device_t               *d3d_dev;
@@ -160,6 +157,7 @@ static struct d3d11va_pic_context *CreatePicContext(
     ID3D11ShaderResourceView_GetResource(renderSrc[0], &p_resource);
 
     pic_ctx->ctx.picsys.slice_index = slice;
+    pic_ctx->ctx.picsys.sharedHandle = INVALID_HANDLE_VALUE;
     for (int i=0;i<DXGI_MAX_SHADER_VIEW; i++)
     {
         pic_ctx->ctx.picsys.resource[i] = p_resource;
@@ -239,6 +237,12 @@ static int Open(vlc_va_t *va, AVCodecContext *ctx, enum AVPixelFormat hwfmt, con
     d3d11_decoder_device_t *devsys = GetD3D11OpaqueDevice( dec_device );
     if ( devsys == NULL )
         return VLC_EGENERIC;
+
+    if (!(ID3D11Device_GetCreationFlags(devsys->d3d_dev.d3ddevice) & D3D11_CREATE_DEVICE_VIDEO_SUPPORT))
+    {
+        msg_Err(va, "Missing D3D11_CREATE_DEVICE_VIDEO_SUPPORT");
+        return VLC_EGENERIC;
+    }
 
     vlc_va_sys_t *sys = calloc(1, sizeof (*sys));
     if (unlikely(sys == NULL))
@@ -621,7 +625,7 @@ static int DxCreateDecoderSurfaces(vlc_va_t *va, int codec_id,
             score = 2;
         else
             continue;
-        if (IsEqualGUID(&cfg->guidConfigBitstreamEncryption, &DXVA2_NoEncrypt))
+        if (IsEqualGUID(&cfg->guidConfigBitstreamEncryption, &DXVA_NoEncrypt))
             score += 16;
 
         if (cfg_score < score) {

@@ -20,6 +20,9 @@ import QtQuick 2.11
 import QtQuick.Templates 2.4 as T
 import QtQuick.Layouts 1.3
 
+import org.videolan.compat 0.1
+import org.videolan.vlc 0.1
+
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
@@ -38,8 +41,6 @@ T.Control {
     property int _modifiersOnLastPress: Qt.NoModifier
 
     readonly property bool dragActive: hoverArea.drag.active
-
-    property int horizontalSpacing: 0
 
     property var dragItem
 
@@ -60,7 +61,8 @@ T.Control {
         id: defaultDelId
         property var rowModel: parent.rowModel
         property var colModel: parent.colModel
-        property color foregroundColor: parent.foregroundColor
+        readonly property ColorContext colorContext: parent.colorContext
+        readonly property bool selected: parent.selected
 
         label: text
         forceScroll: parent.currentlyFocused
@@ -74,34 +76,39 @@ T.Control {
             text: defaultDelId.rowModel
                     ? (defaultDelId.rowModel[defaultDelId.colModel.criteria] || "")
                     : ""
-            color: defaultDelId.foregroundColor
+
+            color: defaultDelId.selected
+                ? defaultDelId.colorContext.fg.highlight
+                : defaultDelId.colorContext.fg.primary
         }
     }
     // Settings
 
     hoverEnabled: true
-    
+
     ListView.delayRemove: dragActive
 
-
+    Component.onCompleted: {
+        Keys.menuPressed.connect(contextButton.clicked)
+    }
 
     // Childs
 
-    background: AnimatedBackground {
-        id: background
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Item
 
+        focused: delegate.visualFocus
+        hovered: delegate.hovered
+    }
+
+    background: AnimatedBackground {
         active: visualFocus
 
         animationDuration: VLCStyle.duration_short
-
-        backgroundColor: {
-            if (delegate.selected)
-                return VLCStyle.colors.gridSelect;
-            else if (delegate.hovered)
-                return VLCStyle.colors.listHover;
-            else
-                return VLCStyle.colors.setColorAlpha(VLCStyle.colors.listHover, 0);
-        }
+        animate: theme.initialized
+        backgroundColor: delegate.selected ? theme.bg.highlight : theme.bg.primary
+        activeBorderColor: theme.visualFocus
 
         MouseArea {
             id: hoverArea
@@ -111,8 +118,6 @@ T.Control {
             anchors.fill: parent
 
             hoverEnabled: false
-
-            Keys.onMenuPressed: delegate.contextMenuButtonClicked(contextButton, delegate.rowModel)
 
             acceptedButtons: Qt.RightButton | Qt.LeftButton
 
@@ -159,16 +164,25 @@ T.Control {
 
                 delegate.dragItem.Drag.active = drag.active
             }
+
+            TouchScreenTapHandlerCompat {
+                onTapped: {
+                    delegate.selectAndFocus(Qt.NoModifier, Qt.MouseFocusReason)
+                    delegate.itemDoubleClicked(delegate._index, delegate.rowModel)
+                }
+
+                onLongPressed: {
+                    delegate.rightClick(delegate, delegate.rowModel, point.scenePosition)
+                }
+            }
         }
     }
 
     contentItem: Row {
-        id: content
-
         leftPadding: VLCStyle.margin_xxxsmall
         rightPadding: VLCStyle.margin_xxxsmall
 
-        spacing: delegate.horizontalSpacing
+        spacing: VLCStyle.column_spacing
 
         Repeater {
             model: delegate.sortModel
@@ -176,17 +190,19 @@ T.Control {
             Loader{
                 property var rowModel: delegate.rowModel
 
-                property var colModel: modelData
+                property var colModel: modelData.model
 
                 readonly property int index: delegate._index
 
                 readonly property bool currentlyFocused: delegate.activeFocus
 
+                readonly property bool selected: delegate.selected
+
                 readonly property bool containsMouse: hoverArea.containsMouse
 
-                readonly property color foregroundColor: background.foregroundColor
+                readonly property ColorContext colorContext: theme
 
-                width: (modelData.width) ? modelData.width : 0
+                width: (modelData.size) ? VLCStyle.colWidth(modelData.size) : 0
 
                 height: parent.height
 
@@ -203,6 +219,12 @@ T.Control {
             Widgets.IconToolButton {
                 id: contextButton
 
+                anchors.left: parent.left
+
+                // NOTE: We want the contextButton to be contained inside the trailing
+                //       column_spacing.
+                anchors.leftMargin: -width
+
                 anchors.verticalCenter: parent.verticalCenter
 
                 iconText: VLCIcons.ellipsis
@@ -218,6 +240,8 @@ T.Control {
                     var pos = contextButton.mapToGlobal(VLCStyle.margin_xsmall, contextButton.height / 2 + VLCStyle.fontHeight_normal)
                     delegate.contextMenuButtonClicked(this, delegate.rowModel, pos)
                 }
+
+                activeFocusOnTab: false
             }
         }
     }

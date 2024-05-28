@@ -1,6 +1,6 @@
 # rnnoise
 
-RNNOISE_GITURL := http://github.com/xiph/rnnoise.git
+RNNOISE_GITURL := $(GITHUB)/xiph/rnnoise.git
 RNNOISE_GITHASH := 90ec41ef659fd82cfec2103e9bb7fc235e9ea66c
 
 ifndef HAVE_ANDROID
@@ -22,10 +22,13 @@ rnnoise: rnnoise-$(RNNOISE_GITHASH).tar.xz .sum-rnnoise
 	$(UNPACK)
 	$(MOVE)
 
+RNNOISE_CONF := --disable-examples --disable-doc
+
 .rnnoise: rnnoise
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure --disable-examples --disable-doc $(HOSTCONF)
-	cd $< && $(MAKE)
-	$(call pkg_static,"rnnoise.pc")
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(RNNOISE_CONF)
+	+$(MAKEBUILD)
+	$(call pkg_static,"$(BUILD_DIRUNPACK)/rnnoise.pc")
+	+$(MAKEBUILD) install
 	touch $@

@@ -68,7 +68,7 @@ static bool GetLock(filter_t *p_filter, IDirect3DSurface9 *d3d,
 
 static void DXA9_YV12(filter_t *p_filter, picture_t *src, picture_t *dst)
 {
-    copy_cache_t *p_copy_cache = (copy_cache_t*) p_filter->p_sys;
+    copy_cache_t *p_copy_cache = p_filter->p_sys;
     picture_sys_d3d9_t *p_sys = ActiveD3D9PictureSys(src);
 
     D3DSURFACE_DESC desc;
@@ -138,7 +138,7 @@ static void DXA9_YV12(filter_t *p_filter, picture_t *src, picture_t *dst)
 
 static void DXA9_NV12(filter_t *p_filter, picture_t *src, picture_t *dst)
 {
-    copy_cache_t *p_copy_cache = (copy_cache_t*) p_filter->p_sys;
+    copy_cache_t *p_copy_cache = p_filter->p_sys;
     picture_sys_d3d9_t *p_sys = ActiveD3D9PictureSys(src);
 
     D3DSURFACE_DESC desc;
@@ -351,7 +351,7 @@ static picture_t *AllocateCPUtoGPUTexture(filter_t *p_filter)
     video_format_Copy(&fmt_staging, &p_filter->fmt_out.video);
     fmt_staging.i_chroma = format;
 
-    picture_resource_t dummy_res = {};
+    picture_resource_t dummy_res = { .p_sys = NULL };
     picture_t *p_dst = picture_NewFromResource(&fmt_staging, &dummy_res);
     if (p_dst == NULL) {
         msg_Err(p_filter, "Failed to map create the temporary picture.");

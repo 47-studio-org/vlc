@@ -30,6 +30,8 @@
 #include "fragments.h"
 #include "../asf/asfpacket.h"
 
+#define MP4_CHUNK_SMALLBUF_ENTRIES 2
+
 /* Contain all information about a chunk */
 typedef struct
 {
@@ -49,12 +51,12 @@ typedef struct
     uint32_t     i_entries_dts;
     uint32_t     *p_sample_count_dts;
     uint32_t     *p_sample_delta_dts;   /* dts delta */
-    uint32_t     small_dts_buf[4];
+    uint32_t     small_dts_buf[MP4_CHUNK_SMALLBUF_ENTRIES * 2];
 
     uint32_t     i_entries_pts;
     uint32_t     *p_sample_count_pts;
     uint32_t     *p_sample_offset_pts;  /* pts-dts */
-    uint32_t     small_pts_buf[4];
+    uint32_t     small_pts_buf[MP4_CHUNK_SMALLBUF_ENTRIES * 2];
 
     /* TODO if needed add pts
         but quickly *add* support for edts and seeking */
@@ -149,11 +151,6 @@ typedef struct
     uint32_t         *p_sample_size; /* XXX perhaps add file offset if take
 //                                    too much time to do sumations each time*/
 
-    uint32_t     i_sample_first; /* i_sample_first value
-                                                   of the next chunk */
-    uint64_t     i_first_dts;    /* i_first_dts value
-                                                   of the next chunk */
-
     const MP4_Box_t *p_track;
     const MP4_Box_t *p_stbl;  /* will contain all timing information */
     const MP4_Box_t *p_stsd;  /* will contain all data to initialize decoder */
@@ -199,7 +196,6 @@ int SetupAudioES( demux_t *p_demux, const mp4_track_t *p_track,
                   const MP4_Box_t *p_sample, es_format_t *, track_config_t * );
 int SetupSpuES( demux_t *p_demux, const mp4_track_t *p_track,
                 const MP4_Box_t *p_sample, es_format_t *, track_config_t * );
-void SetupMeta( vlc_meta_t *p_meta, const MP4_Box_t *p_udta );
 
 /* format of RTP reception hint track sample constructor */
 typedef struct

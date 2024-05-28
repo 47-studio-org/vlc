@@ -25,7 +25,8 @@ DEPS_tremor = ogg $(DEPS_ogg)
 .tremor: tremor
 	# Stuff that depends on libogg
 	$(RECONF)
-	cd $< && \
-	$(HOSTVARS) CFLAGS="$(CFLAGS) $(NOTHUMB)" ./configure $(HOSTCONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

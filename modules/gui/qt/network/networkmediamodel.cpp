@@ -69,10 +69,12 @@ QVariant NetworkMediaModel::data( const QModelIndex& index, int role ) const
             return item.protocol;
         case NETWORK_TREE:
             return QVariant::fromValue( item.tree );
-        case NETWORK_SOURCE:
-            return item.mediaSource->description;
         case NETWORK_ARTWORK:
             return item.artworkUrl;
+        case NETWORK_FILE_SIZE:
+            return item.fileSize;
+        case NETWORK_FILE_MODIFIED:
+            return item.fileModified;
         default:
             return {};
     }
@@ -88,8 +90,9 @@ QHash<int, QByteArray> NetworkMediaModel::roleNames() const
         { NETWORK_TYPE, "type" },
         { NETWORK_PROTOCOL, "protocol" },
         { NETWORK_TREE, "tree" },
-        { NETWORK_SOURCE, "source" },
         { NETWORK_ARTWORK, "artwork" },
+        { NETWORK_FILE_SIZE, "fileSizeRaw64" },
+        { NETWORK_FILE_MODIFIED, "fileModified" }
     };
 }
 
@@ -376,8 +379,9 @@ bool NetworkMediaModel::initializeMediaSources()
     if (!m_treeItem)
         return false;
 
-    auto tree = m_treeItem.source->tree;
-    auto l = std::make_unique<NetworkSourceListener>( m_treeItem.source, this );
+    auto tree = m_treeItem.tree.get();
+    auto l = std::make_unique<MediaTreeListener>( m_treeItem.tree,
+                                                  std::make_unique<ListenerCb>(this) );
     if ( l->listener == nullptr )
         return false;
 
@@ -402,7 +406,7 @@ bool NetworkMediaModel::initializeMediaSources()
             //ML thread
             [uri](vlc_medialibrary_t* ml, Ctx& ctx){
                 auto ret = vlc_ml_is_indexed( ml, uri.constData(), &ctx.isIndexed );
-                ctx.succeed = (ret != VLC_SUCCESS);
+                ctx.succeed = (ret == VLC_SUCCESS);
             },
             //ML thread
             [this](quint64,Ctx& ctx){
@@ -428,7 +432,9 @@ bool NetworkMediaModel::initializeMediaSources()
                 itemList.emplace_back(mediaNode->pp_children[i]->p_item);
 
             while (parent && parent->p_item) {
-                m_path.push_front(QVariant::fromValue(PathNode(NetworkTreeItem(m_treeItem.source, parent->p_item), parent->p_item->psz_name)));
+                m_path.push_front(QVariant::fromValue(PathNode(
+                        NetworkTreeItem(m_treeItem.tree, parent->p_item),
+                        parent->p_item->psz_name)));
                 input_item_node_t *node = nullptr;
                 input_item_node_t *grandParent = nullptr;
                 if (!vlc_media_tree_Find( tree, parent->p_item, &node, &grandParent)) {
@@ -439,7 +445,7 @@ bool NetworkMediaModel::initializeMediaSources()
         }
         vlc_media_tree_Unlock(tree);
         if (!itemList.empty())
-            refreshMediaList( m_treeItem.source, std::move( itemList ), true );
+            refreshMediaList( m_treeItem.tree, std::move( itemList ), true );
         emit pathChanged();
     }
 
@@ -453,18 +459,19 @@ bool NetworkMediaModel::initializeMediaSources()
     return true;
 }
 
-void NetworkMediaModel::onItemCleared( MediaSourcePtr mediaSource, input_item_node_t* node)
+void NetworkMediaModel::ListenerCb::onItemCleared( MediaTreePtr tree, input_item_node_t* node)
 {
     InputItemPtr p_node { node->p_item };
-    QMetaObject::invokeMethod(this, [this, p_node = std::move(p_node), mediaSource = std::move(mediaSource)]() {
-        if (p_node != m_treeItem.media)
+    QMetaObject::invokeMethod(model, [model=model, p_node = std::move(p_node), tree = std::move(tree)]() {
+        if (p_node != model->m_treeItem.media)
             return;
         input_item_node_t *res;
         input_item_node_t *parent;
-        vlc_media_tree_Lock( m_treeItem.source->tree );
-        bool found = vlc_media_tree_Find( m_treeItem.source->tree, m_treeItem.media.get(),
+        // XXX is tree == m_treeItem.tree?
+        vlc_media_tree_Lock( model->m_treeItem.tree.get() );
+        bool found = vlc_media_tree_Find( model->m_treeItem.tree.get(), model->m_treeItem.media.get(),
                                           &res, &parent );
-        vlc_media_tree_Unlock( m_treeItem.source->tree );
+        vlc_media_tree_Unlock( model->m_treeItem.tree.get() );
         if (!found)
             return;
 
@@ -473,13 +480,13 @@ void NetworkMediaModel::onItemCleared( MediaSourcePtr mediaSource, input_item_no
         for (int i = 0; i < res->i_children; i++)
             itemList.emplace_back(res->pp_children[i]->p_item);
 
-        refreshMediaList( std::move( mediaSource ), std::move( itemList ), true );
+        model->refreshMediaList( std::move( tree ), std::move( itemList ), true );
     }, Qt::QueuedConnection);
 }
 
-void NetworkMediaModel::onItemAdded( MediaSourcePtr mediaSource, input_item_node_t* parent,
-                                  input_item_node_t *const children[],
-                                  size_t count )
+void NetworkMediaModel::ListenerCb::onItemAdded( MediaTreePtr tree, input_item_node_t* parent,
+                                                 input_item_node_t *const children[],
+                                                 size_t count )
 {
     InputItemPtr p_parent { parent->p_item };
     std::vector<InputItemPtr> itemList;
@@ -487,15 +494,15 @@ void NetworkMediaModel::onItemAdded( MediaSourcePtr mediaSource, input_item_node
     for (size_t i = 0; i < count; i++)
         itemList.emplace_back(children[i]->p_item);
 
-    QMetaObject::invokeMethod(this, [this, p_parent = std::move(p_parent), mediaSource = std::move(mediaSource), itemList=std::move(itemList)]() {
-        if ( p_parent == m_treeItem.media )
-            refreshMediaList( std::move( mediaSource ), std::move( itemList ), false );
+    QMetaObject::invokeMethod(model, [model=model, p_parent = std::move(p_parent), tree = std::move(tree), itemList=std::move(itemList)]() {
+        if ( p_parent == model->m_treeItem.media )
+            model->refreshMediaList( std::move( tree ), std::move( itemList ), false );
     }, Qt::QueuedConnection);
 }
 
-void NetworkMediaModel::onItemRemoved(MediaSourcePtr, input_item_node_t * node,
-                                    input_item_node_t *const children[],
-                                    size_t count )
+void NetworkMediaModel::ListenerCb::onItemRemoved( MediaTreePtr, input_item_node_t * node,
+                                                   input_item_node_t *const children[],
+                                                   size_t count )
 {
     std::vector<InputItemPtr> itemList;
     itemList.reserve( count );
@@ -503,18 +510,18 @@ void NetworkMediaModel::onItemRemoved(MediaSourcePtr, input_item_node_t * node,
         itemList.emplace_back( children[i]->p_item );
 
     InputItemPtr p_node { node->p_item };
-    QMetaObject::invokeMethod(this, [this, p_node=std::move(p_node), itemList=std::move(itemList)]() {
-        if (p_node != m_treeItem.media)
+    QMetaObject::invokeMethod(model, [model=model, p_node=std::move(p_node), itemList=std::move(itemList)]() {
+        if (p_node != model->m_treeItem.media)
             return;
 
         for (auto p_item : itemList)
         {
             QUrl itemUri = QUrl::fromEncoded(p_item->psz_uri);
-            auto it = std::find_if( begin( m_items ), end( m_items ), [&](const Item& i) {
+            auto it = std::find_if( begin( model->m_items ), end( model->m_items ), [&](const Item& i) {
                 return QString::compare( qfu(p_item->psz_name), i.name, Qt::CaseInsensitive ) == 0 &&
                     itemUri.scheme() == i.mainMrl.scheme();
             });
-            if ( it == end( m_items ) )
+            if ( it == end( model->m_items ) )
                 continue;
 
             auto mrlIt = std::find_if( begin( (*it).mrls ), end( (*it).mrls),
@@ -526,31 +533,31 @@ void NetworkMediaModel::onItemRemoved(MediaSourcePtr, input_item_node_t * node,
             (*it).mrls.erase( mrlIt );
             if ( (*it).mrls.empty() == false )
                 continue;
-            auto idx = std::distance( begin( m_items ), it );
-            beginRemoveRows({}, idx, idx );
-            m_items.erase( it );
-            endRemoveRows();
-            emit countChanged();
+            auto idx = std::distance( begin( model->m_items ), it );
+            model->beginRemoveRows({}, idx, idx );
+            model->m_items.erase( it );
+            model->endRemoveRows();
+            model->emit countChanged();
         }
     }, Qt::QueuedConnection);
 }
 
-void NetworkMediaModel::onItemPreparseEnded(MediaSourcePtr, input_item_node_t* node, enum input_item_preparse_status )
+void NetworkMediaModel::ListenerCb::onItemPreparseEnded(MediaTreePtr, input_item_node_t* node, enum input_item_preparse_status )
 {
-    m_preparseSem.release();
+    model->m_preparseSem.release();
     InputItemPtr p_node { node->p_item };
-    QMetaObject::invokeMethod(this, [this, p_node=std::move(p_node)]() {
-        if (p_node != m_treeItem.media)
+    QMetaObject::invokeMethod(model, [model=model, p_node=std::move(p_node)]() {
+        if (p_node != model->m_treeItem.media)
             return;
 
-        m_parsingPending = false;
-        emit parsingPendingChanged(false);
+        model->m_parsingPending = false;
+        model->emit parsingPendingChanged(false);
     });
 }
 
-void NetworkMediaModel::refreshMediaList( MediaSourcePtr mediaSource,
-                                       std::vector<InputItemPtr> children,
-                                       bool clear )
+void NetworkMediaModel::refreshMediaList( MediaTreePtr tree,
+                                          std::vector<InputItemPtr> children,
+                                          bool clear )
 {
     std::vector<Item> items;
     for ( auto it: children)
@@ -565,13 +572,38 @@ void NetworkMediaModel::refreshMediaList( MediaSourcePtr mediaSource,
                     QUrl::fromEncoded(it->psz_uri);
 
         item.canBeIndexed = canBeIndexed( item.mainMrl , item.type );
-        item.mediaSource = mediaSource;
 
-        char* artwork = input_item_GetArtworkURL(it.get());
-        if (artwork)
+        input_item_t * inputItem = it.get();
+
+        char * str = input_item_GetArtworkURL(inputItem);
+
+        if (str)
         {
-            item.artworkUrl = QUrl::fromEncoded(artwork);
-            free(artwork);
+            item.artworkUrl = QUrl::fromEncoded(str);
+            free(str);
+        }
+
+        str = input_item_GetInfo(inputItem, ".stat", "size");
+
+        if (str)
+        {
+            item.fileSize = QString(str).toLongLong();
+            free(str);
+        }
+        else
+            item.fileSize = 0;
+
+        str = input_item_GetInfo(inputItem, ".stat", "mtime");
+
+        if (str)
+        {
+            bool ok;
+
+            qint64 time = QString(str).toLongLong(&ok);
+            free(str);
+
+            if (ok)
+                item.fileModified = QDateTime::fromSecsSinceEpoch(time);
         }
 
         if ( m_mediaLib && item.canBeIndexed == true )
@@ -585,7 +617,7 @@ void NetworkMediaModel::refreshMediaList( MediaSourcePtr mediaSource,
             //ML thread
             [mainMrl](vlc_medialibrary_t* ml, Ctx& ctx){
                 auto ret = vlc_ml_is_indexed( ml, qtu(mainMrl.toString( QUrl::FullyEncoded )), &ctx.isIndexed );
-                ctx.succeed = (ret != VLC_SUCCESS);
+                ctx.succeed = (ret == VLC_SUCCESS);
             },
             //UI thread
             [this, mainMrl](quint64, Ctx& ctx){
@@ -603,7 +635,7 @@ void NetworkMediaModel::refreshMediaList( MediaSourcePtr mediaSource,
                 }
             });
         }
-        item.tree = NetworkTreeItem( mediaSource, it.get() );
+        item.tree = NetworkTreeItem( tree, it.get() );
         items.push_back( std::move( item ) );
     }
     if ( clear == true )

@@ -27,8 +27,10 @@
 #include <vlc_common.h>
 #include <vlc_memstream.h>
 #include <vlc_opengl.h>
+#include <vlc_fs.h>
 
-#ifdef HAVE_LIBPLACEBO
+#ifdef HAVE_LIBPLACEBO_GL
+#include <libplacebo/opengl.h>
 #include <libplacebo/shaders.h>
 #include <libplacebo/shaders/colorspace.h>
 #include "../libplacebo/utils.h"
@@ -51,16 +53,20 @@ struct vlc_gl_sampler_priv {
         GLint Textures[PICTURE_PLANE_MAX];
         GLint TexSizes[PICTURE_PLANE_MAX]; /* for GL_TEXTURE_RECTANGLE */
         GLint ConvMatrix;
-        GLint *pl_vars; /* for pl_sh_res */
+        GLint *pl_vars, *pl_descs; /* for pl_sh_res */
     } uloc;
 
     bool yuv_color;
     GLfloat conv_matrix[4*4];
 
+#ifdef HAVE_LIBPLACEBO_GL
     /* libplacebo context */
-    struct pl_context *pl_ctx;
-    struct pl_shader *pl_sh;
+    pl_log pl_log;
+    pl_opengl pl_opengl;
+    pl_shader pl_sh;
+    pl_shader_obj dither_state, tone_map_state, lut_state;
     const struct pl_shader_res *pl_sh_res;
+#endif
 
     /* If set, vlc_texture() exposes a single plane (without chroma
      * conversion), selected by vlc_gl_sampler_SetCurrentPlane(). */
@@ -274,11 +280,16 @@ sampler_base_fetch_locations(struct vlc_gl_sampler *sampler, GLuint program)
         }
     }
 
-#ifdef HAVE_LIBPLACEBO
+#ifdef HAVE_LIBPLACEBO_GL
     const struct pl_shader_res *res = priv->pl_sh_res;
     for (int i = 0; res && i < res->num_variables; i++) {
         struct pl_shader_var sv = res->variables[i];
         priv->uloc.pl_vars[i] = vt->GetUniformLocation(program, sv.var.name);
+    }
+
+    for (int i = 0; res && i < res->num_descriptors; i++) {
+        struct pl_shader_desc sd = res->descriptors[i];
+        priv->uloc.pl_descs[i] = vt->GetUniformLocation(program, sd.desc.name);
     }
 #endif
 }
@@ -313,7 +324,7 @@ sampler_base_load(struct vlc_gl_sampler *sampler)
                           glfmt->tex_heights[i]);
     }
 
-#ifdef HAVE_LIBPLACEBO
+#ifdef HAVE_LIBPLACEBO_GL
     const struct pl_shader_res *res = priv->pl_sh_res;
     for (int i = 0; res && i < res->num_variables; i++) {
         GLint loc = priv->uloc.pl_vars[i];
@@ -323,25 +334,59 @@ sampler_base_load(struct vlc_gl_sampler *sampler)
         struct pl_shader_var sv = res->variables[i];
         struct pl_var var = sv.var;
         // libplacebo doesn't need anything else anyway
-        if (var.type != PL_VAR_FLOAT)
-            continue;
-        if (var.dim_m > 1 && var.dim_m != var.dim_v)
-            continue;
+        assert(var.type == PL_VAR_FLOAT);
+        assert(var.dim_m == 1 || var.dim_m == var.dim_v);
 
         const float *f = sv.data;
         switch (var.dim_m) {
-        case 4: vt->UniformMatrix4fv(loc, 1, GL_FALSE, f); break;
-        case 3: vt->UniformMatrix3fv(loc, 1, GL_FALSE, f); break;
-        case 2: vt->UniformMatrix2fv(loc, 1, GL_FALSE, f); break;
+        case 4: vt->UniformMatrix4fv(loc, var.dim_a, GL_FALSE, f); break;
+        case 3: vt->UniformMatrix3fv(loc, var.dim_a, GL_FALSE, f); break;
+        case 2: vt->UniformMatrix2fv(loc, var.dim_a, GL_FALSE, f); break;
 
         case 1:
             switch (var.dim_v) {
-            case 1: vt->Uniform1f(loc, f[0]); break;
-            case 2: vt->Uniform2f(loc, f[0], f[1]); break;
-            case 3: vt->Uniform3f(loc, f[0], f[1], f[2]); break;
-            case 4: vt->Uniform4f(loc, f[0], f[1], f[2], f[3]); break;
+            case 1: vt->Uniform1fv(loc, var.dim_a, f); break;
+            case 2: vt->Uniform2fv(loc, var.dim_a, f); break;
+            case 3: vt->Uniform3fv(loc, var.dim_a, f); break;
+            case 4: vt->Uniform4fv(loc, var.dim_a, f); break;
             }
             break;
+        }
+    }
+
+    for (int i = 0; res && i < res->num_descriptors; i++) {
+        GLint loc = priv->uloc.pl_descs[i];
+        if (loc == -1)
+            continue;
+        struct pl_shader_desc sd = res->descriptors[i];
+        assert(sd.desc.type == PL_DESC_SAMPLED_TEX);
+        pl_tex tex = sd.binding.object;
+        int texid = glfmt->tex_count + i; // first free texture unit
+        unsigned gltex, target;
+        gltex = pl_opengl_unwrap(priv->pl_opengl->gpu, tex, &target, NULL, NULL);
+        vt->Uniform1i(loc, texid);
+        vt->ActiveTexture(GL_TEXTURE0 + texid);
+        vt->BindTexture(target, gltex);
+
+        static const GLint wraps[PL_TEX_ADDRESS_MODE_COUNT] = {
+            [PL_TEX_ADDRESS_CLAMP]  = GL_CLAMP_TO_EDGE,
+            [PL_TEX_ADDRESS_REPEAT] = GL_REPEAT,
+            [PL_TEX_ADDRESS_MIRROR] = GL_MIRRORED_REPEAT,
+        };
+
+        static const GLint filters[PL_TEX_SAMPLE_MODE_COUNT] = {
+            [PL_TEX_SAMPLE_NEAREST] = GL_NEAREST,
+            [PL_TEX_SAMPLE_LINEAR]  = GL_LINEAR,
+        };
+
+        GLint filter = filters[sd.binding.sample_mode];
+        GLint wrap = wraps[sd.binding.address_mode];
+        vt->TexParameteri(target, GL_TEXTURE_MIN_FILTER, filter);
+        vt->TexParameteri(target, GL_TEXTURE_MAG_FILTER, filter);
+        switch (pl_tex_params_dimension(tex->params)) {
+        case 3: vt->TexParameteri(target, GL_TEXTURE_WRAP_R, wrap); // fall through
+        case 2: vt->TexParameteri(target, GL_TEXTURE_WRAP_T, wrap); // fall through
+        case 1: vt->TexParameteri(target, GL_TEXTURE_WRAP_S, wrap); break;
         }
     }
 #endif
@@ -423,7 +468,9 @@ opengl_init_swizzle(struct vlc_gl_sampler *sampler,
                     vlc_fourcc_t chroma,
                     const vlc_chroma_description_t *desc)
 {
-    if (desc->plane_count == 3)
+    if (desc->plane_count == 4)
+        swizzle_per_tex[0] = swizzle_per_tex[1] = swizzle_per_tex[2] = swizzle_per_tex[3] = "r";
+    else if (desc->plane_count == 3)
         swizzle_per_tex[0] = swizzle_per_tex[1] = swizzle_per_tex[2] = "r";
     else if (desc->plane_count == 2)
     {
@@ -606,6 +653,45 @@ sampler_planes_init(struct vlc_gl_sampler *sampler)
     return VLC_SUCCESS;
 }
 
+#ifdef HAVE_LIBPLACEBO_GL
+static struct pl_custom_lut *LoadCustomLUT(struct vlc_gl_sampler *sampler,
+                                           const char *filepath)
+{
+    struct vlc_gl_sampler_priv *priv = PRIV(sampler);
+    if (!filepath || !filepath[0])
+        return NULL;
+
+    FILE *fs = vlc_fopen(filepath, "rb");
+    struct pl_custom_lut *lut = NULL;
+    char *lut_file = NULL;
+    if (!fs)
+        goto error;
+    int ret = fseek(fs, 0, SEEK_END);
+    if (ret == -1)
+        goto error;
+    long length = ftell(fs);
+    if (length < 0)
+        goto error;
+    rewind(fs);
+
+    lut_file = vlc_alloc(length, sizeof(*lut_file));
+    if (!lut_file)
+        goto error;
+    ret = fread(lut_file, length, 1, fs);
+    if (ret != 1)
+        goto error;
+
+    lut = pl_lut_parse_cube(priv->pl_log, lut_file, length);
+    // fall through
+
+error:
+    if (fs)
+        fclose(fs);
+    free(lut_file);
+    return lut;
+}
+#endif
+
 static int
 opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
 {
@@ -659,22 +745,34 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
 
     ADDF("uniform %s Textures[%u];\n", glsl_sampler, tex_count);
 
-#ifdef HAVE_LIBPLACEBO
+#ifdef HAVE_LIBPLACEBO_GL
     if (priv->pl_sh) {
-        struct pl_shader *sh = priv->pl_sh;
+        pl_shader sh = priv->pl_sh;
         struct pl_color_map_params color_params;
         vlc_placebo_ColorMapParams(VLC_OBJECT(priv->gl), "gl", &color_params);
 
+        struct pl_color_space src_space = vlc_placebo_ColorSpace(fmt);
         struct pl_color_space dst_space = pl_color_space_unknown;
         dst_space.primaries = var_InheritInteger(priv->gl, "target-prim");
         dst_space.transfer = var_InheritInteger(priv->gl, "target-trc");
 
-        struct pl_shader_obj *tone_map_state = NULL;
-        pl_shader_color_map(sh, &color_params,
-                vlc_placebo_ColorSpace(fmt),
-                dst_space, &tone_map_state, false);
+        char *lut_file = var_InheritString(priv->gl, "gl-lut-file");
+        struct pl_custom_lut *lut = LoadCustomLUT(sampler, lut_file);
+        if (lut) {
+            // Transform from the video input to the LUT input color space,
+            // defaulting to a no-op if LUT input color space info is unknown
+            dst_space = lut->color_in;
+            pl_color_space_merge(&dst_space, &src_space);
+        }
 
-        struct pl_shader_obj *dither_state = NULL;
+        pl_shader_color_map(sh, &color_params, src_space, dst_space,
+                            &priv->tone_map_state, false);
+
+        if (lut) {
+            pl_shader_custom_lut(sh, lut, &priv->lut_state);
+            pl_lut_free(&lut);
+        }
+
         int method = var_InheritInteger(priv->gl, "dither-algo");
         if (method >= 0) {
 
@@ -698,27 +796,39 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
                 out_bits = fb_depth;
             }
 
-            pl_shader_dither(sh, out_bits, &dither_state, &(struct pl_dither_params) {
+            pl_shader_dither(sh, out_bits, &priv->dither_state, &(struct pl_dither_params) {
                 .method   = method,
-                .lut_size = 4, // avoid too large values, since this gets embedded
             });
         }
 
         const struct pl_shader_res *res = priv->pl_sh_res = pl_shader_finalize(sh);
-        pl_shader_obj_destroy(&tone_map_state);
-        pl_shader_obj_destroy(&dither_state);
 
         FREENULL(priv->uloc.pl_vars);
         priv->uloc.pl_vars = calloc(res->num_variables, sizeof(GLint));
         for (int i = 0; i < res->num_variables; i++) {
             struct pl_shader_var sv = res->variables[i];
             const char *glsl_type_name = pl_var_glsl_type_name(sv.var);
-            ADDF("uniform %s %s;\n", glsl_type_name, sv.var.name);
+            ADDF("uniform %s %s", glsl_type_name, sv.var.name);
+            if (sv.var.dim_a > 1) {
+                ADDF("[%d];\n", sv.var.dim_a);
+            } else {
+                ADDF(";\n");
+            }
+        }
+
+        FREENULL(priv->uloc.pl_descs);
+        priv->uloc.pl_descs = calloc(res->num_descriptors, sizeof(GLint));
+        for (int i = 0; i < res->num_descriptors; i++) {
+            struct pl_shader_desc sd = res->descriptors[i];
+            assert(sd.desc.type == PL_DESC_SAMPLED_TEX);
+            pl_tex tex = sd.binding.object;
+            assert(tex->sampler_type == PL_SAMPLER_NORMAL);
+            int dims = pl_tex_params_dimension(tex->params);
+            ADDF("uniform sampler%dD %s;\n", dims, sd.desc.name);
         }
 
         // We can't handle these yet, but nothing we use requires them, either
         assert(res->num_vertex_attribs == 0);
-        assert(res->num_descriptors == 0);
 
         ADD(res->glsl);
     }
@@ -750,17 +860,22 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
             assert(swizzle);
             color_count += strlen(swizzle);
             assert(color_count < PICTURE_PLANE_MAX);
+            if (i > 0)
+                ADD("  ,");
             if (tex_target == GL_TEXTURE_RECTANGLE)
             {
                 /* The coordinates are in texels values, not normalized */
-                ADDF("  %s(Textures[%u], TexSizes[%u] * tex_coords).%s,\n", lookup, i, i, swizzle);
+                ADDF("  %s(Textures[%u], TexSizes[%u] * tex_coords).%s\n", lookup, i, i, swizzle);
             }
             else
             {
-                ADDF("  %s(Textures[%u], tex_coords).%s,\n", lookup, i, swizzle);
+                ADDF("  %s(Textures[%u], tex_coords).%s\n", lookup, i, swizzle);
             }
         }
-        ADD("  1.0);\n");
+        if (color_count == 3)
+            ADD("  ,  1.0);\n");
+        else
+            ADD(");\n");
         ADD(" vec4 result = ConvMatrix * pixel;\n");
     }
     else
@@ -771,9 +886,9 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
         ADDF(" vec4 result = %s(Textures[0], tex_coords);\n", lookup);
         color_count = 1;
     }
-    assert(yuv_space == COLOR_SPACE_UNDEF || color_count == 3);
+    assert(yuv_space == COLOR_SPACE_UNDEF || color_count == 3 || color_count == 4);
 
-#ifdef HAVE_LIBPLACEBO
+#ifdef HAVE_LIBPLACEBO_GL
     if (priv->pl_sh_res) {
         const struct pl_shader_res *res = priv->pl_sh_res;
         if (res->input != PL_SHADER_SIG_NONE) {
@@ -810,6 +925,14 @@ opengl_fragment_shader_init(struct vlc_gl_sampler *sampler, bool expose_planes)
     return VLC_SUCCESS;
 }
 
+#if defined(HAVE_LIBPLACEBO_GL) && PL_API_VER >= 215
+static pl_voidfunc_t PlaceboGetProcAddr(void *opaque, const char *name)
+{
+    vlc_gl_t *gl = opaque;
+    return (pl_voidfunc_t)vlc_gl_GetProcAddress(gl, name);
+}
+#endif
+
 struct vlc_gl_sampler *
 vlc_gl_sampler_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api,
                    const struct vlc_gl_format *glfmt, bool expose_planes)
@@ -820,11 +943,6 @@ vlc_gl_sampler_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api,
 
     struct vlc_gl_sampler *sampler = &priv->sampler;
     vlc_gl_LoadExtensionFunctions(gl, &priv->extension_vt);
-
-    priv->uloc.pl_vars = NULL;
-    priv->pl_ctx = NULL;
-    priv->pl_sh = NULL;
-    priv->pl_sh_res = NULL;
 
     priv->gl = gl;
     priv->api = api;
@@ -845,27 +963,45 @@ vlc_gl_sampler_New(struct vlc_gl_t *gl, const struct vlc_gl_api *api,
     sampler->shader.extensions = NULL;
     sampler->shader.body = NULL;
 
-#ifdef HAVE_LIBPLACEBO
-    // Create the main libplacebo context
-    priv->pl_ctx = vlc_placebo_CreateContext(VLC_OBJECT(gl));
-    if (priv->pl_ctx) {
-        priv->pl_sh = pl_shader_alloc(priv->pl_ctx, &(struct pl_shader_params) {
-            .glsl = {
-#   ifdef USE_OPENGL_ES2
-                .version = 100,
-                .gles = true,
-#   else
-                .version = 120,
-#   endif
-            },
-        });
+#ifdef HAVE_LIBPLACEBO_GL
+    priv->uloc.pl_vars = NULL;
+    priv->uloc.pl_descs = NULL;
+    priv->pl_sh_res = NULL;
+    priv->pl_log = vlc_placebo_CreateLog(VLC_OBJECT(gl));
+
+    const struct pl_opengl_params gl_params =
+    {
+        /* Libplacebo won't control whether the context is current or not.
+         * This is the default but we also want to ensure that the struct is
+         * properly initialized even if PL_API_VER < 215. */
+        .make_current = NULL,
+        .release_current = NULL,
+
+#if PL_API_VER >= 215
+        .get_proc_addr_ex = PlaceboGetProcAddr,
+        .proc_ctx = gl,
+#endif
+    };
+    priv->pl_opengl = pl_opengl_create(priv->pl_log, &gl_params);
+    if (!priv->pl_opengl)
+    {
+        vlc_gl_sampler_Delete(sampler);
+        return NULL;
     }
+
+    priv->pl_sh = pl_shader_alloc(priv->pl_log, &(struct pl_shader_params) {
+        .gpu = priv->pl_opengl->gpu,
+        .glsl = {
+            .version = gl->api_type == VLC_OPENGL_ES2 ? 100 : 120,
+            .gles = gl->api_type == VLC_OPENGL_ES2,
+        },
+    });
 #endif
 
     int ret = opengl_fragment_shader_init(sampler, expose_planes);
     if (ret != VLC_SUCCESS)
     {
-        free(sampler);
+        vlc_gl_sampler_Delete(sampler);
         return NULL;
     }
 
@@ -877,12 +1013,15 @@ vlc_gl_sampler_Delete(struct vlc_gl_sampler *sampler)
 {
     struct vlc_gl_sampler_priv *priv = PRIV(sampler);
 
-#ifdef HAVE_LIBPLACEBO
+#ifdef HAVE_LIBPLACEBO_GL
     FREENULL(priv->uloc.pl_vars);
-    if (priv->pl_sh)
-        pl_shader_free(&priv->pl_sh);
-    if (priv->pl_ctx)
-        pl_context_destroy(&priv->pl_ctx);
+    FREENULL(priv->uloc.pl_descs);
+    pl_shader_free(&priv->pl_sh);
+    pl_shader_obj_destroy(&priv->lut_state);
+    pl_shader_obj_destroy(&priv->tone_map_state);
+    pl_shader_obj_destroy(&priv->dither_state);
+    pl_opengl_destroy(&priv->pl_opengl);
+    pl_log_destroy(&priv->pl_log);
 #endif
 
     free(sampler->shader.extensions);

@@ -205,6 +205,7 @@ const StreamID & AbstractStream::getID() const
 struct decoder_owner
 {
     decoder_t dec;
+    es_format_t fmt_in;
     AbstractDecodedStream *id;
     bool b_error;
     es_format_t last_fmt_update;
@@ -268,7 +269,7 @@ bool AbstractDecodedStream::init(const es_format_t *p_fmt)
     p_owner->id = this;
 
     p_decoder = &p_owner->dec;
-    decoder_Init( p_decoder, p_fmt );
+    decoder_Init( p_decoder, &p_owner->fmt_in, p_fmt );
 
     setCallbacks();
 
@@ -284,6 +285,7 @@ bool AbstractDecodedStream::init(const es_format_t *p_fmt)
     {
         es_format_Clean(&p_owner->decoder_out);
         es_format_Clean(&p_owner->last_fmt_update);
+        es_format_Clean(&p_owner->fmt_in);
         decoder_Destroy( p_decoder );
         p_decoder = NULL;
         return false;
@@ -360,7 +362,7 @@ void AbstractDecodedStream::decoderThread()
 int AbstractDecodedStream::Send(block_t *p_block)
 {
     assert(p_decoder);
-    vlc_mutex_lock(&inputLock);
+    vlc_mutex_locker locker(&inputLock);
     inputQueue.push(p_block);
     if(p_block)
     {
@@ -370,45 +372,40 @@ int AbstractDecodedStream::Send(block_t *p_block)
         pcr = std::max(pcr, t);
     }
     vlc_cond_signal(&inputWait);
-    vlc_mutex_unlock(&inputLock);
     return VLC_SUCCESS;
 }
 
 void AbstractDecodedStream::Flush()
 {
-    vlc_mutex_lock(&inputLock);
+    vlc_mutex_locker locker(&inputLock);
     while(!inputQueue.empty())
     {
         if(inputQueue.front())
             block_Release(inputQueue.front());
         inputQueue.pop();
     }
-    vlc_mutex_unlock(&inputLock);
 }
 
 void AbstractDecodedStream::Drain()
 {
     Send(NULL);
-    vlc_mutex_lock(&inputLock);
+    vlc_mutex_locker locker(&inputLock);
     if(status != FAILED && status != DRAINED)
         status = DRAINING;
-    vlc_mutex_unlock(&inputLock);
 }
 
 bool AbstractDecodedStream::isEOS()
 {
-    vlc_mutex_lock(&inputLock);
+    vlc_mutex_locker locker(&inputLock);
     bool b = (status == FAILED || status == DRAINED);
-    vlc_mutex_unlock(&inputLock);
     return b;
 }
 
 bool AbstractDecodedStream::ReachedPlaybackTime(vlc_tick_t t)
 {
-    vlc_mutex_lock(&inputLock);
+    vlc_mutex_locker locker(&inputLock);
     bool b = (pcr != VLC_TICK_INVALID) && t < pcr;
     b |= (status == DRAINED) || (status == FAILED);
-    vlc_mutex_unlock(&inputLock);
     return b;
 }
 
@@ -418,6 +415,7 @@ void AbstractDecodedStream::ReleaseDecoder()
     p_owner = container_of(p_decoder, struct decoder_owner, dec);
     es_format_Clean(&p_owner->decoder_out);
     es_format_Clean(&p_owner->last_fmt_update);
+    es_format_Clean(&p_owner->fmt_in);
     decoder_Destroy( p_decoder );
     p_decoder = NULL;
 }

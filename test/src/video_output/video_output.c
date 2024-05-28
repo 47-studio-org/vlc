@@ -26,10 +26,7 @@
 
 /* Define a builtin module for mocked parts */
 #define MODULE_NAME test_vout_mock
-#define MODULE_STRING "test_vout_mock"
-#undef __PLUGIN__
-
-const char vlc_module_name[] = MODULE_STRING;
+#undef VLC_DYNAMIC_PLUGIN
 
 #include "../../libvlc/test.h"
 #include <vlc_common.h>
@@ -46,6 +43,11 @@ const char vlc_module_name[] = MODULE_STRING;
 #include <limits.h>
 
 #include "video_output.h"
+
+static const char dec_dev_arg[] = "--dec-dev=" MODULE_STRING;
+
+const char vlc_module_name[] = MODULE_STRING;
+
 static size_t current_scenario;
 
 static void DecoderDeviceClose(struct vlc_decoder_device *device)
@@ -99,14 +101,14 @@ static int OpenDecoder(vlc_object_t *obj)
     dec->pf_decode = DecoderDecode;
     // Necessary ?
     es_format_Clean(&dec->fmt_out);
-    es_format_Copy(&dec->fmt_out, &dec->fmt_in);
+    es_format_Copy(&dec->fmt_out, dec->fmt_in);
 
     struct vout_scenario *scenario = &vout_scenarios[current_scenario];
     assert(scenario->decoder_setup != NULL);
     scenario->decoder_setup(dec);
 
     msg_Dbg(obj, "Decoder chroma %4.4s -> %4.4s size %ux%u",
-            (const char *)&dec->fmt_in.i_codec,
+            (const char *)&dec->fmt_in->i_codec,
             (const char *)&dec->fmt_out.i_codec,
             dec->fmt_out.video.i_width, dec->fmt_out.video.i_height);
 
@@ -236,7 +238,7 @@ static int OpenIntf(vlc_object_t *obj)
     msg_Info(intf, "Starting tests");
     while (current_scenario < vout_scenarios_count)
     {
-        msg_Info(intf, " - Running transcode scenario %zu", current_scenario);
+        msg_Info(intf, " - Running vout scenario %zu", current_scenario);
         play_scenario(intf, &vout_scenarios[current_scenario]);
         current_scenario++;
     }
@@ -282,12 +284,7 @@ vlc_module_begin()
 
 vlc_module_end()
 
-/* Helper typedef for vlc_static_modules */
-typedef int (*vlc_plugin_cb)(vlc_set_cb, void*);
-
-
-VLC_EXPORT const vlc_plugin_cb vlc_static_modules[];
-const vlc_plugin_cb vlc_static_modules[] = {
+VLC_EXPORT const vlc_plugin_cb vlc_static_modules[] = {
     VLC_SYMBOL(vlc_entry),
     NULL
 };
@@ -299,7 +296,7 @@ int main( int argc, char **argv )
 
     const char * const args[] = {
         "-vvv", "--vout=dummy", "--aout=dummy", "--text-renderer=dummy",
-        "--no-auto-preparse", "--dec-dev=" MODULE_STRING,
+        "--no-auto-preparse", dec_dev_arg,
         "--no-spu", "--no-osd",
     };
 

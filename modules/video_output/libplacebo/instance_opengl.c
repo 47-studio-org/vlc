@@ -70,16 +70,14 @@ vlc_module_begin()
 #endif
 
     set_section("Context settings", NULL)
-#if PL_API_VER >= 90
     add_bool("gl-allow-sw", false, ALLOWSW_TEXT, ALLOWSW_LONGTEXT)
-#endif
     add_integer_with_range("gl-swap-depth", 0,
             0, 4, SWAP_DEPTH_TEXT, SWAP_DEPTH_LONGTEXT)
 vlc_module_end()
 
 struct vlc_placebo_system_t {
     vlc_gl_t *gl;
-    const struct pl_opengl *opengl;
+    pl_opengl opengl;
 };
 
 static const struct vlc_placebo_operations instance_opts =
@@ -88,6 +86,14 @@ static const struct vlc_placebo_operations instance_opts =
     .make_current = MakeCurrent,
     .release_current = ReleaseCurrent,
 };
+
+#if PL_API_VER >= 215
+static pl_voidfunc_t get_proc_addr_wrapper(void *ctx, const char *procname)
+{
+    vlc_gl_t *gl = ctx;
+    return gl->ops->get_proc_address(gl, procname);
+}
+#endif
 
 static int InitInstance(vlc_placebo_t *pl, const vout_display_cfg_t *cfg)
 {
@@ -99,7 +105,7 @@ static int InitInstance(vlc_placebo_t *pl, const vout_display_cfg_t *cfg)
     bool current = false;
 
     char *name = var_InheritString(pl, MODULE_VARNAME);
-    sys->gl = vlc_gl_Create(cfg, API, name);
+    sys->gl = vlc_gl_Create(cfg, API, name, NULL);
     free(name);
     if (!sys->gl || vlc_gl_MakeCurrent(sys->gl) != VLC_SUCCESS)
         goto error;
@@ -107,13 +113,14 @@ static int InitInstance(vlc_placebo_t *pl, const vout_display_cfg_t *cfg)
     current = true;
 
     // Create OpenGL wrapper
-    sys->opengl = pl_opengl_create(pl->ctx, &(struct pl_opengl_params) {
-#if PL_API_VER >= 90
+    sys->opengl = pl_opengl_create(pl->log, &(struct pl_opengl_params) {
         .allow_software = var_InheritBool(pl, "gl-allow-sw"),
-#endif
         .debug = true, // this only sets up the debug report callback
+#if PL_API_VER >= 215
+        .get_proc_addr_ex = get_proc_addr_wrapper,
+        .proc_ctx = sys->gl,
+#endif
     });
-    vlc_gl_ReleaseCurrent (sys->gl);
     if (!sys->opengl)
         goto error;
 
@@ -130,6 +137,7 @@ static int InitInstance(vlc_placebo_t *pl, const vout_display_cfg_t *cfg)
         goto error;
 
     vlc_gl_ReleaseCurrent(sys->gl);
+    current = false;
 
     pl->gpu = sys->opengl->gpu;
     pl->ops = &instance_opts;

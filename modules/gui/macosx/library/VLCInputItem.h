@@ -22,6 +22,8 @@
 
 #import <Foundation/Foundation.h>
 
+#import "library/VLCLibraryDataTypes.h"
+
 #import <vlc_common.h>
 #import <vlc_input_item.h>
 #import <vlc_tick.h>
@@ -36,13 +38,14 @@ extern NSString *VLCInputItemPreparsingFailed;
 extern NSString *VLCInputItemPreparsingTimeOut;
 extern NSString *VLCInputItemPreparsingSucceeded;
 
-@interface VLCInputItem : NSObject
+@interface VLCInputItem : NSObject<VLCLocallyManipulableItemProtocol>
 
 - (instancetype)initWithInputItem:(struct input_item_t *)p_inputItem;
 
 @property (readonly) struct input_item_t *vlcInputItem;
 @property (readonly) NSString *MRL;
 @property (readonly) NSString *decodedMRL;
+@property (readonly) NSString *path;
 @property (readwrite) NSString *name;
 @property (readwrite) NSString *title;
 @property (readwrite) NSString *artist;
@@ -78,12 +81,15 @@ extern NSString *VLCInputItemPreparsingSucceeded;
 - (int)preparseInputItem;
 - (int)writeMetadataToFile;
 
+- (NSImage*)thumbnailWithSize:(NSSize)size;
+
 @end
 
 @interface VLCInputNode : NSObject
 
 - (instancetype)initWithInputNode:(struct input_item_node_t *)p_inputNode;
 
+@property (readonly) struct input_item_node_t *vlcInputItemNode;
 @property (readonly, nullable) VLCInputItem *inputItem;
 @property (readonly) int numberOfChildren;
 @property (readonly) NSArray <VLCInputNode *> *children;

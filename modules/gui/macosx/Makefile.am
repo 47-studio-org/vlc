@@ -1,3 +1,27 @@
+actool_verbose = $(actool_verbose_$(V))
+actool_verbose_ = $(actool_verbose__$(AM_DEFAULT_VERBOSITY))
+actool_verbose_0 = @echo "  ACTOOL  " $@;
+actool_verbose__0 = $(actool_verbose_0)
+
+# All content of the asset catalog should be listed below
+# so that it is properly rebuilt when its content changes.
+ASSET_CATALOG_DEPS = \
+	gui/macosx/Resources/Assets.xcassets/Contents.json \
+	gui/macosx/Resources/Assets.xcassets/VLCAccentColor.colorset/Contents.json
+
+gui/macosx/Resources/Assets.car: gui/macosx/Resources/Assets.xcassets $(ASSET_CATALOG_DEPS)
+	$(AM_V_at)$(MKDIR_P) "gui/macosx/Resources"
+	$(actool_verbose)$(ACTOOL) --errors --warnings --notices \
+	  --platform macosx --target-device mac --skip-app-store-deployment \
+	  --minimum-deployment-target 10.11 --output-format human-readable-text \
+	  --compile $(@D) $<
+
+if ENABLE_MACOSX_UI
+BUILT_SOURCES += gui/macosx/Resources/Assets.car
+endif
+
+EXTRA_DIST += $(ASSET_CATALOG_DEPS)
+
 SUFFIXES += .xib .nib
 
 xib_verbose = $(xib_verbose_$(V))
@@ -15,11 +39,16 @@ xib_verbose__0 = $(xib_verbose_0)
 
 libmacosx_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-exceptions -fobjc-arc -I$(srcdir)/gui/macosx
 libmacosx_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(guidir)' \
-	-Wl,-framework,Cocoa -Wl,-framework,CoreServices \
-	-Wl,-framework,AVFoundation -Wl,-framework,CoreMedia -Wl,-framework,IOKit \
-	-Wl,-framework,AddressBook -Wl,-framework,WebKit -Wl,-framework,CoreAudio \
-	-Wl,-framework,SystemConfiguration -Wl,-framework,ScriptingBridge \
-	-Wl,-framework,QuartzCore -Wl,-weak_framework,MediaPlayer
+	-Wl,-framework,AVFoundation \
+	-Wl,-framework,Cocoa \
+	-Wl,-framework,CoreAudio \
+	-Wl,-framework,CoreVideo \
+	-Wl,-framework,IOKit \
+	-Wl,-framework,QuartzCore \
+	-Wl,-framework,ScriptingBridge \
+	-Wl,-framework,WebKit \
+	-Wl,-framework,QuickLook \
+	-Wl,-weak_framework,MediaPlayer
 
 if HAVE_SPARKLE
 libmacosx_plugin_la_LDFLAGS += -Wl,-framework,Sparkle
@@ -36,6 +65,8 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/extensions/NSColor+VLCAdditions.m \
 	gui/macosx/extensions/NSFont+VLCAdditions.h \
 	gui/macosx/extensions/NSFont+VLCAdditions.m \
+	gui/macosx/extensions/NSImage+VLCAdditions.h \
+	gui/macosx/extensions/NSImage+VLCAdditions.m \
 	gui/macosx/extensions/NSMenu+VLCAdditions.h \
 	gui/macosx/extensions/NSMenu+VLCAdditions.m \
 	gui/macosx/extensions/NSScreen+VLCAdditions.h \
@@ -54,19 +85,21 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/imported/SPMediaKeyTap/SPMediaKeyTap.m \
 	gui/macosx/library/VLCInputItem.h \
 	gui/macosx/library/VLCInputItem.m \
-	gui/macosx/library/VLCLibraryAlbumTableCellView.h \
-	gui/macosx/library/VLCLibraryAlbumTableCellView.m \
-	gui/macosx/library/VLCLibraryAudioDataSource.h \
-	gui/macosx/library/VLCLibraryAudioDataSource.m \
+	gui/macosx/library/VLCInputNodePathControl.h \
+	gui/macosx/library/VLCInputNodePathControl.m \
+	gui/macosx/library/VLCInputNodePathControlItem.h \
+	gui/macosx/library/VLCInputNodePathControlItem.m \
+	gui/macosx/library/VLCLibraryCollectionViewDataSource.h \
+	gui/macosx/library/VLCLibraryCollectionViewDelegate.h \
+	gui/macosx/library/VLCLibraryCollectionViewDelegate.m \
+	gui/macosx/library/VLCLibraryCollectionViewFlowLayout.h \
+	gui/macosx/library/VLCLibraryCollectionViewFlowLayout.m \
 	gui/macosx/library/VLCLibraryCollectionViewItem.h \
 	gui/macosx/library/VLCLibraryCollectionViewItem.m \
-	gui/macosx/library/VLCLibraryCollectionViewAlbumItem.h \
-	gui/macosx/library/VLCLibraryCollectionViewAlbumItem.m \
-	gui/macosx/library/VLCLibraryCollectionViewArtistItem.h \
-	gui/macosx/library/VLCLibraryCollectionViewArtistItem.m \
-	gui/macosx/library/VLCLibraryCollectionViewGenreItem.h \
-	gui/macosx/library/VLCLibraryCollectionViewGenreItem.m \
-	gui/macosx/library/VLCLibraryCollectionViewItemProtocol.h \
+	gui/macosx/library/VLCLibraryCollectionViewMediaItemSupplementaryDetailView.h \
+	gui/macosx/library/VLCLibraryCollectionViewMediaItemSupplementaryDetailView.m \
+	gui/macosx/library/VLCLibraryCollectionViewSupplementaryDetailView.h \
+	gui/macosx/library/VLCLibraryCollectionViewSupplementaryDetailView.m \
 	gui/macosx/library/VLCLibraryCollectionViewSupplementaryElementView.h \
 	gui/macosx/library/VLCLibraryCollectionViewSupplementaryElementView.m \
 	gui/macosx/library/VLCLibraryController.h \
@@ -81,14 +114,66 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/library/VLCLibraryMenuController.m \
 	gui/macosx/library/VLCLibraryModel.h \
 	gui/macosx/library/VLCLibraryModel.m \
+	gui/macosx/library/VLCLibraryNavigationStack.h \
+	gui/macosx/library/VLCLibraryNavigationStack.m \
+	gui/macosx/library/VLCLibraryNavigationState.h \
+	gui/macosx/library/VLCLibraryNavigationState.m \
 	gui/macosx/library/VLCLibrarySortingMenuController.h \
 	gui/macosx/library/VLCLibrarySortingMenuController.m \
+	gui/macosx/library/VLCLibraryTableView.h \
+	gui/macosx/library/VLCLibraryTableView.m \
 	gui/macosx/library/VLCLibraryTableCellView.h \
 	gui/macosx/library/VLCLibraryTableCellView.m \
-	gui/macosx/library/VLCLibraryVideoDataSource.h \
-	gui/macosx/library/VLCLibraryVideoDataSource.m \
+	gui/macosx/library/VLCLibraryUIUnits.h \
+	gui/macosx/library/VLCLibraryUIUnits.m \
 	gui/macosx/library/VLCLibraryWindow.h \
 	gui/macosx/library/VLCLibraryWindow.m \
+	gui/macosx/library/VLCLibraryWindowController.h \
+	gui/macosx/library/VLCLibraryWindowController.m \
+	gui/macosx/library/video-library/VLCLibraryVideoViewController.h \
+	gui/macosx/library/video-library/VLCLibraryVideoViewController.m \
+	gui/macosx/library/video-library/VLCLibraryVideoCollectionViewsStackViewController.h \
+	gui/macosx/library/video-library/VLCLibraryVideoCollectionViewsStackViewController.m \
+	gui/macosx/library/video-library/VLCLibraryVideoCollectionViewContainerView.h \
+	gui/macosx/library/video-library/VLCLibraryVideoCollectionViewContainerView.m \
+	gui/macosx/library/video-library/VLCLibraryVideoCollectionViewContainerViewDataSource.h \
+	gui/macosx/library/video-library/VLCLibraryVideoCollectionViewContainerViewDataSource.m \
+	gui/macosx/library/video-library/VLCLibraryVideoGroupDescriptor.h \
+	gui/macosx/library/video-library/VLCLibraryVideoGroupDescriptor.m \
+	gui/macosx/library/video-library/VLCLibraryVideoTableViewDataSource.h \
+	gui/macosx/library/video-library/VLCLibraryVideoTableViewDataSource.m \
+	gui/macosx/library/audio-library/VLCLibraryAlbumTableCellView.h \
+	gui/macosx/library/audio-library/VLCLibraryAlbumTableCellView.m \
+	gui/macosx/library/audio-library/VLCLibraryAlbumTracksDataSource.h \
+	gui/macosx/library/audio-library/VLCLibraryAlbumTracksDataSource.m \
+	gui/macosx/library/audio-library/VLCLibraryAudioDataSource.h \
+	gui/macosx/library/audio-library/VLCLibraryAudioDataSource.m \
+	gui/macosx/library/audio-library/VLCLibraryAudioGroupDataSource.h \
+	gui/macosx/library/audio-library/VLCLibraryAudioGroupDataSource.m \
+	gui/macosx/library/audio-library/VLCLibraryAudioViewController.h \
+	gui/macosx/library/audio-library/VLCLibraryAudioViewController.m \
+	gui/macosx/library/audio-library/VLCLibraryCollectionViewAlbumSupplementaryDetailView.h \
+	gui/macosx/library/audio-library/VLCLibraryCollectionViewAlbumSupplementaryDetailView.m \
+	gui/macosx/library/audio-library/VLCLibraryCollectionViewAudioGroupSupplementaryDetailView.h \
+	gui/macosx/library/audio-library/VLCLibraryCollectionViewAudioGroupSupplementaryDetailView.m \
+	gui/macosx/library/audio-library/VLCLibrarySongTableCellView.h \
+	gui/macosx/library/audio-library/VLCLibrarySongTableCellView.m \
+	gui/macosx/library/audio-library/VLCLibrarySongsTableViewSongPlayingTableCellView.h \
+	gui/macosx/library/audio-library/VLCLibrarySongsTableViewSongPlayingTableCellView.m \
+	gui/macosx/library/media-source/VLCLibraryMediaSourceViewController.h \
+	gui/macosx/library/media-source/VLCLibraryMediaSourceViewController.m \
+	gui/macosx/library/media-source/VLCMediaSource.h \
+	gui/macosx/library/media-source/VLCMediaSource.m \
+	gui/macosx/library/media-source/VLCMediaSourceBaseDataSource.h \
+	gui/macosx/library/media-source/VLCMediaSourceBaseDataSource.m \
+	gui/macosx/library/media-source/VLCMediaSourceCollectionViewItem.h \
+	gui/macosx/library/media-source/VLCMediaSourceCollectionViewItem.m \
+	gui/macosx/library/media-source/VLCMediaSourceDataSource.h \
+	gui/macosx/library/media-source/VLCMediaSourceDataSource.m \
+	gui/macosx/library/media-source/VLCMediaSourceDeviceCollectionViewItem.h \
+	gui/macosx/library/media-source/VLCMediaSourceDeviceCollectionViewItem.m \
+	gui/macosx/library/media-source/VLCMediaSourceProvider.h \
+	gui/macosx/library/media-source/VLCMediaSourceProvider.m \
 	gui/macosx/main/CompatibilityFixes.h \
 	gui/macosx/main/CompatibilityFixes.m \
 	gui/macosx/main/VLCApplication.h \
@@ -98,18 +183,6 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/main/VLCMain.h \
 	gui/macosx/main/VLCMain.m \
 	gui/macosx/main/macosx.m \
-	gui/macosx/media-source/VLCMediaSource.h \
-	gui/macosx/media-source/VLCMediaSource.m \
-	gui/macosx/media-source/VLCMediaSourceBaseDataSource.h \
-	gui/macosx/media-source/VLCMediaSourceBaseDataSource.m \
-	gui/macosx/media-source/VLCMediaSourceCollectionViewItem.h \
-	gui/macosx/media-source/VLCMediaSourceCollectionViewItem.m \
-	gui/macosx/media-source/VLCMediaSourceDataSource.h \
-	gui/macosx/media-source/VLCMediaSourceDataSource.m \
-	gui/macosx/media-source/VLCMediaSourceDeviceCollectionViewItem.h \
-	gui/macosx/media-source/VLCMediaSourceDeviceCollectionViewItem.m \
-	gui/macosx/media-source/VLCMediaSourceProvider.h \
-	gui/macosx/media-source/VLCMediaSourceProvider.m \
 	gui/macosx/menus/VLCMainMenu.h \
 	gui/macosx/menus/VLCMainMenu.m \
 	gui/macosx/menus/VLCStatusBarIcon.h \
@@ -164,8 +237,6 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/playlist/VLCPlaylistController.m \
 	gui/macosx/playlist/VLCPlaylistDataSource.h \
 	gui/macosx/playlist/VLCPlaylistDataSource.m \
-	gui/macosx/playlist/VLCPlaylistImageCache.h \
-	gui/macosx/playlist/VLCPlaylistImageCache.m \
 	gui/macosx/playlist/VLCPlaylistItem.h \
 	gui/macosx/playlist/VLCPlaylistItem.m \
 	gui/macosx/playlist/VLCPlaylistMenuController.h \
@@ -200,8 +271,6 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/views/VLCDefaultValueSliderCell.m \
 	gui/macosx/views/VLCDragDropView.h \
 	gui/macosx/views/VLCDragDropView.m \
-	gui/macosx/views/VLCFSPanelDraggableView.h \
-	gui/macosx/views/VLCFSPanelDraggableView.m \
 	gui/macosx/views/VLCHUDOutlineView.h \
 	gui/macosx/views/VLCHUDOutlineView.m \
 	gui/macosx/views/VLCHUDTableCornerView.h \
@@ -222,6 +291,8 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/views/VLCSlider.m \
 	gui/macosx/views/VLCSliderCell.h \
 	gui/macosx/views/VLCSliderCell.m \
+	gui/macosx/views/VLCSubScrollView.h \
+	gui/macosx/views/VLCSubScrollView.m \
 	gui/macosx/views/VLCTimeField.h \
 	gui/macosx/views/VLCTimeField.m \
 	gui/macosx/views/VLCTrackingView.h \
@@ -266,10 +337,14 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/windows/mainwindow/VLCControlsBarCommon.m \
 	gui/macosx/windows/mainwindow/VLCMainWindowControlsBar.h \
 	gui/macosx/windows/mainwindow/VLCMainWindowControlsBar.m \
-	gui/macosx/windows/video/VLCDetachedVideoWindow.h \
-	gui/macosx/windows/video/VLCDetachedVideoWindow.m \
-	gui/macosx/windows/video/VLCFSPanelController.h \
-	gui/macosx/windows/video/VLCFSPanelController.m \
+	gui/macosx/windows/video/VLCAspectRatioRetainingVideoWindow.h \
+	gui/macosx/windows/video/VLCAspectRatioRetainingVideoWindow.m \
+	gui/macosx/windows/video/VLCFullVideoViewWindow.h \
+	gui/macosx/windows/video/VLCFullVideoViewWindow.m \
+	gui/macosx/windows/video/VLCMainVideoViewController.h \
+	gui/macosx/windows/video/VLCMainVideoViewController.m \
+	gui/macosx/windows/video/VLCMainVideoViewOverlayView.h \
+	gui/macosx/windows/video/VLCMainVideoViewOverlayView.m \
 	gui/macosx/windows/video/VLCVideoOutputProvider.h \
 	gui/macosx/windows/video/VLCVideoOutputProvider.m \
 	gui/macosx/windows/video/VLCVideoWindowCommon.h \
@@ -289,7 +364,6 @@ libmacosx_plugin_la_XIB_SOURCES = \
 	gui/macosx/UI/Bookmarks.xib \
 	gui/macosx/UI/ConvertAndSave.xib \
 	gui/macosx/UI/CoreDialogs.xib \
-	gui/macosx/UI/DetachedVideoWindow.xib \
 	gui/macosx/UI/ErrorPanel.xib \
 	gui/macosx/UI/Help.xib \
 	gui/macosx/UI/LogMessageWindow.xib \
@@ -302,9 +376,11 @@ libmacosx_plugin_la_XIB_SOURCES = \
 	gui/macosx/UI/VLCLibraryTableCellView.xib \
 	gui/macosx/UI/VLCPlaylistTableCellView.xib \
 	gui/macosx/UI/VLCLibraryCollectionViewItem.xib \
-	gui/macosx/UI/VLCLibraryCollectionViewAlbumItem.xib \
-	gui/macosx/UI/VLCLibraryCollectionViewArtistItem.xib \
-	gui/macosx/UI/VLCLibraryCollectionViewGenreItem.xib \
+	gui/macosx/UI/VLCLibraryCollectionViewAlbumSupplementaryDetailView.xib \
+	gui/macosx/UI/VLCLibraryCollectionViewAudioGroupSupplementaryDetailView.xib \
+	gui/macosx/UI/VLCLibraryCollectionViewMediaItemSupplementaryDetailView.xib \
+	gui/macosx/UI/VLCLibrarySongTableCellView.xib \
+	gui/macosx/UI/VLCMainVideoView.xib \
 	gui/macosx/UI/VLCMediaSourceCollectionViewItem.xib \
 	gui/macosx/UI/VLCMediaSourceDeviceCollectionViewItem.xib \
 	gui/macosx/UI/VLCInformationWindow.xib \

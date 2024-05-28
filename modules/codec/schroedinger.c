@@ -556,7 +556,7 @@ static int OpenDecoder( vlc_object_t *p_this )
     decoder_sys_t *p_sys;
     SchroDecoder *p_schro;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_DIRAC )
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_DIRAC )
     {
         return VLC_EGENERIC;
     }
@@ -1605,4 +1605,6 @@ static void CloseEncoder( encoder_t *p_enc )
     block_ChainRelease( p_sys->p_chain );
 
     free( p_sys );
+    /* We need to reset p_sys since CloseEncoder is also called during error. */
+    p_enc->p_sys = NULL;
 }

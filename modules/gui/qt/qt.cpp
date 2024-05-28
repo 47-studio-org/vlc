@@ -25,6 +25,13 @@
 # include "config.h"
 #endif
 
+#include <qconfig.h>
+#include <QtPlugin>
+
+QT_BEGIN_NAMESPACE
+#include "plugins.hpp"
+QT_END_NAMESPACE
+
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 
 #include <stdlib.h>
@@ -50,11 +57,13 @@ extern "C" char **environ;
 #include "player/player_controller.hpp"    /* THEMIM destruction */
 #include "playlist/playlist_controller.hpp" /* THEMPL creation */
 #include "dialogs/dialogs_provider.hpp" /* THEDP creation */
+#include "dialogs/dialogs/dialogmodel.hpp"
 #ifdef _WIN32
 # include "maininterface/mainctx_win32.hpp"
 #else
 # include "maininterface/mainctx.hpp"   /* MainCtx creation */
 #endif
+#include "style/defaultthemeproviders.hpp"
 #include "dialogs/extensions/extensions_manager.hpp" /* Extensions manager */
 #include "dialogs/plugins/addons_manager.hpp" /* Addons manager */
 #include "dialogs/help/help.hpp"     /* Launch Update */
@@ -68,36 +77,7 @@ extern "C" char **environ;
 #include <vlc_window.h>
 #include <vlc_cxx_helpers.hpp>
 
-#ifdef QT_STATIC /* For static builds */
- #include <QtPlugin>
- #include <QQuickWindow>
-
- #ifdef QT_STATICPLUGIN
-  Q_IMPORT_PLUGIN(QSvgIconPlugin)
-  Q_IMPORT_PLUGIN(QSvgPlugin)
-  Q_IMPORT_PLUGIN(QJpegPlugin)
-  Q_IMPORT_PLUGIN(QtQuick2Plugin)
-  Q_IMPORT_PLUGIN(QtQuickControls2Plugin)
-  Q_IMPORT_PLUGIN(QtQuickLayoutsPlugin)
-  Q_IMPORT_PLUGIN(QtQuick2WindowPlugin)
-  Q_IMPORT_PLUGIN(QtQuickTemplates2Plugin)
-  Q_IMPORT_PLUGIN(QtQmlModelsPlugin)
-  Q_IMPORT_PLUGIN(QtGraphicalEffectsPlugin)
-  Q_IMPORT_PLUGIN(QtGraphicalEffectsPrivatePlugin)
-  Q_IMPORT_PLUGIN(QmlShapesPlugin)
-
-  #if QT_VERSION >= QT_VERSION_CHECK(5,15,0)
-   Q_IMPORT_PLUGIN(QtQmlPlugin)
-  #endif
-
-  #ifdef _WIN32
-   Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin)
-   Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)
-  #elif defined(Q_OS_MACOS)
-   Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin)
-  #endif
- #endif
-#endif
+#include <QQuickWindow>
 
 #ifndef X_DISPLAY_MISSING
 # include <vlc_xlib.h>
@@ -268,7 +248,7 @@ static const char *const compositor_vlc[] = {
     "auto",
 #ifdef _WIN32
 #ifdef HAVE_DCOMP_H
-    "dcomp"
+    "dcomp",
 #endif
     "win7",
 #endif
@@ -425,6 +405,18 @@ vlc_module_begin ()
         set_capability( "vout window", 0 )
         set_callback( WindowOpen )
 
+#ifdef _WIN32
+    add_submodule ()
+        set_capability( "qt theme provider", 10 )
+        set_callback( WindowsThemeProviderOpen )
+        set_description( "Qt Windows theme" )
+        add_shortcut("qt-themeprovider-windows")
+#endif
+    add_submodule()
+        set_capability("qt theme provider", 1)
+        set_description( "Qt basic system theme" )
+        set_callback( SystemPaletteThemeProviderOpen )
+        add_shortcut("qt-themeprovider-systempalette")
 vlc_module_end ()
 
 /*****************************************/
@@ -498,6 +490,7 @@ static int OpenInternal( qt_intf_t *p_intf )
     /* Get the playlist before the lock to avoid a lock-order-inversion */
     vlc_playlist_t *playlist = vlc_intf_GetMainPlaylist(p_intf->intf);
 
+#ifndef Q_OS_MAC
     vlc::threads::mutex_locker locker (lock);
     if (busy || open_state == OPEN_STATE_ERROR)
     {
@@ -505,6 +498,7 @@ static int OpenInternal( qt_intf_t *p_intf )
             msg_Err (p_intf, "cannot start Qt multiple times");
         return VLC_EGENERIC;
     }
+#endif
 
     p_intf->p_mi = NULL;
 
@@ -726,11 +720,14 @@ static void *Thread( void *obj )
     /* All the settings are in the .conf/.ini style */
 #ifdef _WIN32
     char *cConfigDir = config_GetUserDir( VLC_CONFIG_DIR );
-    QString configDir = cConfigDir;
-    free( cConfigDir );
-    if( configDir.endsWith( "\\vlc" ) )
-        configDir.chop( 4 ); /* the "\vlc" dir is added again by QSettings */
-    QSettings::setPath( QSettings::IniFormat, QSettings::UserScope, configDir );
+    if (likely(cConfigDir != nullptr))
+    {
+        QString configDir = cConfigDir;
+        free( cConfigDir );
+        if( configDir.endsWith( "\\vlc" ) )
+            configDir.chop( 4 ); /* the "\vlc" dir is added again by QSettings */
+        QSettings::setPath( QSettings::IniFormat, QSettings::UserScope, configDir );
+    }
 #endif
 
     p_intf->mainSettings = new QSettings(
@@ -749,6 +746,8 @@ static void *Thread( void *obj )
         app.setWindowIcon( QIcon::fromTheme( "vlc", QIcon( ":/logo/vlc256.png" ) ) );
 
     app.setDesktopFileName( PACKAGE );
+
+    DialogErrorModel::getInstance( p_intf );
 
     /* Initialize the Dialog Provider and the Main Input Manager */
     DialogsProvider::getInstance( p_intf );
@@ -831,7 +830,6 @@ static void *Thread( void *obj )
     /* Explain how to show a dialog :D */
     p_intf->pf_show_dialog = ShowDialog;
 
-#ifndef Q_OS_MAC
     /* Tell the main LibVLC thread we are ready */
     {
         vlc::threads::mutex_locker locker (lock);
@@ -840,7 +838,7 @@ static void *Thread( void *obj )
         open_state = OPEN_STATE_OPENED;
         wait_ready.signal();
     }
-#else
+#ifdef Q_OS_MAC
     /* We took over main thread, register and start here */
     if( !p_intf->b_isDialogProvider )
     {
@@ -889,15 +887,13 @@ static void *ThreadCleanup( qt_intf_t *p_intf, CleanupReason cleanupReason )
         if (cleanupReason == CLEANUP_INTF_CLOSED)
         {
             p_intf->p_compositor->unloadGUI();
-            if (p_intf->p_mi)
-                delete p_intf->p_mi;
+            delete p_intf->p_mi;
             p_intf->p_mi = nullptr;
         }
         else // CLEANUP_APP_TERMINATED
         {
             p_intf->p_compositor->destroyMainInterface();
-            if (p_intf->p_mi)
-                delete p_intf->p_mi;
+            delete p_intf->p_mi;
             p_intf->p_mi = nullptr;
 
             delete p_intf->mainSettings;
@@ -918,6 +914,8 @@ static void *ThreadCleanup( qt_intf_t *p_intf, CleanupReason cleanupReason )
        Settings must be destroyed after that.
      */
     DialogsProvider::killInstance();
+
+    DialogErrorModel::killInstance();
 
     /* Destroy the main playlist controller */
     if (p_intf->p_mainPlaylistController)

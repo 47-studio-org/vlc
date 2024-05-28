@@ -6,8 +6,8 @@ VIDEOLAN=http://downloads.videolan.org/pub/contrib
 NASM_VERSION=2.14
 NASM_URL=http://www.nasm.us/pub/nasm/releasebuilds/$(NASM_VERSION)/nasm-$(NASM_VERSION).tar.gz
 
-CMAKE_VERSION=3.17.0
-CMAKE_URL=http://www.cmake.org/files/v3.17/cmake-$(CMAKE_VERSION).tar.gz
+CMAKE_VERSION=3.24.2
+CMAKE_URL=http://www.cmake.org/files/v3.24/cmake-$(CMAKE_VERSION).tar.gz
 
 LIBTOOL_VERSION=2.4.7
 LIBTOOL_URL=$(GNU)/libtool/libtool-$(LIBTOOL_VERSION).tar.gz
@@ -30,9 +30,6 @@ TAR_URL=$(GNU)/tar/tar-$(TAR_VERSION).tar.bz2
 XZ_VERSION=5.2.2
 XZ_URL=http://tukaani.org/xz/xz-$(XZ_VERSION).tar.bz2
 
-GAS_VERSION=72887b9
-GAS_URL=http://git.libav.org/?p=gas-preprocessor.git;a=snapshot;h=$(GAS_VERSION);sf=tgz
-
 RAGEL_VERSION=6.10
 RAGEL_URL=http://www.colm.net/files/ragel/ragel-$(RAGEL_VERSION).tar.gz
 
@@ -54,8 +51,9 @@ GETTEXT_URL=$(GNU)/gettext/gettext-$(GETTEXT_VERSION).tar.gz
 HELP2MAN_VERSION=1.47.6
 HELP2MAN_URL=$(GNU)/help2man/help2man-$(HELP2MAN_VERSION).tar.xz
 
-MESON_VERSION=0.56.2
+MESON_VERSION=1.0.0
 MESON_URL=https://github.com/mesonbuild/meson/releases/download/$(MESON_VERSION)/meson-$(MESON_VERSION).tar.gz
 
-NINJA_VERSION=1.8.2
-NINJA_URL=https://github.com/ninja-build/ninja/archive/v$(NINJA_VERSION).tar.gz
+NINJA_VERSION=1.11.1
+NINJA_BUILD_NAME=$(NINJA_VERSION).g95dee.kitware.jobserver-1
+NINJA_URL=https://github.com/Kitware/ninja/archive/refs/tags/v$(NINJA_BUILD_NAME).tar.gz

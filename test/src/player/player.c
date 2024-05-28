@@ -45,7 +45,7 @@ struct report_capabilities
 struct report_position
 {
     vlc_tick_t time;
-    float pos;
+    double pos;
 };
 
 struct report_track_list
@@ -331,7 +331,7 @@ player_on_capabilities_changed(vlc_player_t *player, int old_caps, int new_caps,
 
 static void
 player_on_position_changed(vlc_player_t *player, vlc_tick_t time,
-                           float pos, void *data)
+                           double pos, void *data)
 {
     struct ctx *ctx = get_ctx(player, data);
     struct report_position report = {
@@ -1005,6 +1005,16 @@ test_end_poststop_medias(struct ctx *ctx)
 }
 
 static void
+test_end_poststop_capabilities(struct ctx *ctx)
+{
+    vlc_player_t *player = ctx->player;
+    vec_on_capabilities_changed *vec = &ctx->report.on_capabilities_changed;
+    int new_caps = VEC_LAST(vec).new_caps;
+    assert(vlc_player_CanSeek(player) == !!(new_caps & VLC_PLAYER_CAP_SEEK));
+    assert(vlc_player_CanPause(player) == !!(new_caps & VLC_PLAYER_CAP_PAUSE));
+}
+
+static void
 test_prestop(struct ctx *ctx)
 {
     test_end_prestop_rate(ctx);
@@ -1035,6 +1045,7 @@ test_end(struct ctx *ctx)
         test_end_poststop_titles(ctx);
         test_end_poststop_vouts(ctx);
     }
+    test_end_poststop_capabilities(ctx);
     test_end_poststop_medias(ctx);
 
     player_set_rate(ctx, 1.0f);

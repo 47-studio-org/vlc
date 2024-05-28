@@ -49,6 +49,9 @@
 #include "config/configuration.h"
 #include "modules/modules.h"
 
+/** Core module */
+VLC_DECL_MODULE_ENTRY(core);
+
 typedef struct vlc_modcap
 {
     char *name;
@@ -183,7 +186,7 @@ static vlc_plugin_t *module_InitStatic(vlc_plugin_cb entry)
     || (defined(__MACH__) && defined(HAVE_DYLIB_DYNAMIC_LOOKUP)) \
     || !defined(HAVE_DYNAMIC_PLUGINS)
 VLC_WEAK
-extern vlc_plugin_cb vlc_static_modules[];
+extern const vlc_plugin_cb vlc_static_modules[];
 
 static void module_InitStaticModules(void)
 {
@@ -254,10 +257,10 @@ error:
  * \param fast whether to optimize loading for speed or safety
  *             (fast is used when the plug-in is registered but not used)
  */
-static vlc_plugin_t *module_InitDynamic(vlc_object_t *obj, const char *path,
+static vlc_plugin_t *module_InitDynamic(libvlc_int_t *obj, const char *path,
                                         bool fast)
 {
-    void *handle = module_Open(obj->logger, path, fast);
+    void *handle = module_Open(vlc_object_logger(obj), path, fast);
     if (handle == NULL)
         return NULL;
 
@@ -295,7 +298,7 @@ typedef enum
 
 typedef struct module_bank
 {
-    vlc_object_t *obj;
+    libvlc_int_t *obj;
     const char   *base;
     cache_mode_t  mode;
 
@@ -372,9 +375,9 @@ static int AllocatePluginFramework (module_bank_t *bank, const char *file,
     size_t len_name = strlen (file);
 
     /* Skip frameworks not matching plugins naming conventions. */
-    if (len_name < sizeof "_plugin.framework"
-      || strncmp(file + len_name - sizeof "_plugin.framework" + 1,
-                 "_plugin", sizeof "_plugin" - 1) != 0)
+    if (len_name < strlen("_plugin.framework")
+      || strncmp(file + len_name - strlen("_plugin.framework"),
+                 "_plugin", strlen("_plugin")) != 0)
     {
         /* The framework doesn't contain plugins, there's no need to
          * browse the rest of the framework folder. */
@@ -382,7 +385,7 @@ static int AllocatePluginFramework (module_bank_t *bank, const char *file,
     }
 
     /* The framework is a plugin, extract the dylib from it. */
-    int filename_len = len_name - sizeof ".framework" - 1;
+    int filename_len = len_name - strlen(".framework");
 
     char *framework_relpath = NULL, *framework_abspath = NULL;
     /* Compute absolute path */
@@ -422,7 +425,7 @@ static void AllocatePluginDir (module_bank_t *bank, unsigned maxdepth,
         return;
     maxdepth--;
 
-    DIR *dh = vlc_opendir (absdir);
+    vlc_DIR *dh = vlc_opendir (absdir);
     if (dh == NULL)
         return;
 
@@ -484,12 +487,12 @@ static void AllocatePluginDir (module_bank_t *bank, unsigned maxdepth,
 #ifdef __APPLE__
             size_t len_name = strlen (file);
             const char *framework_extension =
-                file + len_name - sizeof ".framework" + 1;
+                file + len_name - strlen(".framework");
 
-            if (len_name > sizeof ".framework" - 1
+            if (len_name > strlen(".framework")
              && strcmp(framework_extension, ".framework") == 0)
             {
-                AllocatePluginFramework (bank, file, abspath, relpath);
+                AllocatePluginFramework (bank, file, relpath, abspath);
                 /* Don't browse framework directories. */
                 goto skip;
             }
@@ -502,14 +505,14 @@ static void AllocatePluginDir (module_bank_t *bank, unsigned maxdepth,
         free (relpath);
         free (abspath);
     }
-    closedir (dh);
+    vlc_closedir (dh);
 }
 
 /**
  * Scans for plug-ins within a file system hierarchy.
  * \param path base directory to browse
  */
-static void AllocatePluginPath(vlc_object_t *obj, const char *path,
+static void AllocatePluginPath(libvlc_int_t *obj, const char *path,
                                cache_mode_t mode)
 {
     module_bank_t bank =
@@ -558,7 +561,7 @@ static void AllocatePluginPath(vlc_object_t *obj, const char *path,
  * For performance reasons, a cache is normally used so that plug-in shared
  * objects do not need to loaded and linked into the process.
  */
-static void AllocateAllPlugins (vlc_object_t *p_this)
+static void AllocateAllPlugins (libvlc_int_t *p_this)
 {
     char *paths;
     cache_mode_t mode = 0;
@@ -723,7 +726,7 @@ void module_InitBank (void)
          * library just as another module, and for instance the configuration
          * options of core will be available in the module bank structure just
          * as for every other module. */
-        vlc_plugin_t *plugin = module_InitStatic(vlc_entry__core);
+        vlc_plugin_t *plugin = module_InitStatic(VLC_MODULE_ENTRY(core));
         if (likely(plugin != NULL))
             vlc_plugin_store(plugin);
         config_SortConfig ();
@@ -785,14 +788,13 @@ void module_EndBank (bool b_plugins)
     block_ChainRelease(caches);
 }
 
-#undef module_LoadPlugins
 /**
  * Loads module descriptions for all available plugins.
  * Fills the module bank structure with the plugin modules.
  *
  * \param p_this vlc object structure
  */
-void module_LoadPlugins(vlc_object_t *obj)
+void module_LoadPlugins(libvlc_int_t *obj)
 {
     /*vlc_mutex_assert (&modules.lock); not for static mutexes :( */
 

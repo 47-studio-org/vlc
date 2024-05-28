@@ -2,7 +2,6 @@
  * gstvlcpictureplaneallocator.c: VLC pictures wrapped by GstAllocator
  *****************************************************************************
  * Copyright (C) 2016 VLC authors and VideoLAN
- * $Id:
  *
  * Author: Vikram Fugro <vikram.fugro@gmail.com>
  *
@@ -133,7 +132,7 @@ static GstMemory* gst_vlc_picture_plane_copy(
     return NULL;
 }
 
-static vlc_fourcc_t gst_vlc_to_map_format( const char* psz_fourcc )
+vlc_fourcc_t gst_vlc_to_map_format( const char* psz_fourcc )
 {
     if( !psz_fourcc )
         return VLC_CODEC_UNKNOWN;

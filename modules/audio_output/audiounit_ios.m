@@ -58,8 +58,8 @@ static const struct {
 
 #if ((__IPHONE_OS_VERSION_MAX_ALLOWED && __IPHONE_OS_VERSION_MAX_ALLOWED < 150000) || (__TV_OS_MAX_VERSION_ALLOWED && __TV_OS_MAX_VERSION_ALLOWED < 150000))
 
-extern NSString *const AVAudioSessionSpatialAudioEnabledKey = @"AVAudioSessionSpatializationEnabledKey";
-extern NSString *const AVAudioSessionSpatialPlaybackCapabilitiesChangedNotification = @"AVAudioSessionSpatialPlaybackCapabilitiesChangedNotification";
+NSString *const AVAudioSessionSpatialAudioEnabledKey = @"AVAudioSessionSpatializationEnabledKey";
+NSString *const AVAudioSessionSpatialPlaybackCapabilitiesChangedNotification = @"AVAudioSessionSpatialPlaybackCapabilitiesChangedNotification";
 
 @interface AVAudioSession (iOS15RoutingConfiguration)
 - (BOOL)setSupportsMultichannelContent:(BOOL)inValue error:(NSError **)outError;
@@ -138,6 +138,10 @@ typedef struct
     bool      b_spatial_audio_supported;
     enum au_dev au_dev;
 
+    /* For debug purpose, to print when specific latency changed */
+    vlc_tick_t output_latency_ticks;
+    vlc_tick_t io_buffer_duration_ticks;
+
     /* sw gain */
     float               soft_gain;
     bool                soft_mute;
@@ -153,6 +157,40 @@ enum port_type
     PORT_TYPE_HDMI,
     PORT_TYPE_HEADPHONES
 };
+
+static vlc_tick_t
+GetLatency(audio_output_t *p_aout)
+{
+    aout_sys_t *p_sys = p_aout->sys;
+
+    Float64 unit_s;
+    vlc_tick_t latency_us = 0, us;
+    bool changed = false;
+
+    us = vlc_tick_from_sec([p_sys->avInstance outputLatency]);
+    if (us != p_sys->output_latency_ticks)
+    {
+        msg_Dbg(p_aout, "Current device has a new outputLatency of %" PRId64 "us", us);
+        p_sys->output_latency_ticks = us;
+        changed = true;
+    }
+    latency_us += us;
+
+    us = vlc_tick_from_sec([p_sys->avInstance IOBufferDuration]);
+    if (us != p_sys->io_buffer_duration_ticks)
+    {
+        msg_Dbg(p_aout, "Current device has a new IOBufferDuration of %" PRId64 "us", us);
+        p_sys->io_buffer_duration_ticks = us;
+        changed = true;
+    }
+    /* Don't add 'us' to 'latency_us', IOBufferDuration is already handled by
+     * the render callback (end_ticks include the current buffer length). */
+
+    if (changed)
+        msg_Dbg(p_aout, "Current device has a new total latency of %" PRId64 "us",
+                latency_us);
+    return latency_us;
+}
 
 #pragma mark -
 #pragma mark AVAudioSession route and output handling
@@ -181,12 +219,7 @@ enum port_type
      || routeChangeReason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable)
         aout_RestartRequest(p_aout, AOUT_RESTART_OUTPUT);
     else
-    {
-        const vlc_tick_t latency_us =
-            vlc_tick_from_sec([p_sys->avInstance outputLatency]);
-        ca_SetDeviceLatency(p_aout, latency_us);
-        msg_Dbg(p_aout, "Current device has a new latency of %lld us", latency_us);
-    }
+        ca_ResetDeviceLatency(p_aout);
 }
 
 - (void)handleInterruption:(NSNotification *)notification
@@ -268,12 +301,10 @@ avas_resetPreferredNumberOfChannels(audio_output_t *p_aout)
 }
 
 static int
-avas_GetOptimalChannelLayout(audio_output_t *p_aout, enum port_type *pport_type,
-                             AudioChannelLayout **playout)
+avas_GetPortType(audio_output_t *p_aout, enum port_type *pport_type)
 {
     aout_sys_t * p_sys = p_aout->sys;
     AVAudioSession *instance = p_sys->avInstance;
-    AudioChannelLayout *layout = NULL;
     *pport_type = PORT_TYPE_DEFAULT;
 
     long last_channel_count = 0;
@@ -296,82 +327,37 @@ avas_GetOptimalChannelLayout(audio_output_t *p_aout, enum port_type *pport_type,
             p_sys->b_spatial_audio_supported = out.spatialAudioEnabled;
         }
 
-        NSArray<AVAudioSessionChannelDescription *> *chans = [out channels];
-
-        if (chans.count > last_channel_count || port_type == PORT_TYPE_HDMI)
-        {
-            /* We don't need a layout specification for stereo */
-            if (chans.count > 2)
-            {
-                bool labels_valid = false;
-                for (AVAudioSessionChannelDescription *chan in chans)
-                {
-                    if ([chan channelLabel] != kAudioChannelLabel_Unknown)
-                    {
-                        labels_valid = true;
-                        break;
-                    }
-                }
-                if (!labels_valid)
-                {
-                    /* TODO: Guess labels ? */
-                    msg_Warn(p_aout, "no valid channel labels");
-                    continue;
-                }
-
-                if (layout == NULL
-                 || layout->mNumberChannelDescriptions < chans.count)
-                {
-                    const size_t layout_size = sizeof(AudioChannelLayout)
-                        + chans.count * sizeof(AudioChannelDescription);
-                    layout = realloc_or_free(layout, layout_size);
-                    if (layout == NULL)
-                        return VLC_ENOMEM;
-                }
-
-                layout->mChannelLayoutTag =
-                    kAudioChannelLayoutTag_UseChannelDescriptions;
-                layout->mNumberChannelDescriptions = chans.count;
-
-                unsigned i = 0;
-                for (AVAudioSessionChannelDescription *chan in chans)
-                    layout->mChannelDescriptions[i++].mChannelLabel
-                        = [chan channelLabel];
-
-                last_channel_count = chans.count;
-            }
-            *pport_type = port_type;
-        }
-
+        *pport_type = port_type;
         if (port_type == PORT_TYPE_HDMI) /* Prefer HDMI */
             break;
     }
 
-    msg_Dbg(p_aout, "Output on %s, channel count: %u, spatialAudioEnabled %i",
-            *pport_type == PORT_TYPE_HDMI ? "HDMI" :
-            *pport_type == PORT_TYPE_USB ? "USB" :
-            *pport_type == PORT_TYPE_HEADPHONES ? "Headphones" : "Default",
-            layout ? (unsigned) layout->mNumberChannelDescriptions : 2, p_sys->b_spatial_audio_supported);
-
-    *playout = layout;
     return VLC_SUCCESS;
 }
 
-struct role2policy
+struct API_AVAILABLE(ios(11.0))
+role2policy
 {
     char role[sizeof("accessibility")];
     AVAudioSessionRouteSharingPolicy policy;
 };
 
-static int role2policy_cmp(const void *key, const void *val)
+static int API_AVAILABLE(ios(11.0))
+role2policy_cmp(const void *key, const void *val)
 {
     const struct role2policy *entry = val;
     return strcmp(key, entry->role);
 }
 
-static AVAudioSessionRouteSharingPolicy
+static AVAudioSessionRouteSharingPolicy API_AVAILABLE(ios(11.0))
 GetRouteSharingPolicy(audio_output_t *p_aout)
 {
+#if __IPHONEOS_VERSION_MAX_ALLOWED < 130000
+    AVAudioSessionRouteSharingPolicy AVAudioSessionRouteSharingPolicyLongFormAudio =
+        AVAudioSessionRouteSharingPolicyLongForm;
+    AVAudioSessionRouteSharingPolicy AVAudioSessionRouteSharingPolicyLongFormVideo =
+        AVAudioSessionRouteSharingPolicyLongForm;
+#endif
     /* LongFormAudio by default */
     AVAudioSessionRouteSharingPolicy policy = AVAudioSessionRouteSharingPolicyLongFormAudio;
     AVAudioSessionRouteSharingPolicy video_policy;
@@ -420,23 +406,22 @@ avas_SetActive(audio_output_t *p_aout, bool active, NSUInteger options)
 
     if (active)
     {
-        AVAudioSessionCategory category = AVAudioSessionCategoryPlayback;
-        AVAudioSessionMode mode = AVAudioSessionModeMoviePlayback;
-        AVAudioSessionRouteSharingPolicy policy = GetRouteSharingPolicy(p_aout);
-
         if (@available(iOS 11.0, tvOS 11.0, *))
         {
-            ret = [instance setCategory:category
-                                   mode:mode
+            AVAudioSessionRouteSharingPolicy policy = GetRouteSharingPolicy(p_aout);
+
+            ret = [instance setCategory:AVAudioSessionCategoryPlayback
+                                   mode:AVAudioSessionModeMoviePlayback
                      routeSharingPolicy:policy
                                 options:0
                                   error:&error];
         }
         else
         {
-            ret = [instance setCategory:category
+            ret = [instance setCategory:AVAudioSessionCategoryPlayback
                                   error:&error];
-            ret = ret && [instance setMode:mode error:&error];
+            ret = ret && [instance setMode:AVAudioSessionModeMoviePlayback
+                                     error:&error];
             /* Not AVAudioSessionRouteSharingPolicy on older devices */
         }
         if (@available(iOS 15.0, tvOS 15.0, *)) {
@@ -506,14 +491,6 @@ Pause (audio_output_t *p_aout, bool pause, vlc_tick_t date)
     }
     p_sys->b_stopped = pause;
     ca_Pause(p_aout, pause, date);
-
-    /* Since we stopped the AudioUnit, we can't really recover the delay from
-     * the last playback. So it's better to flush everything now to avoid
-     * synchronization glitches when resuming from pause. The main drawback is
-     * that we loose 1-2 sec of audio when resuming. The order is important
-     * here, ca_Flush need to be called when paused. */
-    if (pause)
-        ca_Flush(p_aout);
 }
 
 static int
@@ -583,6 +560,8 @@ Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
     aout_FormatPrint(p_aout, "VLC is looking for:", fmt);
 
     p_sys->au_unit = NULL;
+    p_sys->output_latency_ticks = 0;
+    p_sys->io_buffer_duration_ticks = 0;
 
     NSNotificationCenter *notificationCenter = [NSNotificationCenter defaultCenter];
     [notificationCenter addObserver:p_sys->aoutWrapper
@@ -619,9 +598,24 @@ Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
     }
 
     enum port_type port_type;
-    int ret = avas_GetOptimalChannelLayout(p_aout, &port_type, &layout);
+    int ret = avas_GetPortType(p_aout, &port_type);
     if (ret != VLC_SUCCESS)
         goto error;
+
+    msg_Dbg(p_aout, "Output on %s, channel count: %ld, spatialAudioEnabled %i",
+            port_type == PORT_TYPE_HDMI ? "HDMI" :
+            port_type == PORT_TYPE_USB ? "USB" :
+            port_type == PORT_TYPE_HEADPHONES ? "Headphones" : "Default",
+            (long) [p_sys->avInstance outputNumberOfChannels],
+            p_sys->b_spatial_audio_supported);
+
+    if (!p_sys->b_preferred_channels_set && fmt->i_channels > 2)
+    {
+        /* Ask the core to downmix to stereo if the preferred number of
+         * channels can't be set. */
+        fmt->i_physical_channels = AOUT_CHANS_STEREO;
+        aout_FormatPrepare(fmt);
+    }
 
     p_aout->current_sink_info.headphones = port_type == PORT_TYPE_HEADPHONES;
 
@@ -636,11 +630,7 @@ Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
     if (err != noErr)
         ca_LogWarn("failed to set IO mode");
 
-    const vlc_tick_t latency_us =
-        vlc_tick_from_sec([p_sys->avInstance outputLatency]);
-    msg_Dbg(p_aout, "Current device has a latency of %lld us", latency_us);
-
-    ret = au_Initialize(p_aout, p_sys->au_unit, fmt, layout, latency_us, NULL);
+    ret = au_Initialize(p_aout, p_sys->au_unit, fmt, NULL, 0, GetLatency, NULL);
     if (ret != VLC_SUCCESS)
         goto error;
 
@@ -668,7 +658,6 @@ Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
     return VLC_SUCCESS;
 
 error:
-    free(layout);
     if (p_sys->au_unit != NULL)
         AudioComponentInstanceDispose(p_sys->au_unit);
     avas_resetPreferredNumberOfChannels(p_aout);

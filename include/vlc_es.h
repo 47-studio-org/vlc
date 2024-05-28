@@ -201,7 +201,7 @@ typedef enum video_orientation_t
 /** Convert enum video_orientation_t to EXIF */
 #define ORIENT_TO_EXIF(orient) ((0x76853421U >> (4 * (orient))) & 15)
 /** If the orientation is natural or mirrored */
-#define ORIENT_IS_MIRROR(orient) parity(orient)
+#define ORIENT_IS_MIRROR(orient) vlc_parity(orient)
 /** If the orientation swaps dimensions */
 #define ORIENT_IS_SWAP(orient) (((orient) & 4) != 0)
 /** Applies horizontal flip to an orientation */
@@ -392,6 +392,15 @@ struct video_format_t
         uint16_t MaxCLL;  /* max content light level */
         uint16_t MaxFALL; /* max frame average light level */
     } lighting;
+    struct {
+        uint8_t version_major;
+        uint8_t version_minor;
+        unsigned profile : 7;
+        unsigned level : 6;
+        unsigned rpu_present : 1;
+        unsigned el_present : 1;
+        unsigned bl_present : 1;
+    } dovi;
     uint32_t i_cubemap_padding; /**< padding in pixels of the cube map faces */
 };
 
@@ -600,6 +609,39 @@ typedef struct vlc_video_dovi_metadata_t
         uint64_t dz_threshold;
     } nlq[3];
 } vlc_video_dovi_metadata_t;
+
+/**
+ * HDR10+ Dynamic metadata (based on ATSC A/341 Amendment 2094-40)
+ *
+ * This is similar to SMPTE ST2094-40:2016, but omits the mastering display and
+ * target display actual peak luminance LUTs, the rectangular boundaries and
+ * ellipse coefficients, and support for multiple processing windows, as these
+ * are intentionally left unused in this version of the specification.
+ */
+
+#define VLC_ANCILLARY_ID_HDR10PLUS VLC_FOURCC('H','D','R','+')
+
+typedef struct vlc_video_hdr_dynamic_metadata_t
+{
+    uint8_t country_code;           /* ITU-T T.35 Annex A */
+    uint8_t application_version;
+    float targeted_luminance;       /* in cd/m² */
+
+    /* parameters for the first processing window (encompassing the frame) */
+    float maxscl[3];                /* in linearized range [0,1] */
+    float average_maxrgb;           /* in linearized range [0,1] */
+    uint8_t num_histogram;          /* in range [0,15] */
+    struct {
+        uint8_t percentage;         /* in range [1,100] */
+        float percentile;           /* in linearized range [0,1] */
+    } histogram[15];
+    float fraction_bright_pixels;/* in range [0,1] */
+    uint8_t tone_mapping_flag;
+    float knee_point_x;             /* in ootf range [0,1] */
+    float knee_point_y;             /* in ootf range [0,1] */
+    uint8_t num_bezier_anchors;     /* in range [1,15] */
+    float bezier_curve_anchors[15]; /* in range [0,1] */
+} vlc_video_hdr_dynamic_metadata_t;
 
 /**
  * Embedded ICC profiles

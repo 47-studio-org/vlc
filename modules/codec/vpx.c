@@ -79,7 +79,7 @@ vlc_module_begin ()
     set_description(N_("WebM video encoder"))
     set_callback(OpenEncoder)
 #   define ENC_CFG_PREFIX "sout-vpx-"
-    add_integer( ENC_CFG_PREFIX "quality-mode", VPX_DL_GOOD_QUALITY, QUALITY_MODE_TEXT,
+    add_integer( ENC_CFG_PREFIX "quality-mode", VPX_DL_BEST_QUALITY, QUALITY_MODE_TEXT,
                  QUALITY_MODE_LONGTEXT )
         change_integer_list( quality_values, quality_desc );
 #endif
@@ -110,29 +110,29 @@ static const struct
     vlc_fourcc_t     i_chroma;
     enum vpx_img_fmt i_chroma_id;
     uint8_t          i_bitdepth;
-    uint8_t          i_needs_hack;
-
+    enum vpx_color_space cs;
 } chroma_table[] =
 {
-    { VLC_CODEC_I420, VPX_IMG_FMT_I420, 8, 0 },
-    { VLC_CODEC_I422, VPX_IMG_FMT_I422, 8, 0 },
-    { VLC_CODEC_I444, VPX_IMG_FMT_I444, 8, 0 },
-    { VLC_CODEC_I440, VPX_IMG_FMT_I440, 8, 0 },
+    /* Transfer characteristic-dependent mappings must come first */
+    { VLC_CODEC_GBR_PLANAR, VPX_IMG_FMT_I444, 8, VPX_CS_SRGB },
+    { VLC_CODEC_GBR_PLANAR_10L, VPX_IMG_FMT_I44416, 10, VPX_CS_SRGB },
 
-    { VLC_CODEC_YV12, VPX_IMG_FMT_YV12, 8, 0 },
+    { VLC_CODEC_I420, VPX_IMG_FMT_I420, 8, VPX_CS_UNKNOWN },
+    { VLC_CODEC_I422, VPX_IMG_FMT_I422, 8, VPX_CS_UNKNOWN },
+    { VLC_CODEC_I444, VPX_IMG_FMT_I444, 8, VPX_CS_UNKNOWN },
+    { VLC_CODEC_I440, VPX_IMG_FMT_I440, 8, VPX_CS_UNKNOWN },
 
-    { VLC_CODEC_GBR_PLANAR, VPX_IMG_FMT_I444, 8, 1 },
-    { VLC_CODEC_GBR_PLANAR_10L, VPX_IMG_FMT_I44416, 10, 1 },
+    { VLC_CODEC_YV12, VPX_IMG_FMT_YV12, 8, VPX_CS_UNKNOWN },
 
-    { VLC_CODEC_I420_10L, VPX_IMG_FMT_I42016, 10, 0 },
-    { VLC_CODEC_I422_10L, VPX_IMG_FMT_I42216, 10, 0 },
-    { VLC_CODEC_I444_10L, VPX_IMG_FMT_I44416, 10, 0 },
+    { VLC_CODEC_I420_10L, VPX_IMG_FMT_I42016, 10, VPX_CS_UNKNOWN },
+    { VLC_CODEC_I422_10L, VPX_IMG_FMT_I42216, 10, VPX_CS_UNKNOWN },
+    { VLC_CODEC_I444_10L, VPX_IMG_FMT_I44416, 10, VPX_CS_UNKNOWN },
 
-    { VLC_CODEC_I420_12L, VPX_IMG_FMT_I42016, 12, 0 },
-    { VLC_CODEC_I422_12L, VPX_IMG_FMT_I42216, 12, 0 },
-    { VLC_CODEC_I444_12L, VPX_IMG_FMT_I44416, 12, 0 },
+    { VLC_CODEC_I420_12L, VPX_IMG_FMT_I42016, 12, VPX_CS_UNKNOWN },
+    { VLC_CODEC_I422_12L, VPX_IMG_FMT_I42216, 12, VPX_CS_UNKNOWN },
+    { VLC_CODEC_I444_12L, VPX_IMG_FMT_I44416, 12, VPX_CS_UNKNOWN },
 
-    { VLC_CODEC_I444_16L, VPX_IMG_FMT_I44416, 16, 0 },
+    { VLC_CODEC_I444_16L, VPX_IMG_FMT_I44416, 16, VPX_CS_UNKNOWN },
 };
 
 struct video_color
@@ -172,12 +172,11 @@ const struct video_color vpx_color_mapping_table[] =
 
 static vlc_fourcc_t FindVlcChroma( struct vpx_image *img )
 {
-    uint8_t hack = (img->fmt & VPX_IMG_FMT_I444) && (img->cs == VPX_CS_SRGB);
-
     for( unsigned int i = 0; i < ARRAY_SIZE(chroma_table); i++ )
         if( chroma_table[i].i_chroma_id == img->fmt &&
             chroma_table[i].i_bitdepth == img->bit_depth &&
-            chroma_table[i].i_needs_hack == hack )
+            ( chroma_table[i].cs == VPX_CS_UNKNOWN ||
+              chroma_table[i].cs == img->cs ) )
             return chroma_table[i].i_chroma;
 
     return 0;
@@ -254,7 +253,7 @@ static int Decode(decoder_t *dec, block_t *block)
         dec->fmt_out.video.i_sar_den = 1;
     }
 
-    if(dec->fmt_in.video.primaries == COLOR_PRIMARIES_UNDEF &&
+    if(dec->fmt_in->video.primaries == COLOR_PRIMARIES_UNDEF &&
        img->cs >= 0 && img->cs < ARRAY_SIZE(vpx_color_mapping_table))
     {
         v->primaries = vpx_color_mapping_table[img->cs].primaries;
@@ -263,9 +262,9 @@ static int Decode(decoder_t *dec, block_t *block)
         v->color_range = img->range == VPX_CR_FULL_RANGE ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
     }
 
-    dec->fmt_out.video.projection_mode = dec->fmt_in.video.projection_mode;
-    dec->fmt_out.video.multiview_mode = dec->fmt_in.video.multiview_mode;
-    dec->fmt_out.video.pose = dec->fmt_in.video.pose;
+    dec->fmt_out.video.projection_mode = dec->fmt_in->video.projection_mode;
+    dec->fmt_out.video.multiview_mode = dec->fmt_in->video.multiview_mode;
+    dec->fmt_out.video.pose = dec->fmt_in->video.pose;
 
     if (decoder_UpdateVideoFormat(dec))
         return VLCDEC_SUCCESS;
@@ -274,17 +273,10 @@ static int Decode(decoder_t *dec, block_t *block)
         return VLCDEC_SUCCESS;
 
     for (int plane = 0; plane < pic->i_planes; plane++ ) {
-        uint8_t *src = img->planes[plane];
-        uint8_t *dst = pic->p[plane].p_pixels;
-        int src_stride = img->stride[plane];
-        int dst_stride = pic->p[plane].i_pitch;
-
-        int size = __MIN( src_stride, dst_stride );
-        for( int line = 0; line < pic->p[plane].i_visible_lines; line++ ) {
-            memcpy( dst, src, size );
-            src += src_stride;
-            dst += dst_stride;
-        }
+        plane_t src_plane = pic->p[plane];
+        src_plane.p_pixels = img->planes[plane];
+        src_plane.i_pitch = img->stride[plane];
+        plane_CopyPixels(&pic->p[plane], &src_plane);
     }
 
     pic->b_progressive = true; /* codec does not support interlacing */
@@ -303,7 +295,7 @@ static int OpenDecoder(vlc_object_t *p_this)
     const struct vpx_codec_iface *iface;
     int vp_version;
 
-    switch (dec->fmt_in.i_codec)
+    switch (dec->fmt_in->i_codec)
     {
 #ifdef ENABLE_VP8_DECODER
     case VLC_CODEC_WEBP:
@@ -342,12 +334,12 @@ static int OpenDecoder(vlc_object_t *p_this)
 
     dec->pf_decode = Decode;
 
-    dec->fmt_out.video.i_width = dec->fmt_in.video.i_width;
-    dec->fmt_out.video.i_height = dec->fmt_in.video.i_height;
+    dec->fmt_out.video.i_width = dec->fmt_in->video.i_width;
+    dec->fmt_out.video.i_height = dec->fmt_in->video.i_height;
 
-    if (dec->fmt_in.video.i_sar_num > 0 && dec->fmt_in.video.i_sar_den > 0) {
-        dec->fmt_out.video.i_sar_num = dec->fmt_in.video.i_sar_num;
-        dec->fmt_out.video.i_sar_den = dec->fmt_in.video.i_sar_den;
+    if (dec->fmt_in->video.i_sar_num > 0 && dec->fmt_in->video.i_sar_den > 0) {
+        dec->fmt_out.video.i_sar_num = dec->fmt_in->video.i_sar_num;
+        dec->fmt_out.video.i_sar_den = dec->fmt_in->video.i_sar_den;
     }
 
     return VLC_SUCCESS;
@@ -394,18 +386,13 @@ static int OpenEncoder(vlc_object_t *p_this)
     encoder_t *p_enc = (encoder_t *)p_this;
     encoder_sys_t *p_sys;
 
-    /* Allocate the memory needed to store the encoder's structure */
-    p_sys = malloc(sizeof(*p_sys));
-    if (p_sys == NULL)
-        return VLC_ENOMEM;
-    p_enc->p_sys = p_sys;
-
     const struct vpx_codec_iface *iface;
     int vp_version;
 
     switch (p_enc->fmt_out.i_codec)
     {
 #ifdef ENABLE_VP8_ENCODER
+    case VLC_CODEC_WEBP:
     case VLC_CODEC_VP8:
         iface = &vpx_codec_vp8_cx_algo;
         vp_version = 8;
@@ -418,9 +405,13 @@ static int OpenEncoder(vlc_object_t *p_this)
         break;
 #endif
     default:
-        free(p_sys);
         return VLC_EGENERIC;
     }
+
+    /* Allocate the memory needed to store the encoder's structure */
+    p_sys = malloc(sizeof(*p_sys));
+    if (p_sys == NULL)
+        return VLC_ENOMEM;
 
     struct vpx_codec_enc_cfg enccfg = {0};
     vpx_codec_enc_config_default(iface, &enccfg, 0);
@@ -434,23 +425,23 @@ static int OpenEncoder(vlc_object_t *p_this)
     struct vpx_codec_ctx *ctx = &p_sys->ctx;
     if (vpx_codec_enc_init(ctx, iface, &enccfg, 0) != VPX_CODEC_OK) {
         VPX_ERR(p_this, ctx, "Failed to initialize encoder");
-        free(p_sys);
-        return VLC_EGENERIC;
+        goto error;
     }
 
     p_enc->fmt_in.i_codec = VLC_CODEC_I420;
     config_ChainParse(p_enc, ENC_CFG_PREFIX, ppsz_sout_options, p_enc->p_cfg);
 
     /* Deadline (in ms) to spend in encoder */
-    switch (var_GetInteger(p_enc, ENC_CFG_PREFIX "quality-mode")) {
+    const unsigned long quality = var_GetInteger(p_enc, ENC_CFG_PREFIX "quality-mode");
+    switch (quality) {
         case VPX_DL_REALTIME:
-            p_sys->quality = VPX_DL_REALTIME;
-            break;
         case VPX_DL_BEST_QUALITY:
-            p_sys->quality = VPX_DL_BEST_QUALITY;
+        case VPX_DL_GOOD_QUALITY:
+            p_sys->quality = quality;
             break;
         default:
-            p_sys->quality = VPX_DL_GOOD_QUALITY;
+            msg_Warn(p_this, "Unexpected quality %lu, forcing %d", quality, VPX_DL_BEST_QUALITY);
+            p_sys->quality = VPX_DL_BEST_QUALITY;
             break;
     }
 
@@ -460,8 +451,29 @@ static int OpenEncoder(vlc_object_t *p_this)
         .encode_video = Encode,
     };
     p_enc->ops = &ops;
+    p_enc->p_sys = p_sys;
 
     return VLC_SUCCESS;
+error:
+    free(p_sys);
+    return VLC_EGENERIC;
+}
+
+static const uint32_t webp_simple_lossy_header[5] = {
+    VLC_FOURCC('R', 'I', 'F', 'F'),
+    0, /* TBD: total size of VP8 data plus 12 bytes for WEBP fourcc + VP8 ChunkHeader */
+    VLC_FOURCC('W', 'E', 'B', 'P'),
+    VLC_FOURCC('V', 'P', '8', ' '),
+    0, /* TBD: total size of VP8 data */
+};
+
+static void webp_write_header(uint8_t *p_header, uint32_t i_size, size_t i_header_size)
+{
+    assert(i_header_size == sizeof(webp_simple_lossy_header));
+
+    memcpy(p_header, webp_simple_lossy_header, i_header_size);
+    SetDWLE(p_header + 1*sizeof(uint32_t), i_size + 4 + 8);
+    SetDWLE(p_header + 4*sizeof(uint32_t), i_size);
 }
 
 /****************************************************************************
@@ -478,14 +490,15 @@ static block_t *Encode(encoder_t *p_enc, picture_t *p_pict)
     unsigned i_w = p_enc->fmt_in.video.i_visible_width;
     unsigned i_h = p_enc->fmt_in.video.i_visible_height;
 
-    /* Create and initialize the vpx_image */
-    if (!vpx_img_wrap(&img, VPX_IMG_FMT_I420, i_w, i_h, 32, p_pict->p[0].p_pixels)) {
+    /* Create and initialize the vpx_image (use 1 and correct later to avoid getting
+       rejected for non-power of 2 pitch) */
+    if (!vpx_img_wrap(&img, VPX_IMG_FMT_I420, i_w, i_h, 1, p_pict->p[0].p_pixels)) {
         VPX_ERR(p_enc, ctx, "Failed to wrap image");
         return NULL;
     }
 
-    /* Correct chroma plane offsets. */
-    for (int plane = 1; plane < p_pict->i_planes; plane++) {
+    /* Fill in real plane/stride values. */
+    for (int plane = 0; plane < p_pict->i_planes; plane++) {
         img.planes[plane] = p_pict->p[plane].p_pixels;
         img.stride[plane] = p_pict->p[plane].i_pitch;
     }
@@ -503,12 +516,27 @@ static block_t *Encode(encoder_t *p_enc, picture_t *p_pict)
     const vpx_codec_cx_pkt_t *pkt = NULL;
     vpx_codec_iter_t iter = NULL;
     block_t *p_out = NULL;
+
+    /* WebP container specific context */
+    uint32_t i_vp8_data_size = 0;
+    uint8_t *p_header = NULL;
+    const bool b_is_webp = p_enc->fmt_out.i_codec == VLC_CODEC_WEBP;
+    static const size_t i_webp_header_size = sizeof(webp_simple_lossy_header);
+
     while ((pkt = vpx_codec_get_cx_data(ctx, &iter)) != NULL)
     {
         if (pkt->kind == VPX_CODEC_CX_FRAME_PKT)
         {
+            size_t i_block_sz = pkt->data.frame.sz;
+            const bool b_needs_padding_byte = b_is_webp && (pkt->data.frame.sz & 1);
             int keyframe = pkt->data.frame.flags & VPX_FRAME_IS_KEY;
-            block_t *p_block = block_Alloc(pkt->data.frame.sz);
+
+            if (b_is_webp && p_header == NULL) {
+                i_block_sz += i_webp_header_size;
+                i_block_sz += b_needs_padding_byte;
+            }
+
+            block_t *p_block = block_Alloc(i_block_sz);
             if (unlikely(p_block == NULL))
             {
                 block_ChainRelease(p_out);
@@ -516,13 +544,33 @@ static block_t *Encode(encoder_t *p_enc, picture_t *p_pict)
                 break;
             }
 
-            memcpy(p_block->p_buffer, pkt->data.frame.buf, pkt->data.frame.sz);
+            uint8_t *p_buffer = p_block->p_buffer;
+
+            /* Leave room at the beginning for the WebP header data. */
+            if (b_is_webp && p_header == NULL) {
+                p_header = p_buffer;
+                p_buffer += i_webp_header_size;
+                i_vp8_data_size += pkt->data.frame.sz;
+            }
+
+            memcpy(p_buffer, pkt->data.frame.buf, pkt->data.frame.sz);
             p_block->i_dts = p_block->i_pts = pkt->data.frame.pts;
             if (keyframe)
                 p_block->i_flags |= BLOCK_FLAG_TYPE_I;
+
+            /* If Chunk Size is odd, a single padding byte -- that MUST be 0 to
+               conform with RIFF -- is added. */
+            if (b_needs_padding_byte)
+                p_block->p_buffer[i_block_sz - 1] = 0;
+
             block_ChainAppend(&p_out, p_block);
         }
     }
+
+    /* For WebP, now that we have the total size, write the RIFF header. */
+    if (b_is_webp && p_header)
+        webp_write_header(p_header, i_vp8_data_size, i_webp_header_size);
+
     vpx_img_free(&img);
     return p_out;
 }

@@ -209,9 +209,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 - (vlc_tick_t)copyCurrentFrameToBuffer:(void *)buffer
 {
     CVImageBufferRef imageBuffer;
-    vlc_tick_t pts;
-
-    void *pixels;
+    void *pixels = NULL;
 
     if ( !currentImageBuffer || currentPts == previousPts )
         return 0;
@@ -221,7 +219,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
         imageBuffer = CVBufferRetain(currentImageBuffer);
         if (imageBuffer)
         {
-            pts = previousPts = currentPts;
+            previousPts = currentPts;
             CVPixelBufferLockBaseAddress(imageBuffer, 0);
             pixels = CVPixelBufferGetBaseAddress(imageBuffer);
             if (pixels)
@@ -294,7 +292,7 @@ static void Close(vlc_object_t *p_this)
 
     /* Signal ARC we won't use those references anymore. */
     p_demux->p_sys = nil;
-    demux = nil;
+    (void)demux;
 }
 
 /*****************************************************************************
@@ -349,7 +347,7 @@ static int Control(demux_t *p_demux, int i_query, va_list args)
 
     AVCaptureDeviceInput    *input = nil;
 
-    int                     i, i_width, i_height, deviceCount, ivideo;
+    int                     deviceCount, ivideo;
 
     char                    *psz_uid = NULL;
 

@@ -334,6 +334,87 @@ void D3D_SetupQuad(vlc_object_t *o, const video_format_t *fmt, d3d_quad_t *quad,
     else
         quad->shaderConstants->BoundaryY = (FLOAT) (fmt->i_visible_height - 1) / fmt->i_height;
 
+#define COLOR_CONSTANTS_601_KR 0.2990f
+#define COLOR_CONSTANTS_601_KB 0.1140f
+#define COLOR_CONSTANTS_601_KG (1.0f - COLOR_CONSTANTS_601_KR - COLOR_CONSTANTS_601_KB)
+
+#define COLOR_CONSTANTS_709_KR 0.2126f
+#define COLOR_CONSTANTS_709_KB 0.0722f
+#define COLOR_CONSTANTS_709_KG (1.0f - COLOR_CONSTANTS_709_KR - COLOR_CONSTANTS_709_KB)
+
+#define COLOR_CONSTANTS_2020_KR 0.2627f
+#define COLOR_CONSTANTS_2020_KB 0.0593f
+#define COLOR_CONSTANTS_2020_KG (1.0f - COLOR_CONSTANTS_2020_KR - COLOR_CONSTANTS_2020_KB)
+
+#define COLOR_SHIFT_STUDIO_8_MIN_Y   16
+#define COLOR_SHIFT_STUDIO_8_MAX_Y   235
+#define COLOR_SHIFT_STUDIO_8_MIN_UV  16
+#define COLOR_SHIFT_STUDIO_8_MAX_UV  240
+#define COLOR_SHIFT_STUDIO_8_UV     ((double)128)
+#define COLOR_COEFF_STUDIO_8_Y      ((double)(COLOR_SHIFT_STUDIO_8_MAX_Y - COLOR_SHIFT_STUDIO_8_MIN_Y))
+#define COLOR_COEFF_STUDIO_8_UV     ((double)((COLOR_SHIFT_STUDIO_8_MAX_UV - COLOR_SHIFT_STUDIO_8_MIN_UV) / 2))
+
+#define COLOR_SHIFT_STUDIO_10_MIN_Y   64
+#define COLOR_SHIFT_STUDIO_10_MAX_Y   940
+#define COLOR_SHIFT_STUDIO_10_MIN_UV  64
+#define COLOR_SHIFT_STUDIO_10_MAX_UV  960
+#define COLOR_SHIFT_STUDIO_10_UV     ((double)512)
+#define COLOR_COEFF_STUDIO_10_Y      ((double)(COLOR_SHIFT_STUDIO_10_MAX_Y - COLOR_SHIFT_STUDIO_10_MIN_Y))
+#define COLOR_COEFF_STUDIO_10_UV     ((double)((COLOR_SHIFT_STUDIO_10_MAX_UV - COLOR_SHIFT_STUDIO_10_MIN_UV) / 2))
+
+#define COLOR_SHIFT_STUDIO_12_MIN_Y   256
+#define COLOR_SHIFT_STUDIO_12_MAX_Y   3760
+#define COLOR_SHIFT_STUDIO_12_MIN_UV  256
+#define COLOR_SHIFT_STUDIO_12_MAX_UV  3840
+#define COLOR_SHIFT_STUDIO_12_UV     ((double)2048)
+#define COLOR_COEFF_STUDIO_12_Y      ((double)(COLOR_SHIFT_STUDIO_12_MAX_Y - COLOR_SHIFT_STUDIO_12_MIN_Y))
+#define COLOR_COEFF_STUDIO_12_UV     ((double)((COLOR_SHIFT_STUDIO_12_MAX_UV - COLOR_SHIFT_STUDIO_12_MIN_UV) / 2))
+
+#define COLOR_COEFF_FULL_8_RGB      ((double)255)
+#define COLOR_COEFF_FULL_10_RGB     ((double)1023)
+#define COLOR_COEFF_FULL_12_RGB     ((double)4095)
+
+#define COLOR_SHIFT_FULL_8_MIN_Y   0
+#define COLOR_SHIFT_FULL_8_MAX_Y   COLOR_COEFF_FULL_8_RGB
+#define COLOR_COEFF_FULL_8_Y      ((double)(COLOR_SHIFT_FULL_8_MAX_Y - COLOR_SHIFT_FULL_8_MIN_Y))
+#define COLOR_COEFF_FULL_8_UV     ((double)(COLOR_SHIFT_FULL_8_MAX_Y - COLOR_SHIFT_FULL_8_MIN_Y) / 2.0f)
+#define COLOR_SHIFT_FULL_8_UV     ((double)128)
+
+#define COLOR_SHIFT_FULL_10_MIN_Y   0
+#define COLOR_SHIFT_FULL_10_MAX_Y   COLOR_COEFF_FULL_10_RGB
+#define COLOR_COEFF_FULL_10_Y      ((double)(COLOR_SHIFT_FULL_10_MAX_Y - COLOR_SHIFT_FULL_10_MIN_Y))
+#define COLOR_COEFF_FULL_10_UV     ((double)(COLOR_SHIFT_FULL_10_MAX_Y - COLOR_SHIFT_FULL_10_MIN_Y) / 2.0f)
+#define COLOR_SHIFT_FULL_10_UV     ((double)512)
+
+#define COLOR_SHIFT_FULL_12_MIN_Y   0
+#define COLOR_SHIFT_FULL_12_MAX_Y   COLOR_COEFF_FULL_12_RGB
+#define COLOR_COEFF_FULL_12_Y      ((double)(COLOR_SHIFT_FULL_12_MAX_Y - COLOR_SHIFT_FULL_12_MIN_Y))
+#define COLOR_COEFF_FULL_12_UV     ((double)(COLOR_SHIFT_FULL_12_MAX_Y - COLOR_SHIFT_FULL_12_MIN_Y) / 2.0f)
+#define COLOR_SHIFT_FULL_12_UV     ((double)2048)
+
+#define COLOR_SHIFT_STUDIO_8_MIN_RGB   16
+#define COLOR_SHIFT_STUDIO_8_MAX_RGB   235
+#define COLOR_COEFF_STUDIO_8_RGB      ((double)(COLOR_SHIFT_STUDIO_8_MAX_RGB - COLOR_SHIFT_STUDIO_8_MIN_RGB))
+
+
+#define COLOR_MATRIX_YUV2RGB(src, bits, yuv_range, rgb_range) \
+    static const FLOAT COLORSPACE_BT##src##_##yuv_range##_##bits##_TO_##rgb_range##_RGBA[4*3] = { \
+       COLOR_COEFF_##rgb_range##_##bits##_RGB / COLOR_COEFF_##yuv_range##_##bits##_Y, \
+       0.f, \
+       COLOR_COEFF_##rgb_range##_##bits##_RGB / COLOR_COEFF_##yuv_range##_##bits##_UV * (1.f - COLOR_CONSTANTS_##src##_KR), \
+       0.f, \
+       \
+       COLOR_COEFF_##rgb_range##_##bits##_RGB / COLOR_COEFF_##yuv_range##_##bits##_Y, \
+       - COLOR_COEFF_##rgb_range##_##bits##_RGB / COLOR_COEFF_##yuv_range##_##bits##_UV * (1.f - COLOR_CONSTANTS_##src##_KB) * COLOR_CONSTANTS_##src##_KB / COLOR_CONSTANTS_##src##_KG, \
+       - COLOR_COEFF_##rgb_range##_##bits##_RGB / COLOR_COEFF_##yuv_range##_##bits##_UV * (1.f - COLOR_CONSTANTS_##src##_KR) * COLOR_CONSTANTS_##src##_KR / COLOR_CONSTANTS_##src##_KG, \
+       0.f, \
+       \
+       COLOR_COEFF_##rgb_range##_##bits##_RGB / COLOR_COEFF_##yuv_range##_##bits##_Y, \
+       COLOR_COEFF_##rgb_range##_##bits##_RGB / COLOR_COEFF_##yuv_range##_##bits##_UV * (1.f - COLOR_CONSTANTS_##src##_KB), \
+       0.f, \
+       0.f, \
+    };
+
     const bool RGB_src_shader = DxgiIsRGBFormat(quad->textureFormat);
 
     FLOAT itu_black_level = 0.f;
@@ -344,23 +425,24 @@ void D3D_SetupQuad(vlc_object_t *o, const video_format_t *fmt, d3d_quad_t *quad,
         {
         case 8:
             /* Rec. ITU-R BT.709-6 ¶4.6 */
-            itu_black_level  =              16.f / 255.f;
-            itu_achromacy    =             128.f / 255.f;
+            itu_black_level = COLOR_SHIFT_STUDIO_8_MIN_Y / COLOR_SHIFT_FULL_8_MAX_Y;
+            itu_achromacy   = COLOR_SHIFT_STUDIO_8_UV    / COLOR_SHIFT_FULL_8_MAX_Y;
             break;
         case 10:
             /* Rec. ITU-R BT.709-6 ¶4.6 */
-            itu_black_level  =              64.f / 1023.f;
-            itu_achromacy    =             512.f / 1023.f;
+            itu_black_level = COLOR_SHIFT_STUDIO_10_MIN_Y / COLOR_SHIFT_FULL_10_MAX_Y;
+            itu_achromacy   = COLOR_SHIFT_STUDIO_10_UV    / COLOR_SHIFT_FULL_10_MAX_Y;
             break;
         case 12:
             /* Rec. ITU-R BT.2020-2 Table 5 */
-            itu_black_level  =               256.f / 4095.f;
-            itu_achromacy    =              2048.f / 4095.f;
+            itu_black_level = COLOR_SHIFT_STUDIO_12_MIN_Y / COLOR_SHIFT_FULL_12_MAX_Y;
+            itu_achromacy   = COLOR_SHIFT_STUDIO_12_UV    / COLOR_SHIFT_FULL_12_MAX_Y;
             break;
         default:
             /* unknown bitdepth, use approximation for infinite bit depth */
-            itu_black_level  =              16.f / 256.f;
-            itu_achromacy    =             128.f / 256.f;
+            msg_Warn(o, "unsupported YUV bitdepth %u", (unsigned)quad->textureFormat->bitsPerChannel);
+            itu_black_level =  16.f / 256.f;
+            itu_achromacy   = 128.f / 256.f;
             break;
         }
     }
@@ -371,31 +453,30 @@ void D3D_SetupQuad(vlc_object_t *o, const video_format_t *fmt, d3d_quad_t *quad,
         0.f, 0.f, 1.f, 0.f,
     };
 
-    /* matrices for studio range */
-    /* see https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.601_conversion, in studio range */
-    static const FLOAT COLORSPACE_BT601_YUV_TO_FULL_RGBA[4*3] = {
-        1.164383561643836f,                 0.f,  1.596026785714286f, 0.f,
-        1.164383561643836f, -0.391762290094914f, -0.812967647237771f, 0.f,
-        1.164383561643836f,  2.017232142857142f,                 0.f, 0.f,
-    };
+
+    COLOR_MATRIX_YUV2RGB(601,8,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(709,8,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(2020,8,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(601,10,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(709,10,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(2020,10,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(601,12,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(709,12,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(2020,12,STUDIO,FULL);
+    COLOR_MATRIX_YUV2RGB(601,8,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(709,8,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(2020,8,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(601,10,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(709,10,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(2020,10,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(601,12,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(709,12,FULL,FULL);
+    COLOR_MATRIX_YUV2RGB(2020,12,FULL,FULL);
 
     static const FLOAT COLORSPACE_FULL_RGBA_TO_BT601_YUV[4*3] = {
         0.299000f,  0.587000f,  0.114000f, 0.f,
        -0.168736f, -0.331264f,  0.500000f, 0.f,
         0.500000f, -0.418688f, -0.081312f, 0.f,
-    };
-
-    /* see https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.709_conversion, in studio range */
-    static const FLOAT COLORSPACE_BT709_YUV_TO_FULL_RGBA[4*3] = {
-        1.164383561643836f,                 0.f,  1.792741071428571f, 0.f,
-        1.164383561643836f, -0.213248614273730f, -0.532909328559444f, 0.f,
-        1.164383561643836f,  2.112401785714286f,                 0.f, 0.f,
-    };
-    /* see https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.2020_conversion, in studio range */
-    static const FLOAT COLORSPACE_BT2020_YUV_TO_FULL_RGBA[4*3] = {
-        1.164383561643836f,  0.000000000000f,  1.678674107143f, 0.f,
-        1.164383561643836f, -0.127007098661f, -0.440987687946f, 0.f,
-        1.164383561643836f,  2.141772321429f,  0.000000000000f, 0.f,
     };
 
     FLOAT WhitePoint[4*3];
@@ -417,29 +498,75 @@ void D3D_SetupQuad(vlc_object_t *o, const video_format_t *fmt, d3d_quad_t *quad,
     {
         switch (fmt->space){
             case COLOR_SPACE_BT709:
-                ppColorspace = COLORSPACE_BT709_YUV_TO_FULL_RGBA;
-                break;
-            case COLOR_SPACE_BT2020:
-                ppColorspace = COLORSPACE_BT2020_YUV_TO_FULL_RGBA;
-                break;
-            case COLOR_SPACE_BT601:
-                ppColorspace = COLORSPACE_BT601_YUV_TO_FULL_RGBA;
-                break;
-            default:
-            case COLOR_SPACE_UNDEF:
-                if( fmt->i_height > 576 )
+                if (fmt->color_range == COLOR_RANGE_FULL)
                 {
-                    ppColorspace = COLORSPACE_BT709_YUV_TO_FULL_RGBA;
+                    if (quad->textureFormat->bitsPerChannel == 12)
+                        ppColorspace = COLORSPACE_BT709_FULL_12_TO_FULL_RGBA;
+                    else if (quad->textureFormat->bitsPerChannel == 10)
+                        ppColorspace = COLORSPACE_BT709_FULL_10_TO_FULL_RGBA;
+                    else
+                        ppColorspace = COLORSPACE_BT709_FULL_8_TO_FULL_RGBA;
                 }
                 else
                 {
-                    ppColorspace = COLORSPACE_BT601_YUV_TO_FULL_RGBA;
+                    if (quad->textureFormat->bitsPerChannel == 12)
+                        ppColorspace = COLORSPACE_BT709_STUDIO_12_TO_FULL_RGBA;
+                    else if (quad->textureFormat->bitsPerChannel == 10)
+                        ppColorspace = COLORSPACE_BT709_STUDIO_10_TO_FULL_RGBA;
+                    else
+                        ppColorspace = COLORSPACE_BT709_STUDIO_8_TO_FULL_RGBA;
                 }
+                break;
+            case COLOR_SPACE_BT2020:
+                if (fmt->color_range == COLOR_RANGE_FULL)
+                {
+                    if (quad->textureFormat->bitsPerChannel == 12)
+                        ppColorspace = COLORSPACE_BT2020_FULL_12_TO_FULL_RGBA;
+                    else if (quad->textureFormat->bitsPerChannel == 10)
+                        ppColorspace = COLORSPACE_BT2020_FULL_10_TO_FULL_RGBA;
+                    else
+                        ppColorspace = COLORSPACE_BT2020_FULL_8_TO_FULL_RGBA;
+                }
+                else
+                {
+                    if (quad->textureFormat->bitsPerChannel == 12)
+                        ppColorspace = COLORSPACE_BT2020_STUDIO_12_TO_FULL_RGBA;
+                    else if (quad->textureFormat->bitsPerChannel == 10)
+                        ppColorspace = COLORSPACE_BT2020_STUDIO_10_TO_FULL_RGBA;
+                    else
+                        ppColorspace = COLORSPACE_BT2020_STUDIO_8_TO_FULL_RGBA;
+                }
+                break;
+            case COLOR_SPACE_BT601:
+                if (fmt->color_range == COLOR_RANGE_FULL)
+                {
+                    if (quad->textureFormat->bitsPerChannel == 12)
+                        ppColorspace = COLORSPACE_BT601_FULL_12_TO_FULL_RGBA;
+                    else if (quad->textureFormat->bitsPerChannel == 10)
+                        ppColorspace = COLORSPACE_BT601_FULL_10_TO_FULL_RGBA;
+                    else
+                        ppColorspace = COLORSPACE_BT601_FULL_8_TO_FULL_RGBA;
+                }
+                else
+                {
+                    if (quad->textureFormat->bitsPerChannel == 12)
+                        ppColorspace = COLORSPACE_BT601_STUDIO_12_TO_FULL_RGBA;
+                    else if (quad->textureFormat->bitsPerChannel == 10)
+                        ppColorspace = COLORSPACE_BT601_STUDIO_10_TO_FULL_RGBA;
+                    else
+                        ppColorspace = COLORSPACE_BT601_STUDIO_8_TO_FULL_RGBA;
+                }
+                break;
+            default:
+            case COLOR_SPACE_UNDEF:
+                msg_Warn(o, "unknown colorspace, using BT709");
+                ppColorspace = COLORSPACE_BT709_STUDIO_8_TO_FULL_RGBA;
                 break;
         }
 
         /* all matrices work in studio range and output in full range */
-        WhitePoint[0*4 + 3] = -itu_black_level;
+        if (fmt->color_range != COLOR_RANGE_FULL)
+            WhitePoint[0*4 + 3] = -itu_black_level;
         WhitePoint[1*4 + 3] = -itu_achromacy;
         WhitePoint[2*4 + 3] = -itu_achromacy;
     }

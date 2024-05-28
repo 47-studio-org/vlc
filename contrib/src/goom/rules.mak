@@ -34,7 +34,9 @@ endif
 	$(MOVE)
 
 .goom: goom
-	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF)
-	cd $< && $(MAKE) install
+	$(RECONF) -I m4
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

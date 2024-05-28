@@ -49,7 +49,7 @@
 #include "clock/clock.h"
 
 static const char *const ppsz_snap_formats[] =
-{ "png", "jpg", "tiff" };
+{ "png", "jpg", "tiff", "webp" };
 
 /*****************************************************************************
  * Configuration options for the core module. Each module will also separately
@@ -1139,19 +1139,17 @@ static const char* const ppsz_restore_playback_desc[] = {
 #define CLOCK_SOURCE_TEXT N_("Clock source")
 #ifdef _WIN32
 static const char *const clock_sources[] = {
-    "", "interrupt", "tick",
-#ifndef VLC_WINSTORE_APP
+    "", "perf",
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
     "multimedia",
 #endif
-    "perf", "wall",
 };
 
 static const char *const clock_sources_text[] = {
-    N_("Auto"), "Interrupt time", "Windows time",
-#ifndef VLC_WINSTORE_APP
+    N_("Auto"), "Performance counters",
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
     "Multimedia timers",
 #endif
-    "Performance counters", "System time (DANGEROUS!)",
 };
 #endif
 
@@ -2091,7 +2089,7 @@ vlc_module_begin ()
 #endif
 
 #ifdef _WIN32
-    add_string( "clock-source", NULL, CLOCK_SOURCE_TEXT, NULL )
+    add_string( "clock-source", "perf", CLOCK_SOURCE_TEXT, NULL )
         change_string_list( clock_sources, clock_sources_text )
 #endif
 
@@ -2202,7 +2200,6 @@ vlc_module_begin ()
 #endif
 
     add_bool( "color", true, COLOR_TEXT, COLOR_LONGTEXT )
-        change_volatile ()
     add_obsolete_bool( "advanced" ) /* since 4.0.0 */
     add_bool( "interact", true, INTERACTION_TEXT,
               INTERACTION_LONGTEXT )

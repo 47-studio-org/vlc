@@ -29,11 +29,12 @@
 # include "config.h"
 #endif
 
-#include <inttypes.h>
+#include <cassert>
+#include <cinttypes>         /* PRId64 */
 #include <list>
-#include <string>
-#include <assert.h>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>

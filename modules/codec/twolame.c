@@ -157,11 +157,8 @@ static int OpenEncoder( vlc_object_t *p_this )
     /* Allocate the memory needed to store the decoder's structure */
     if( ( p_sys = (encoder_sys_t *)malloc(sizeof(encoder_sys_t)) ) == NULL )
         return VLC_ENOMEM;
-    p_enc->p_sys = p_sys;
 
     p_enc->fmt_in.i_codec = VLC_CODEC_S16N;
-
-    p_enc->fmt_out.i_cat = AUDIO_ES;
     p_enc->fmt_out.i_codec = VLC_CODEC_MPGA;
 
     config_ChainParse( p_enc, ENC_CFG_PREFIX, ppsz_enc_options, p_enc->p_cfg );
@@ -232,7 +229,7 @@ static int OpenEncoder( vlc_object_t *p_this )
     if ( twolame_init_params( p_sys->p_twolame ) )
     {
         msg_Err( p_enc, "twolame initialization failed" );
-        return VLC_EGENERIC;
+        goto error;
     }
 
     static const struct vlc_encoder_operations ops =
@@ -241,10 +238,15 @@ static int OpenEncoder( vlc_object_t *p_this )
         .encode_audio = Encode,
     };
     p_enc->ops = &ops;
+    p_enc->p_sys = p_sys;
 
     p_sys->i_nb_samples = 0;
 
     return VLC_SUCCESS;
+error:
+    twolame_close( &p_sys->p_twolame );
+    free(p_sys);
+    return VLC_EGENERIC;
 }
 
 /****************************************************************************

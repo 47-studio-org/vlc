@@ -145,7 +145,7 @@ static int Open( vlc_object_t *p_this )
     decoder_t     *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec !=  VLC_CODEC_VC1 )
+    if( p_dec->fmt_in->i_codec !=  VLC_CODEC_VC1 )
         return VLC_EGENERIC;
 
     p_dec->p_sys = p_sys = malloc( sizeof( decoder_sys_t ) );
@@ -153,7 +153,7 @@ static int Open( vlc_object_t *p_this )
         return VLC_ENOMEM;
 
     /* Create the output format */
-    es_format_Copy( &p_dec->fmt_out, &p_dec->fmt_in );
+    es_format_Copy( &p_dec->fmt_out, p_dec->fmt_in );
     p_dec->pf_packetize = Packetize;
     p_dec->pf_flush = Flush;
     p_dec->pf_get_cc = GetCc;
@@ -176,12 +176,12 @@ static int Open( vlc_object_t *p_this )
     p_sys->p_frame = NULL;
     p_sys->pp_last = &p_sys->p_frame;
 
-    if( p_dec->fmt_in.video.i_frame_rate && p_dec->fmt_in.video.i_frame_rate_base )
-        date_Init( &p_sys->dts, p_dec->fmt_in.video.i_frame_rate * 2,
-                                p_dec->fmt_in.video.i_frame_rate_base );
+    if( p_dec->fmt_in->video.i_frame_rate && p_dec->fmt_in->video.i_frame_rate_base )
+        date_Init( &p_sys->dts, p_dec->fmt_in->video.i_frame_rate * 2,
+                                p_dec->fmt_in->video.i_frame_rate_base );
     else
         date_Init( &p_sys->dts, 30000*2, 1000 );
-    p_sys->b_check_startcode = p_dec->fmt_in.b_packetized;
+    p_sys->b_check_startcode = p_dec->fmt_in->b_packetized;
 
     if( p_dec->fmt_out.i_extra > 0 )
     {
@@ -267,7 +267,7 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
 
     block_t *p_au = packetizer_Packetize( &p_sys->packetizer, pp_block );
     if( !p_au )
-        p_sys->b_check_startcode = p_dec->fmt_in.b_packetized;
+        p_sys->b_check_startcode = p_dec->fmt_in->b_packetized;
 
     return p_au;
 }
@@ -474,7 +474,6 @@ static block_t *ParseIDU( decoder_t *p_dec, bool *pb_ts_used, block_t *p_frag )
     {
         es_format_t *p_es = &p_dec->fmt_out;
         bs_t s;
-        int i_profile;
 
         /* */
         if( p_sys->sh.p_sh )
@@ -485,7 +484,7 @@ static block_t *ParseIDU( decoder_t *p_dec, bool *pb_ts_used, block_t *p_frag )
          * TODO find a test case and valid it */
         if( p_frag->i_buffer > 8 && (p_frag->p_buffer[4]&0x80) == 0 ) /* for advanced profile, the first bit is 1 */
         {
-            video_format_t *p_v = &p_dec->fmt_in.video;
+            const video_format_t *p_v = &p_dec->fmt_in->video;
             const size_t i_potential_width  = GetWBE( &p_frag->p_buffer[4] );
             const size_t i_potential_height = GetWBE( &p_frag->p_buffer[6] );
 
@@ -513,10 +512,10 @@ static block_t *ParseIDU( decoder_t *p_dec, bool *pb_ts_used, block_t *p_frag )
         bs_init_custom( &s, &p_frag->p_buffer[4], p_frag->i_buffer - 4,
                         &hxxx_bsfw_ep3b_callbacks, &bsctx );
 
-        i_profile = bs_read( &s, 2 );
-        if( i_profile == 3 )
+        p_dec->fmt_out.i_profile = bs_read( &s, 2 );
+        if( p_dec->fmt_out.i_profile == 3 )
         {
-            const int i_level = bs_read( &s, 3 );
+            p_dec->fmt_out.i_level = bs_read( &s, 3 );
 
             /* Advanced profile */
             p_sys->sh.b_advanced_profile = true;
@@ -530,7 +529,7 @@ static block_t *ParseIDU( decoder_t *p_dec, bool *pb_ts_used, block_t *p_frag )
 
             if( !p_sys->b_sequence_header )
                 msg_Dbg( p_dec, "found sequence header for advanced profile level L%d resolution %dx%d",
-                         i_level, p_es->video.i_width, p_es->video.i_height);
+                         p_dec->fmt_out.i_level, p_es->video.i_width, p_es->video.i_height);
 
             bs_skip( &s, 1 );// pulldown
             p_sys->sh.b_interlaced = bs_read( &s, 1 );
@@ -607,8 +606,8 @@ static block_t *ParseIDU( decoder_t *p_dec, bool *pb_ts_used, block_t *p_frag )
                 }
 
                 if( i_fps_num != 0 && i_fps_den != 0 &&
-                   (p_dec->fmt_in.video.i_frame_rate == 0 ||
-                    p_dec->fmt_in.video.i_frame_rate_base == 0) )
+                   (p_dec->fmt_in->video.i_frame_rate == 0 ||
+                    p_dec->fmt_in->video.i_frame_rate_base == 0) )
                     vlc_ureduce( &p_es->video.i_frame_rate, &p_es->video.i_frame_rate_base, i_fps_num, i_fps_den, 0 );
 
                 if( !p_sys->b_sequence_header )
@@ -618,7 +617,7 @@ static block_t *ParseIDU( decoder_t *p_dec, bool *pb_ts_used, block_t *p_frag )
                 }
             }
             if( bs_read1( &s ) && /* Color Format */
-                p_dec->fmt_in.video.primaries == COLOR_PRIMARIES_UNDEF )
+                p_dec->fmt_in->video.primaries == COLOR_PRIMARIES_UNDEF )
             {
                 p_es->video.primaries = iso_23001_8_cp_to_vlc_primaries( bs_read( &s, 8 ) );
                 p_es->video.transfer = iso_23001_8_tc_to_vlc_xfer( bs_read( &s, 8 ) );
@@ -632,7 +631,7 @@ static block_t *ParseIDU( decoder_t *p_dec, bool *pb_ts_used, block_t *p_frag )
             p_sys->sh.b_interlaced = false;
 
             if( !p_sys->b_sequence_header )
-                msg_Dbg( p_dec, "found sequence header for %s profile", i_profile == 0 ? "simple" : "main" );
+                msg_Dbg( p_dec, "found sequence header for %s profile", p_dec->fmt_out.i_profile == 0 ? "simple" : "main" );
 
             bs_skip( &s, 2+3+5+1+1+     // reserved + frame rate Q + bit rate Q + loop filter + reserved
                          1+1+1+1+2+     // multiresolution + reserved + fast uv mc + extended mv + dquant

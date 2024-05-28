@@ -30,7 +30,7 @@
 /**
  * The transcode PCR helper is a wrapper of the pcr_sync helper specific for processing
  * units that have a high risk of altering the frames timestamps or simply dropping them. The usual
- * case is an encoder and/or a filter chain which is excactly what transcode does.
+ * case is an encoder and/or a filter chain which is exactly what transcode does.
  *
  * This helper uses an approximation of the max frame `delay` taken by the processing unit. When
  * this delay is bypassed, it is assumed that a frame was dropped and eventually a new PCR can be
@@ -80,11 +80,14 @@ int transcode_track_pcr_helper_SignalEnteringFrame(transcode_track_pcr_helper_t 
  * \note This can be called multiple times to handle multiple following PCR's.
  * \note If the frame output has seen its timestamp altered, this helper will synthetise a new PCR.
  *
- * \param frame The leaving frame (will be treated as a single frame).
+ * \param[in] frame The leaving frame (will be treated as a single frame).
+ * \param[out] pcr The PCR value following the frame or VLC_TICK_INVALID if no PCR is following.
  *
- * \return The PCR value following the frame or VLC_TICK_INVALID if no PCR is following.
+ * \retval VLC_SUCCESS On success (even if no PCR is to be forwarded).
+ * \retval VLC_EGENERIC On fatal frame mismatch error.
  */
-vlc_tick_t transcode_track_pcr_helper_SignalLeavingFrame(transcode_track_pcr_helper_t *,
-                                                         const vlc_frame_t *frame);
+int transcode_track_pcr_helper_SignalLeavingFrame(transcode_track_pcr_helper_t *,
+                                                  const vlc_frame_t *frame,
+                                                  vlc_tick_t *pcr);
 
 #endif

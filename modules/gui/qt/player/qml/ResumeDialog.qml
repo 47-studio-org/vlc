@@ -25,14 +25,15 @@ import org.videolan.vlc 0.1
 
 import "qrc:///style/"
 import "qrc:///widgets/" as Widgets
+import "qrc:///menus/" as Menus
 
 FocusScope {
     id: resumePanel
 
-    property VLCColors colors: VLCStyle.colors
+    property int maxWidth
 
-    implicitWidth: layout.implicitWidth
-    implicitHeight: layout.implicitHeight
+    implicitHeight: continueBtn.y + continueBtn.implicitHeight
+    implicitWidth: maxWidth
 
     visible: false
 
@@ -72,6 +73,12 @@ FocusScope {
         }
     }
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Window
+    }
+
+
     Component.onCompleted: {
         if (Player.canRestorePlayback) {
             showResumePanel()
@@ -82,86 +89,101 @@ FocusScope {
         hideResumePanel()
     }
 
-    //drag and dbl click the titlebar in CSD mode
-    Loader {
-        anchors.fill: parent
-        active: MainCtx.clientSideDecoration
-        source: "qrc:///widgets/CSDTitlebarTapNDrapHandler.qml"
+    TextMetrics {
+        id: textMetrics
+
+        font: label.font
+        text: label.text
     }
 
-    RowLayout {
-        id: layout
+    //FIXME use the right xxxLabel class
+    Label {
+        id: label
 
-        anchors.fill: parent
-        anchors.leftMargin: VLCStyle.margin_small
-        spacing: VLCStyle.margin_small
+        anchors.topMargin: VLCStyle.margin_small
+        anchors.top: parent.top
+        anchors.left: parent.left
 
-        //FIXME use the right xxxLabel class
-        T.Label {
-            Layout.preferredHeight: implicitHeight
-            Layout.preferredWidth: implicitWidth
+        color: theme.fg.primary
+        font.pixelSize: VLCStyle.fontSize_normal
+        font.bold: true
+        wrapMode: Text.Wrap
 
-            color: resumePanel.colors.playerFg
-            font.pixelSize: VLCStyle.fontSize_normal
-            font.bold: true
-
-            text: I18n.qtr("Do you want to restart the playback where you left off?")
-        }
-
-        Widgets.TabButtonExt {
-            id: continueBtn
-            Layout.preferredHeight: implicitHeight
-            Layout.preferredWidth: implicitWidth
-            text: I18n.qtr("Continue")
-            font.bold: true
-            color: resumePanel.colors.playerFg
-            focus: true
-            onClicked: {
-                Player.restorePlaybackPos()
-                hideResumePanel()
-            }
-
-            Navigation.parentItem: resumePanel
-            Navigation.rightItem: closeBtn
-            Keys.priority: Keys.AfterItem
-            Keys.onPressed:  continueBtn.Navigation.defaultKeyAction(event)
-        }
-
-        Widgets.TabButtonExt {
-            id: closeBtn
-            Layout.preferredHeight: implicitHeight
-            Layout.preferredWidth: implicitWidth
-            text: I18n.qtr("Dismiss")
-            font.bold: true
-            color: resumePanel.colors.playerFg
-            onClicked: hideResumePanel()
-
-            Navigation.parentItem: resumePanel
-            Navigation.leftItem: continueBtn
-            Keys.priority: Keys.AfterItem
-            Keys.onPressed: closeBtn.Navigation.defaultKeyAction(event)
-        }
-
-        Item {
-            Layout.fillWidth: true
-        }
-
-        Loader {
-            id: csdDecorations
-
-            Layout.alignment: Qt.AlignTop | Qt.AlignRight
-
-            focus: false
-            height: VLCStyle.icon_normal
-            active: MainCtx.clientSideDecoration
-            enabled: MainCtx.clientSideDecoration
-            visible: MainCtx.clientSideDecoration
-            source: "qrc:///widgets/CSDWindowButtonSet.qml"
-            onLoaded: {
-                item.color = Qt.binding(function() { return resumePanel.colors.playerFg })
-                item.hoverColor = Qt.binding(function() { return resumePanel.colors.windowCSDButtonDarkBg })
-            }
-        }
+        text: I18n.qtr("Do you want to restart the playback where you left off?")
     }
+
+    Widgets.ButtonExt {
+        id: continueBtn
+
+        anchors.verticalCenter: label.verticalCenter
+        anchors.left: label.right
+        anchors.leftMargin: VLCStyle.margin_xsmall
+
+        text: I18n.qtr("Continue")
+        font.bold: true
+        color: theme.fg.primary
+        focus: true
+        onClicked: {
+            Player.restorePlaybackPos()
+            hideResumePanel()
+        }
+
+        Navigation.parentItem: resumePanel
+        Navigation.rightItem: closeBtn
+        Keys.priority: Keys.AfterItem
+        Keys.onPressed:  continueBtn.Navigation.defaultKeyAction(event)
+    }
+
+    Widgets.ButtonExt {
+        id: closeBtn
+
+        anchors.verticalCenter: label.verticalCenter
+        anchors.left: continueBtn.right
+
+        text: I18n.qtr("Dismiss")
+        font.bold: true
+        color: theme.fg.primary
+        onClicked: hideResumePanel()
+
+        Navigation.parentItem: resumePanel
+        Navigation.leftItem: continueBtn
+        Keys.priority: Keys.AfterItem
+        Keys.onPressed: closeBtn.Navigation.defaultKeyAction(event)
+    }
+
+    states: [
+        State {
+            name: "small"
+
+            PropertyChanges {
+                target: label
+
+                width: resumePanel.maxWidth
+            }
+
+            PropertyChanges {
+                target: continueBtn
+
+                anchors.leftMargin: -VLCStyle.margin_xsmall
+            }
+
+            AnchorChanges {
+                target: continueBtn
+
+                anchors.top: label.bottom
+                anchors.verticalCenter: undefined
+                anchors.left: parent.left
+            }
+
+            AnchorChanges {
+                target: closeBtn
+
+                anchors.top: label.bottom
+                anchors.verticalCenter: undefined
+            }
+        }
+    ]
+
+    state: (textMetrics.width + VLCStyle.margin_xsmall + continueBtn.width + closeBtn.width
+            > maxWidth) ? "small" : ""
 }
-

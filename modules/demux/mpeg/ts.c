@@ -266,6 +266,7 @@ static int DetectPVRHeadersAndHeaderSize( demux_t *p_demux, unsigned *pi_header_
     const uint8_t *p_peek;
     *pi_header_size = 0;
     int i_packet_size = -1;
+    int i_offset = 0;
 
     if( vlc_stream_Peek( p_demux->s,
                      &p_peek, TS_PACKET_SIZE_MAX ) < TS_PACKET_SIZE_MAX )
@@ -349,8 +350,13 @@ static int DetectPVRHeadersAndHeaderSize( demux_t *p_demux, unsigned *pi_header_
             //return TS_PACKET_SIZE_188;
         }
     }
+    else if( !memcmp( p_peek, "\x47\xff\xffPRIV", 7 ) ) /* Denver */
+    {
+        /* Bogus TS packets with private payload interleaved in stream */
+        i_offset = TS_PACKET_SIZE_188 * 11;
+    }
 
-    return DetectPacketSize( p_demux, pi_header_size, 0 );
+    return DetectPacketSize( p_demux, pi_header_size, i_offset );
 }
 
 /*****************************************************************************
@@ -401,6 +407,7 @@ static int Open( vlc_object_t *p_this )
     p_sys->i_ts_read = 50;
     p_sys->csa = NULL;
     p_sys->b_start_record = false;
+    p_sys->record_dir_path = NULL;
 
     vlc_dictionary_init( &p_sys->attachments, 0 );
 
@@ -590,6 +597,7 @@ static void Close( vlc_object_t *p_this )
     /* Clear up attachments */
     vlc_dictionary_clear( &p_sys->attachments, FreeDictAttachment, NULL );
 
+    free( p_sys->record_dir_path );
     free( p_sys );
 }
 
@@ -647,7 +655,7 @@ static int Demux( demux_t *p_demux )
         {
             /* Enable recording once synchronized */
             vlc_stream_Control( p_sys->stream, STREAM_SET_RECORD_STATE, true,
-                                "ts" );
+                                p_sys->record_dir_path, "ts" );
             p_sys->b_start_record = false;
         }
 
@@ -1174,10 +1182,20 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
 
     case DEMUX_SET_RECORD_STATE:
         b_bool = va_arg( args, int );
+        const char *dir_path = va_arg( args, const char * );
+
+        free( p_sys->record_dir_path );
+        p_sys->record_dir_path = NULL;
 
         if( !b_bool )
             vlc_stream_Control( p_sys->stream, STREAM_SET_RECORD_STATE,
                                 false );
+        else if( dir_path != NULL )
+        {
+            p_sys->record_dir_path = strdup(dir_path);
+            if( p_sys->record_dir_path == NULL )
+                return VLC_ENOMEM;
+        }
         p_sys->b_start_record = b_bool;
         return VLC_SUCCESS;
 
@@ -1203,7 +1221,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             for( vlc_dictionary_entry_t *p_entry = p_sys->attachments.p_entries[i];
                                          p_entry; p_entry = p_entry->p_next )
             {
-                msg_Err(p_demux, "GET ATTACHMENT %s", p_entry->psz_key);
+                msg_Dbg(p_demux, "GET ATTACHMENT %s", p_entry->psz_key);
                 (*ppp_attach)[*pi_int] = vlc_input_attachment_Hold(
                                                 (input_attachment_t *) p_entry->p_value );
                 if( (*ppp_attach)[*pi_int] )
@@ -1529,7 +1547,7 @@ static void SendDataChain( demux_t *p_demux, ts_es_t *p_es, block_t *p_chain )
  * gathering stuff
  ****************************************************************************/
 static void ParsePESDataChain( demux_t *p_demux, ts_pid_t *pid, block_t *p_pes,
-                               stime_t i_append_pcr )
+                               uint32_t i_flags, stime_t i_append_pcr )
 {
     uint8_t header[34];
     unsigned i_pes_size = 0;
@@ -1667,6 +1685,12 @@ static void ParsePESDataChain( demux_t *p_demux, ts_pid_t *pid, block_t *p_pes,
             p_chain = p_chain->p_next;
             p_block->p_next = NULL;
 
+            if( i_flags )
+            {
+                p_block->i_flags |= i_flags;
+                i_flags = 0;
+            }
+
             if( !p_pmt->pcr.b_fix_done ) /* Not seen yet */
                 PCRFixHandle( p_demux, p_pmt, p_block );
 
@@ -1768,9 +1792,10 @@ static void ParsePESDataChain( demux_t *p_demux, ts_pid_t *pid, block_t *p_pes,
     }
 }
 
-static void PESDataChainHandle( vlc_object_t *p_obj, void *priv, block_t *p_data, stime_t i_appendpcr )
+static void PESDataChainHandle( vlc_object_t *p_obj, void *priv, block_t *p_data,
+                                uint32_t i_flags, stime_t i_appendpcr )
 {
-    ParsePESDataChain( (demux_t *)p_obj, (ts_pid_t *) priv, p_data, i_appendpcr );
+    ParsePESDataChain( (demux_t *)p_obj, (ts_pid_t *) priv, p_data, i_flags, i_appendpcr );
 }
 
 static block_t* ReadTSPacket( demux_t *p_demux )
@@ -1914,6 +1939,7 @@ static inline void FlushESBuffer( ts_stream_t *p_pes )
         p_pes->gather.p_data = NULL;
         p_pes->gather.pp_last = &p_pes->gather.p_data;
         p_pes->gather.i_saved = 0;
+        p_pes->gather.i_block_flags = 0;
     }
     if( p_pes->p_proc )
         ts_stream_processor_Reset( p_pes->p_proc );

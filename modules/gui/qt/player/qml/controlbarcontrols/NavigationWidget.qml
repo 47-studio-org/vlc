@@ -31,15 +31,17 @@ Templates.Pane {
 
     // Properties
 
-    property int size: VLCStyle.icon_medium
-
-    property VLCColors colors: VLCStyle.colors
+    property int size: VLCStyle.icon_toolbar
 
     property bool paintOnly: false
 
     // Private
 
     readonly property string _controlPath : "qrc:///player/controlbarcontrols/"
+
+    // Signals
+
+    signal requestLockUnlockAutoHide(bool lock)
 
     // Settings
 
@@ -59,13 +61,27 @@ Templates.Pane {
     function _applyItem(loader, item) {
         item.focus = true
 
-        item.colors    = Qt.binding(function() { return colors })
         item.paintOnly = Qt.binding(function() { return paintOnly })
 
         item.Navigation.parentItem = Qt.binding(function() { return loader })
     }
 
+    function _applyItemLock(loader, item) {
+        if (item === null) return
+
+        _applyItem(loader, item)
+
+        item.requestLockUnlockAutoHide.connect(function(lock) {
+            controlLayout.requestLockUnlockAutoHide(lock)
+        })
+    }
+
     // Children
+
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.View
+    }
 
     Row {
         id: row
@@ -77,13 +93,19 @@ Templates.Pane {
 
             anchors.verticalCenter: parent.verticalCenter
 
+            // NOTE: This is required for the implicitWidth.
+            visible: (source != "")
+
             focus: (item && item.enabled)
 
             // NOTE: We display the 'menu button' as a placeholder for the customize dialog.
-            source: (Player.hasMenu || root.paintOnly) ? _controlPath + "DvdMenuButton.qml" : ""
+            source: (Player.hasMenu || root.paintOnly) ? root._controlPath + "DvdMenuButton.qml"
+                                                       : ""
 
             Navigation.parentItem: root
-            Navigation.rightItem: loaderB.item
+
+            Navigation.rightItem: (loaderB.item) ? loaderB.item
+                                                 : loaderC.item
 
             onLoaded: {
                 if (item === null) return
@@ -99,16 +121,43 @@ Templates.Pane {
 
             anchors.verticalCenter: parent.verticalCenter
 
+            // NOTE: This is required for the implicitWidth.
+            visible: (source != "")
+
             focus: (item && item.enabled && loaderA.focus === false)
+
+            source: (Player.hasPrograms
+                     &&
+                     root.paintOnly === false) ? root._controlPath + "ProgramButton.qml" : ""
+
+            Navigation.parentItem: root
+
+            Navigation.leftItem: loaderA.item
+            Navigation.rightItem: loaderC.item
+
+            onLoaded: _applyItemLock(loaderB, item)
+        }
+
+        Loader {
+            id: loaderC
+
+            anchors.verticalCenter: parent.verticalCenter
+
+            // NOTE: This is required for the implicitWidth.
+            visible: (source != "")
+
+            focus: (item && item.enabled && (loaderA.focus === false && loaderB.focus === false))
 
             source: (Player.isTeletextAvailable
                      &&
-                     root.paintOnly == false) ? _controlPath + "TeletextWidget.qml" : ""
+                     root.paintOnly == false) ? _controlPath + "TeletextButton.qml" : ""
 
             Navigation.parentItem: root
-            Navigation.leftItem: loaderA.item
 
-            onLoaded: if (item) _applyItem(loaderB, item)
+            Navigation.leftItem: (loaderB.item) ? loaderB.item
+                                                : loaderA.item
+
+            onLoaded: _applyItemLock(loaderC, item)
         }
     }
 }

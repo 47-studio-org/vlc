@@ -26,6 +26,7 @@
 // MediaLibrary includes
 // NOTE: We need that header for VideoDescription and AudioDescription.
 #include "mlvideo.hpp"
+#include "util/vlctick.hpp"
 
 // Qt includes
 #include <QUrl>
@@ -48,7 +49,7 @@ public: // Interface
     QString getThumbnail(vlc_ml_thumbnail_status_t* status = nullptr);
     void setThumbnail(const QString& thumbnail, vlc_ml_thumbnail_status_t status);
 
-    int64_t getDuration() const;
+    VLCTick getDuration() const;
 
     QString getResolutionName() const;
 
@@ -57,8 +58,8 @@ public: // Interface
     QString getMRL       () const;
     QString getMRLDisplay() const;
 
-    float   getProgress    () const;
-    QString getProgressTime() const;
+    double   getProgress    () const;
+    VLCTick getProgressTime() const;
 
     unsigned int getPlayCount() const;
 
@@ -87,7 +88,7 @@ private: // Properties
 
     QUrl m_mrl;
 
-    float   m_progress;
+    double   m_progress;
     QString m_progressTime;
 
     unsigned int m_playCount;

@@ -36,14 +36,14 @@ Widgets.GridItem {
 
     function play() {
         if ( model.id !== undefined ) {
-            g_mainDisplay.showPlayer()
             MediaLib.addAndPlay( model.id )
+            g_mainDisplay.showPlayer()
         }
     }
 
     image: model.thumbnail || VLCStyle.noArtVideoCover
     title: model.title || I18n.qtr("Unknown title")
-    subtitle: Helpers.msToString(model.duration) || ""
+    subtitle: model.duration.formatHMS() || ""
     pictureWidth: VLCStyle.gridCover_video_width
     pictureHeight: VLCStyle.gridCover_video_height
     playCoverBorderWidth: VLCStyle.gridCover_video_border
@@ -72,12 +72,12 @@ Widgets.GridItem {
                 bottom: parent.bottom
                 left: parent.left
                 right: parent.right
-                rightMargin: root.pictureRadius
             }
 
-            visible: (value > 0)
+            visible: (model.progress > 0)
 
-            value: (model.progress > 0) ? model.progress : 0
+            radius: root.pictureRadius
+            value: Helpers.clamp(model.progress !== undefined ? model.progress : 0, 0, 1)
         }
     }
 

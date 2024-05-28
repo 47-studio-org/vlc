@@ -44,7 +44,7 @@ BookmarksDialog::BookmarksDialog( qt_intf_t *_p_intf ):QVLCFrame( _p_intf )
     QHBoxLayout *layout = new QHBoxLayout( this );
 
     QDialogButtonBox *buttonsBox = new QDialogButtonBox( Qt::Vertical );
-    QPushButton *addButton = new QPushButton( qtr( "Create" ) );
+    addButton = new QPushButton( qtr( "Create" ) );
     addButton->setToolTip( qtr( "Create a new bookmark" ) );
     buttonsBox->addButton( addButton, QDialogButtonBox::ActionRole );
     delButton = new QPushButton( qtr( "Delete" ) );
@@ -63,9 +63,9 @@ BookmarksDialog::BookmarksDialog( qt_intf_t *_p_intf ):QVLCFrame( _p_intf )
                           QDialogButtonBox::RejectRole);
 
     bookmarksList = new QTreeView( this );
-    m_model = new MLBookmarkModel( _p_intf->p_mi->getMediaLibrary(),
-                                   _p_intf->p_player,
-                                   bookmarksList );
+    m_model = new MLBookmarkModel( bookmarksList );
+    m_model->setPlayer(_p_intf->p_player);
+    m_model->setMl(_p_intf->p_mi->getMediaLibrary());
     bookmarksList->setModel( m_model );
     bookmarksList->setRootIsDecorated( false );
     bookmarksList->setAlternatingRowColors( true );
@@ -106,6 +106,11 @@ BookmarksDialog::~BookmarksDialog()
 
 void BookmarksDialog::updateButtons()
 {
+    vlc_player_locker lock{ m_model->player() };
+    vlc_player_state currentState = vlc_player_GetState( m_model->player() );
+    addButton->setEnabled(currentState != VLC_PLAYER_STATE_STOPPING &&
+                          currentState != VLC_PLAYER_STATE_STOPPED);
+
     clearButton->setEnabled( bookmarksList->model()->rowCount() > 0 );
     delButton->setEnabled( bookmarksList->selectionModel()->hasSelection() );
 }

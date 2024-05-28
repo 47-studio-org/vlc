@@ -42,9 +42,8 @@
 
 #if defined( _WIN32 )
 # define wcwidth(cp) ((void)(cp), 1) /* LOL */
-#else
-# include <unistd.h>
 #endif
+#include <unistd.h>
 
 #if defined( _WIN32 ) && !defined( VLC_WINSTORE_APP )
 static void ShowConsole (void);
@@ -54,10 +53,10 @@ static void PauseConsole (void);
 # define PauseConsole() (void)0
 #endif
 
-static void Help (vlc_object_t *, const char *);
-static void Usage (vlc_object_t *, const char *);
+static void Help (libvlc_int_t *, const char *);
+static void Usage (libvlc_int_t *, const char *);
 static void Version (void);
-static void ListModules (vlc_object_t *, bool);
+static void ListModules (libvlc_int_t *, bool);
 
 /**
  * Returns the console width or a best guess.
@@ -91,16 +90,9 @@ static unsigned ConsoleWidth(void)
  * \return true if a command line options caused some help message to be
  * printed, false otherwise.
  */
-bool config_PrintHelp (vlc_object_t *obj)
+bool config_PrintHelp (libvlc_int_t *obj)
 {
     char *str;
-
-    /* Check for short help option */
-    if (var_InheritBool (obj, "help"))
-    {
-        Help (obj, "help");
-        return true;
-    }
 
     /* Check for version option */
     if (var_InheritBool (obj, "version"))
@@ -133,17 +125,23 @@ bool config_PrintHelp (vlc_object_t *obj)
         Help (obj, "longhelp");
         return true;
     }
-
-    /* Check for module list option */
-    if (var_InheritBool (obj, "list"))
+    /* Check for short help option */
+    if (var_InheritBool (obj, "help"))
     {
-        ListModules (obj, false );
+        Help (obj, "help");
         return true;
     }
 
     if (var_InheritBool (obj, "list-verbose"))
     {
         ListModules (obj, true);
+        return true;
+    }
+
+    /* Check for module list option */
+    if (var_InheritBool (obj, "list"))
+    {
+        ListModules (obj, false );
         return true;
     }
 
@@ -195,7 +193,7 @@ static const char vlc_usage[] = N_(
   "  vlc://quit                     Special item to quit VLC\n"
   "\n");
 
-static void Help (vlc_object_t *p_this, char const *psz_help_name)
+static void Help (libvlc_int_t *p_this, char const *psz_help_name)
 {
     ShowConsole();
 
@@ -256,15 +254,16 @@ static void print_desc(const char *str, unsigned margin, bool color)
         fputs(TS_BLUE_BOLD, stdout);
 
     const char *word = str;
-    int wordlen = 0, wordwidth = 0;
+    size_t wordlen = 0;
+    int wordwidth = 0;
     unsigned offset = 0;
     bool newline = true;
 
     while (str[0])
     {
         uint32_t cp;
-        size_t charlen = vlc_towc(str, &cp);
-        if (unlikely(charlen == (size_t)-1))
+        ssize_t charlen = vlc_towc(str, &cp);
+        if (unlikely(charlen == -1))
             break;
 
         int charwidth = wcwidth(cp);
@@ -318,11 +317,11 @@ static int vlc_swidth(const char *str)
     for (int total = 0;;)
     {
         uint32_t cp;
-        size_t charlen = vlc_towc(str, &cp);
+        ssize_t charlen = vlc_towc(str, &cp);
 
         if (charlen == 0)
             return total;
-        if (charlen == (size_t)-1)
+        if (charlen == -1)
             return -1;
         str += charlen;
 
@@ -573,7 +572,7 @@ static bool plugin_show(const vlc_plugin_t *plugin)
     return false;
 }
 
-static void Usage (vlc_object_t *p_this, char const *psz_search)
+static void Usage (libvlc_int_t *p_this, char const *psz_search)
 {
     bool found = false;
     bool strict = false;
@@ -584,7 +583,7 @@ static void Usage (vlc_object_t *p_this, char const *psz_search)
     }
 
     bool color = false;
-#ifndef _WIN32
+#ifdef HAVE_ISATTY
     if (isatty(STDOUT_FILENO))
         color = var_InheritBool(p_this, "color");
 #endif
@@ -641,12 +640,12 @@ static void Usage (vlc_object_t *p_this, char const *psz_search)
  * Print a list of all available modules (builtins and plugins) and a short
  * description for each one.
  *****************************************************************************/
-static void ListModules (vlc_object_t *p_this, bool b_verbose)
+static void ListModules (libvlc_int_t *p_this, bool b_verbose)
 {
     bool color = false;
 
     ShowConsole();
-#ifndef _WIN32
+#ifdef HAVE_ISATTY
     if (isatty(STDOUT_FILENO))
         color = var_InheritBool(p_this, "color");
 #else

@@ -33,6 +33,8 @@
 # include "config.h"
 #endif
 
+#include <assert.h>
+
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_input_item.h>
@@ -81,9 +83,7 @@ typedef struct
     bool b_sbr, b_ps, b_discontinuity;
 } decoder_sys_t;
 
-#if MPEG4_ASC_MAX_INDEXEDPOS != LFE_CHANNEL
-    #error MPEG4_ASC_MAX_INDEXEDPOS != LFE_CHANNEL
-#endif
+static_assert (MPEG4_ASC_MAX_INDEXEDPOS == LFE_CHANNEL, "Mismatch");
 
 #define FAAD_CHANNEL_ID_COUNT (LFE_CHANNEL + 1)
 static const uint32_t pi_tovlcmapping[FAAD_CHANNEL_ID_COUNT] =
@@ -109,10 +109,10 @@ static int Open( vlc_object_t *p_this )
     decoder_sys_t *p_sys;
     NeAACDecConfiguration *cfg;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_MP4A ||
-        p_dec->fmt_in.i_profile == AAC_PROFILE_ELD ||
-        (p_dec->fmt_in.i_extra > 1 &&
-         (GetWBE(p_dec->fmt_in.p_extra) & 0xffe0) == 0xf8e0)) /* ELD AOT */
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_MP4A ||
+        p_dec->fmt_in->i_profile == AAC_PROFILE_ELD ||
+        (p_dec->fmt_in->i_extra > 1 &&
+         (GetWBE(p_dec->fmt_in->p_extra) & 0xffe0) == 0xf8e0)) /* ELD AOT */
     {
         return VLC_EGENERIC;
     }
@@ -129,17 +129,21 @@ static int Open( vlc_object_t *p_this )
         return VLC_EGENERIC;
     }
 
-    /* Misc init */
-    p_dec->fmt_out.audio.channel_type = p_dec->fmt_in.audio.channel_type;
+    char * vinfo[2];
+    if( NeAACDecGetVersion( &vinfo[0], &vinfo[1] ) == 0 )
+        msg_Dbg( p_dec, "using version " FAAD2_VERSION " - %s", vinfo[0] );
 
-    if( p_dec->fmt_in.i_extra > 0 )
+    /* Misc init */
+    p_dec->fmt_out.audio.channel_type = p_dec->fmt_in->audio.channel_type;
+
+    if( p_dec->fmt_in->i_extra > 0 )
     {
         /* We have a decoder config so init the handle */
         unsigned long i_rate;
         unsigned char i_channels;
 
-        if( NeAACDecInit2( p_sys->hfaad, p_dec->fmt_in.p_extra,
-                           p_dec->fmt_in.i_extra,
+        if( NeAACDecInit2( p_sys->hfaad, p_dec->fmt_in->p_extra,
+                           p_dec->fmt_in->i_extra,
                            &i_rate, &i_channels ) < 0 ||
                 i_channels >= MPEG4_ASC_MAX_INDEXEDPOS )
         {
@@ -165,12 +169,12 @@ static int Open( vlc_object_t *p_this )
     }
 
     p_dec->fmt_out.i_codec = HAVE_FPU ? VLC_CODEC_FL32 : VLC_CODEC_S16N;
-    p_dec->fmt_out.audio.i_chan_mode = p_dec->fmt_in.audio.i_chan_mode;
+    p_dec->fmt_out.audio.i_chan_mode = p_dec->fmt_in->audio.i_chan_mode;
 
     /* Set the faad config */
     cfg = NeAACDecGetCurrentConfiguration( p_sys->hfaad );
-    if( p_dec->fmt_in.audio.i_rate )
-        cfg->defSampleRate = p_dec->fmt_in.audio.i_rate;
+    if( p_dec->fmt_in->audio.i_rate )
+        cfg->defSampleRate = p_dec->fmt_in->audio.i_rate;
     cfg->outputFormat = HAVE_FPU ? FAAD_FMT_FLOAT : FAAD_FMT_16BIT;
     if( !NeAACDecSetConfiguration( p_sys->hfaad, cfg ) )
     {
@@ -252,7 +256,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
     }
 
     /* Remove ADTS header if we have decoder specific config */
-    if( p_dec->fmt_in.i_extra && p_block->i_buffer > 7 )
+    if( p_dec->fmt_in->i_extra && p_block->i_buffer > 7 )
     {
         if( p_block->p_buffer[0] == 0xff &&
             ( p_block->p_buffer[1] & 0xf0 ) == 0xf0 ) /* syncword */
@@ -292,9 +296,9 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
         unsigned char i_channels;
 
         /* Init from DecoderConfig */
-        if( p_dec->fmt_in.i_extra > 0 &&
-            NeAACDecInit2( p_sys->hfaad, p_dec->fmt_in.p_extra,
-                           p_dec->fmt_in.i_extra, &i_rate, &i_channels ) != 0 )
+        if( p_dec->fmt_in->i_extra > 0 &&
+            NeAACDecInit2( p_sys->hfaad, p_dec->fmt_in->p_extra,
+                           p_dec->fmt_in->i_extra, &i_rate, &i_channels ) != 0 )
         {
             /* Failed, will try from data */
             i_rate = 0;

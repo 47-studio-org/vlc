@@ -34,8 +34,6 @@ T.Control {
     scale: (_keyOkPressed || (mouseArea.pressed && cursorInside)) ? 0.95
                                                                   : 1.00
 
-    property VLCColors colors: VLCStyle.colors
-
     property bool paintOnly: false
 
     property bool _keyOkPressed: false
@@ -70,6 +68,16 @@ T.Control {
         mainPlaylistController.stop()
     }
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.ToolButton
+
+        enabled: playBtn.enabled || playBtn.paintOnly
+        focused: playBtn.activeFocus
+        hovered: playBtn.cursorInside
+        pressed: mouseArea.containsPress
+    }
+
     Timer {
         id: keyHoldTimer
 
@@ -90,11 +98,6 @@ T.Control {
         readonly property bool cursorInside: {
             if (!containsMouse)
                 return false
-
-            if (width !== height) {
-                console.warn("PlayButton should be round!")
-                return true
-            }
 
             var center = (width / 2)
             if (Helpers.pointInRadius( center - mouseX,
@@ -168,8 +171,6 @@ T.Control {
     }
 
     contentItem: T.Label {
-        id: contentLabel
-
         text: {
             var state = Player.playingState
 
@@ -181,19 +182,17 @@ T.Control {
                 return VLCIcons.play
         }
 
-        color: cursorInside ? VLCStyle.colors.blendColors(VLCStyle.colors.buttonPlayA,
-                                                          VLCStyle.colors.buttonPlayB,
-                                                          0.5)
-                            : (paintOnly || enabled ? colors.buttonPlayIcon
-                                                    : colors.textInactive)
+        color: cursorInside ? theme.accent
+                            : "black"  //foreground is always black
 
-        font.pixelSize: VLCIcons.pixelSize(VLCStyle.icon_normal)
+        font.pixelSize: VLCStyle.icon_play
         font.family: VLCIcons.fontFamily
 
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
 
         Behavior on color {
+            enabled: theme.initialized
             ColorAnimation {
                 duration: VLCStyle.duration_veryShort
                 easing.type: Easing.InOutSine
@@ -214,12 +213,12 @@ T.Control {
             blurRadius: VLCStyle.dp(9)
             yOffset: VLCStyle.dp(4)
 
-            color: Qt.rgba(255 / 255, 97 / 255, 10 / 255, 0.29)
+            color: VLCStyle.setColorAlpha(theme.accent, 0.29)
 
-            xRadius: sourceSize.width
+            xRadius: parent.width
             yRadius: xRadius
 
-            sourceSize: Qt.size(parent.width, parent.height)
+            sourceSize: Qt.size(xRadius, yRadius)
         }
 
         Widgets.DropShadowImage {
@@ -233,17 +232,17 @@ T.Control {
             blurRadius: VLCStyle.dp(14)
             yOffset: VLCStyle.dp(1)
 
-            color: Qt.rgba(255 / 255, 97 / 255, 10 / 255, 1.0)
+            color: VLCStyle.setColorAlpha(theme.accent, 1.0)
 
-            xRadius: sourceSize.width
+            xRadius: parent.width
             yRadius: xRadius
 
-            sourceSize: Qt.size(parent.width, parent.height)
+            sourceSize: Qt.size(xRadius, yRadius)
         }
 
         Widgets.ScaledImage {
             anchors.fill: parent
-            source: "qrc:/toolbar/play_button.svg"
+            source: "qrc:/misc/play_button.svg"
         }
     }
 }

@@ -82,12 +82,10 @@ static struct vlc_tracer *vlc_TraceModuleCreate(vlc_object_t *parent)
     if (vlc_module_load(VLC_OBJECT(module), "tracer", module_name, false,
                         vlc_tracer_load, module) == NULL) {
         vlc_object_delete(VLC_OBJECT(module));
-        if (module_name)
-            free(module_name);
+        free(module_name);
         return NULL;
     }
-    if (module_name)
-        free(module_name);
+    free(module_name);
 
     return &module->tracer;
 }
@@ -105,14 +103,14 @@ void vlc_tracer_Destroy(libvlc_int_t *vlc)
 {
     libvlc_priv_t *vlc_priv = libvlc_priv(vlc);
 
-    if (vlc_priv->tracer != NULL)
-    {
-        struct vlc_tracer_module *module =
-            container_of(vlc_priv->tracer, struct vlc_tracer_module, tracer);
+    if (vlc_priv->tracer == NULL)
+        return;
 
-        if (module->tracer.ops->destroy != NULL)
-            module->tracer.ops->destroy(module->opaque);
+    struct vlc_tracer_module *module =
+        container_of(vlc_priv->tracer, struct vlc_tracer_module, tracer);
 
-        vlc_object_delete(VLC_OBJECT(module));
-    }
+    if (module->tracer.ops->destroy != NULL)
+        module->tracer.ops->destroy(module->opaque);
+
+    vlc_object_delete(VLC_OBJECT(module));
 }

@@ -36,12 +36,19 @@
 #include "libvlc.h"
 #include <stdarg.h>
 #include <stdatomic.h>
-#include <stdnoreturn.h>
 #include <assert.h>
 #include <limits.h>
 #include <errno.h>
 #include <time.h>
 #include <vlc_atomic.h>
+
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
+#include <mmsystem.h>
+#endif
+
+#ifndef NTDDI_WIN10_RS3
+#define NTDDI_WIN10_RS3  0x0A000004
+#endif
 
 /*** Static mutex and condition variable ***/
 static SRWLOCK super_lock = SRWLOCK_INIT;
@@ -272,50 +279,51 @@ int vlc_atomic_timedwait(void *addr, unsigned val, vlc_tick_t deadline)
 {
     vlc_tick_t delay;
 
-    do
+    for(;;)
     {
-        long ms;
-
         delay = deadline - vlc_tick_now();
 
         if (delay < 0)
-            break; // deadline passed
-        if (delay >= VLC_TICK_FROM_MS(LONG_MAX))
-            ms = LONG_MAX;
+            return ETIMEDOUT; // deadline passed
+
+        DWORD ms;
+        int64_t idelay = MS_FROM_VLC_TICK(delay);
+        static_assert(sizeof(unsigned long) <= sizeof(DWORD), "unknown max DWORD");
+        if (unlikely(idelay > ULONG_MAX))
+            ms = ULONG_MAX;
         else
-            ms = MS_FROM_VLC_TICK(delay);
+            ms = idelay;
 
         if (WaitOnAddress(addr, &val, sizeof (val), ms))
             return 0;
+        if (GetLastError() == ERROR_TIMEOUT)
+            return ETIMEDOUT;
     }
-    while (delay > 0);
-
-    return ETIMEDOUT;
 }
 
 int vlc_atomic_timedwait_daytime(void *addr, unsigned val, time_t deadline)
 {
-    long delay;
+    time_t delay;
 
-    do
+    for(;;)
     {
-        long ms;
-
         delay = deadline - time(NULL);
 
         if (delay < 0)
-            break; // deadline passed
-        if (delay >= (LONG_MAX / 1000))
-            ms = LONG_MAX;
+            return ETIMEDOUT; // deadline passed
+
+        DWORD ms;
+        static_assert(sizeof(unsigned long) <= sizeof(DWORD), "unknown max DWORD");
+        if (unlikely(delay > (ULONG_MAX / 1000)))
+            ms = ULONG_MAX;
         else
             ms = delay * 1000;
 
         if (WaitOnAddress(addr, &val, sizeof (val), ms))
             return 0;
+        if (GetLastError() == ERROR_TIMEOUT)
+            return ETIMEDOUT;
     }
-    while (delay > 0);
-
-    return ETIMEDOUT;
 }
 
 void vlc_atomic_notify_one(void *addr)
@@ -439,7 +447,7 @@ int vlc_savecancel (void)
     if (th == NULL)
         return false; /* Main thread - cannot be cancelled anyway */
 
-    int state = th->killable;
+    bool state = th->killable;
     th->killable = false;
     return state;
 }
@@ -453,10 +461,10 @@ void vlc_restorecancel (int state)
         return; /* Main thread - cannot be cancelled anyway */
 
     assert (!th->killable);
-    th->killable = state != 0;
+    th->killable = !!state;
 }
 
-noreturn static void vlc_docancel(struct vlc_thread *th)
+_Noreturn static void vlc_docancel(struct vlc_thread *th)
 {
     th->killable = false; /* Do not re-enter cancellation cleanup */
 
@@ -515,29 +523,6 @@ static union
     } perf;
 } clk;
 
-static vlc_tick_t mdate_interrupt (void)
-{
-    ULONGLONG ts;
-    BOOL ret;
-
-    ret = QueryUnbiasedInterruptTime (&ts);
-    if (unlikely(!ret))
-        abort ();
-
-    /* hundreds of nanoseconds */
-    static_assert ((10000000 % CLOCK_FREQ) == 0, "Broken frequencies ratio");
-    return ts / (10000000 / CLOCK_FREQ);
-}
-
-static vlc_tick_t mdate_tick (void)
-{
-    ULONGLONG ts = GetTickCount64 ();
-
-    /* milliseconds */
-    static_assert ((CLOCK_FREQ % 1000) == 0, "Broken frequencies ratio");
-    return VLC_TICK_FROM_MS( ts );
-}
-
 static vlc_tick_t mdate_perf (void)
 {
     /* We don't need the real date, just the value of a high precision timer */
@@ -565,11 +550,11 @@ static vlc_tick_t mdate_wall (void)
     FILETIME ts;
     ULARGE_INTEGER s;
 
-#if (_WIN32_WINNT >= _WIN32_WINNT_WIN8) && (!defined(VLC_WINSTORE_APP) || _WIN32_WINNT >= 0x0A00)
+#if _WIN32_WINNT >= _WIN32_WINNT_WIN8
     GetSystemTimePreciseAsFileTime (&ts);
-#else
+#else // _WIN32_WINNT < _WIN32_WINNT_WIN8
     GetSystemTimeAsFileTime (&ts);
-#endif
+#endif // _WIN32_WINNT < _WIN32_WINNT_WIN8
     s.LowPart = ts.dwLowDateTime;
     s.HighPart = ts.dwHighDateTime;
     /* hundreds of nanoseconds */
@@ -577,13 +562,18 @@ static vlc_tick_t mdate_wall (void)
     return VLC_TICK_FROM_MSFTIME(s.QuadPart);
 }
 
-static vlc_tick_t mdate_default(void)
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
+static vlc_tick_t mdate_multimedia(void)
 {
-    vlc_threads_setup(NULL);
-    return mdate_perf();
-}
+    DWORD ts = timeGetTime ();
 
-static vlc_tick_t (*mdate_selected) (void) = mdate_default;
+    /* milliseconds */
+    static_assert ((CLOCK_FREQ % 1000) == 0, "Broken frequencies ratio");
+    return VLC_TICK_FROM_MS(ts);
+}
+#endif
+
+static vlc_tick_t (*mdate_selected) (void) = mdate_wall;
 
 vlc_tick_t vlc_tick_now (void)
 {
@@ -593,11 +583,10 @@ vlc_tick_t vlc_tick_now (void)
 void (vlc_tick_wait)(vlc_tick_t deadline)
 {
     vlc_tick_t delay;
-#if (_WIN32_WINNT >= _WIN32_WINNT_WIN8)
     struct vlc_thread *th = current_thread_ctx;
-
-    if (th != NULL && th->killable)
+    if (likely(th != NULL) && th->killable)
     {
+#if (_WIN32_WINNT >= _WIN32_WINNT_WIN8)
         do
         {
             if (atomic_load_explicit(&th->killed, memory_order_acquire))
@@ -606,23 +595,35 @@ void (vlc_tick_wait)(vlc_tick_t deadline)
         while (vlc_atomic_timedwait(&th->killed, false, deadline) == 0);
 
         return;
-    }
 #else
-    vlc_testcancel();
+        if (atomic_load_explicit(&th->killed, memory_order_relaxed))
+            vlc_docancel(th);
 #endif
+    }
 
     while ((delay = (deadline - vlc_tick_now())) > 0)
     {
-        delay = (delay + (1000-1)) / 1000;
-        if (unlikely(delay > 0x7fffffff))
-            delay = 0x7fffffff;
+        int64_t idelay = MS_FROM_VLC_TICK(delay + VLC_TICK_FROM_MS(1)-1);
+        DWORD delay_ms;
+        static_assert(sizeof(unsigned long) <= sizeof(DWORD), "unknown max DWORD");
+        if (unlikely(idelay > ULONG_MAX))
+            delay_ms = ULONG_MAX;
+        else
+            delay_ms = idelay;
 
 #if (_WIN32_WINNT >= _WIN32_WINNT_WIN8)
-        Sleep(delay);
+        Sleep(delay_ms);
 #else
-        SleepEx(delay, TRUE);
-        vlc_testcancel();
+        SleepEx(delay_ms, TRUE);
+
+        if (likely(th != NULL) && th->killable)
+        {
+            if (atomic_load_explicit(&th->killed, memory_order_relaxed))
+                vlc_docancel(th);
+        }
 #endif
+        if (delay_ms != ULONG_MAX)
+            break;
     }
 }
 
@@ -631,28 +632,31 @@ void (vlc_tick_sleep)(vlc_tick_t delay)
     vlc_tick_wait (vlc_tick_now () + delay);
 }
 
-static BOOL SelectClockSource(vlc_object_t *obj)
+static void SelectClockSource(libvlc_int_t *obj)
 {
-    const char *name = "perf";
-    char *str = NULL;
-    if (obj != NULL)
+    // speed comparison / granularity / counts during sleep
+    // multimedia:102000 /    5 ms / no
+    // perf:      155612 / ~100 ns / yes
+    // wall:      181593 /  100 ns / yes
+
+    char *str = var_InheritString(obj, "clock-source");
+    const char *name = str != NULL ? str : "perf";
+#if WINAPI_FAMILY_PARTITION (WINAPI_PARTITION_DESKTOP)
+    if (!strcmp (name, "multimedia"))
     {
-        str = var_InheritString(obj, "clock-source");
-        if (str != NULL)
-            name = str;
-    }
-    if (!strcmp (name, "interrupt"))
-    {
-        msg_Dbg (obj, "using interrupt time as clock source");
-        mdate_selected = mdate_interrupt;
+        TIMECAPS caps;
+
+        msg_Dbg (obj, "using multimedia timers as clock source");
+        if (timeGetDevCaps (&caps, sizeof (caps)) != MMSYSERR_NOERROR)
+            abort();
+        msg_Dbg (obj, " min period: %u ms, max period: %u ms",
+                 caps.wPeriodMin, caps.wPeriodMax);
+        mdate_selected = mdate_multimedia;
+
+        timeBeginPeriod(__MAX(5, caps.wPeriodMin));
     }
     else
-    if (!strcmp (name, "tick"))
-    {
-        msg_Dbg (obj, "using Windows time as clock source");
-        mdate_selected = mdate_tick;
-    }
-    else
+#endif
     if (!strcmp (name, "perf"))
     {
         msg_Dbg (obj, "using performance counters as clock source");
@@ -665,18 +669,11 @@ static BOOL SelectClockSource(vlc_object_t *obj)
             mdate_selected = mdate_perf;
     }
     else
-    if (!strcmp (name, "wall"))
-    {
-        msg_Dbg (obj, "using system time as clock source");
-        mdate_selected = mdate_wall;
-    }
-    else
     {
         msg_Err (obj, "invalid clock source \"%s\"", name);
         abort ();
     }
     free (str);
-    return TRUE;
 }
 
 
@@ -692,22 +689,12 @@ unsigned vlc_GetCPUCount (void)
 
 
 /*** Initialization ***/
-static SRWLOCK setup_lock = SRWLOCK_INIT; /* FIXME: use INIT_ONCE */
 
 void vlc_threads_setup(libvlc_int_t *vlc)
 {
-    AcquireSRWLockExclusive(&setup_lock);
-    if (mdate_selected != mdate_default)
-    {
-        ReleaseSRWLockExclusive(&setup_lock);
-        return;
-    }
+    SelectClockSource(vlc);
 
-    if (!SelectClockSource((vlc != NULL) ? VLC_OBJECT(vlc) : NULL))
-        abort();
-    assert(mdate_selected != mdate_default);
-
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_APP)
     /* Raise default priority of the current process */
 #ifndef ABOVE_NORMAL_PRIORITY_CLASS
 #   define ABOVE_NORMAL_PRIORITY_CLASS 0x00008000
@@ -721,7 +708,6 @@ void vlc_threads_setup(libvlc_int_t *vlc)
             msg_Dbg(vlc, "could not raise process priority");
     }
 #endif
-    ReleaseSRWLockExclusive(&setup_lock);
 }
 
 #define LOOKUP(s) (((s##_) = (void *)GetProcAddress(h, #s)) != NULL)
@@ -736,7 +722,7 @@ BOOL WINAPI DllMain (HANDLE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
         case DLL_PROCESS_ATTACH:
         {
             HMODULE h;
-            h = GetModuleHandle(TEXT("kernel32.dll"));
+            h = GetModuleHandle(TEXT("kernelbase.dll"));
             if (h == NULL)
                 h = GetModuleHandle(TEXT("api-ms-win-core-processthreads-l1-1-3.dll"));
             if (h != NULL)

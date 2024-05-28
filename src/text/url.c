@@ -31,7 +31,13 @@
 #include <string.h>
 #include <assert.h>
 #ifdef _WIN32
+# include <windows.h>
 # include <io.h>
+
+#ifndef IDN_ALLOW_UNASSIGNED // GAMES
+#define IDN_ALLOW_UNASSIGNED        0x01  // Allow unassigned "query" behavior per RFC 3454
+#endif
+
 #endif
 
 #include <vlc_common.h>
@@ -189,9 +195,9 @@ char *vlc_path2uri (const char *path, const char *scheme)
                       path[0]) == -1)
             buf = NULL;
         path += 2;
-# warning Drive letter-relative path not implemented!
         if (path[0] != DIR_SEP_CHAR)
         {
+            // Warning: Drive letter-relative path not implemented!
             errno = ENOTSUP;
             return NULL;
         }

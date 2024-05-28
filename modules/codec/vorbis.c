@@ -230,7 +230,7 @@ static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_VORBIS )
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_VORBIS )
         return VLC_EGENERIC;
 
     /* Allocate the memory needed to store the decoder's structure */
@@ -353,7 +353,7 @@ static int ProcessHeaders( decoder_t *p_dec )
     const void *pp_data[XIPH_MAX_HEADER_COUNT];
     unsigned i_count;
     if( xiph_SplitHeaders( pi_size, pp_data, &i_count,
-                           p_dec->fmt_in.i_extra, p_dec->fmt_in.p_extra) )
+                           p_dec->fmt_in->i_extra, p_dec->fmt_in->p_extra) )
         return VLC_EGENERIC;
     if( i_count < 3 )
         return VLC_EGENERIC;
@@ -425,15 +425,15 @@ static int ProcessHeaders( decoder_t *p_dec )
     else
     {
         void* p_extra = realloc( p_dec->fmt_out.p_extra,
-                                 p_dec->fmt_in.i_extra );
+                                 p_dec->fmt_in->i_extra );
         if( unlikely( p_extra == NULL ) )
         {
             return VLC_ENOMEM;
         }
         p_dec->fmt_out.p_extra = p_extra;
-        p_dec->fmt_out.i_extra = p_dec->fmt_in.i_extra;
+        p_dec->fmt_out.i_extra = p_dec->fmt_in->i_extra;
         memcpy( p_dec->fmt_out.p_extra,
-                p_dec->fmt_in.p_extra, p_dec->fmt_out.i_extra );
+                p_dec->fmt_in->p_extra, p_dec->fmt_out.i_extra );
     }
 
     ConfigureChannelOrder(p_sys->pi_chan_table, p_sys->vi.channels,
@@ -768,7 +768,6 @@ static int OpenEncoder( vlc_object_t *p_this )
     /* Allocate the memory needed to store the decoder's structure */
     if( ( p_sys = (encoder_sys_t *)malloc(sizeof(encoder_sys_t)) ) == NULL )
         return VLC_ENOMEM;
-    p_enc->p_sys = p_sys;
 
     p_enc->fmt_in.i_codec  = VLC_CODEC_FL32;
     p_enc->fmt_out.i_codec = VLC_CODEC_VORBIS;
@@ -798,12 +797,10 @@ static int OpenEncoder( vlc_object_t *p_this )
               p_enc->fmt_in.audio.i_channels, p_enc->fmt_in.audio.i_rate,
               i_quality * 0.1 ) )
         {
-            vorbis_info_clear( &p_sys->vi );
-            free( p_enc->p_sys );
             msg_Err( p_enc, "VBR mode initialisation failed %"PRIu8"x(%uHz,q=%d)",
                      p_enc->fmt_in.audio.i_channels,
                      p_enc->fmt_in.audio.i_rate, i_quality );
-            return VLC_EGENERIC;
+            goto error;
         }
 
         /* Do we have optional hard quality restrictions? */
@@ -833,13 +830,11 @@ static int OpenEncoder( vlc_object_t *p_this )
               p_enc->fmt_out.i_bitrate,
               i_max_bitrate > 0 ? i_max_bitrate * 1000: -1 ) )
           {
-              vorbis_info_clear( &p_sys->vi );
               msg_Err( p_enc, "CBR mode initialisation failed %"PRIu8"x(%uHz,r=%u)",
                        p_enc->fmt_in.audio.i_channels,
                        p_enc->fmt_in.audio.i_rate,
                        p_enc->fmt_out.i_bitrate);
-              free( p_enc->p_sys );
-              return VLC_EGENERIC;
+              goto error;
           }
     }
 
@@ -887,8 +882,13 @@ static int OpenEncoder( vlc_object_t *p_this )
         .encode_audio = Encode,
     };
     p_enc->ops = &ops;
+    p_enc->p_sys = p_sys;
 
     return VLC_SUCCESS;
+error:
+    vorbis_info_clear( &p_sys->vi );
+    free(p_sys);
+    return VLC_EGENERIC;
 }
 
 /****************************************************************************

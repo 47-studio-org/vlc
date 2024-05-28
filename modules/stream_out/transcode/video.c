@@ -68,7 +68,7 @@ static vlc_decoder_device *video_get_encoder_device( encoder_t *enc )
 }
 
 static const struct encoder_owner_callbacks encoder_video_transcode_cbs = {
-    { video_get_encoder_device, }
+    .video.get_device = video_get_encoder_device
 };
 
 static vlc_decoder_device * video_get_decoder_device( decoder_t *p_dec )
@@ -154,7 +154,7 @@ static int video_update_format_decoder( decoder_t *p_dec, vlc_video_context *vct
     es_format_Clean( &id->decoder_out );
     es_format_Copy( &id->decoder_out, &p_dec->fmt_out );
     /* crap, decoders resetting the whole fmtout... */
-    es_format_SetMeta( &id->decoder_out, &p_dec->fmt_in );
+    es_format_SetMeta( &id->decoder_out, p_dec->fmt_in );
 
     if( transcode_video_filters_init( p_owner->p_stream,
                   id->p_filterscfg,
@@ -222,7 +222,7 @@ static int video_update_format_decoder( decoder_t *p_dec, vlc_video_context *vct
     if( !id->downstream_id )
         id->downstream_id =
             id->pf_transcode_downstream_add( p_owner->p_stream,
-                                             &id->p_decoder->fmt_in,
+                                             id->p_decoder->fmt_in,
                                              transcode_encoder_format_out( id->encoder ) );
     msg_Info( p_dec, "video format update succeed" );
 
@@ -398,10 +398,7 @@ void transcode_video_clean( sout_stream_id_sys_t *id )
 {
     /* Close encoder, but only if one was opened. */
     if ( id->encoder )
-    {
-        transcode_encoder_close( id->encoder );
         transcode_encoder_delete( id->encoder );
-    }
 
     es_format_Clean( &id->decoder_out );
 
@@ -559,13 +556,14 @@ int transcode_video_process( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
     if( ret != VLCDEC_SUCCESS )
         return VLC_EGENERIC;
 
-    /* Only drain if we drained the decoder too. */
-    if (in != NULL)
+    /*
+     * Encoder creation depends on decoder's update_format which is only
+     * created once a few frames have been passed to the decoder.
+     */
+    if( id->encoder == NULL )
         return VLC_SUCCESS;
 
-    /* Drain encoder */
     vlc_fifo_Lock( id->output_fifo );
-    assert(id->encoder);
     if( unlikely( !id->b_error && in == NULL ) && transcode_encoder_opened( id->encoder ) )
     {
         msg_Dbg( p_stream, "Flushing thread and waiting that");

@@ -24,7 +24,5 @@ import "qrc:///style/"
 
 IconToolButton {
     // Style
-    color: VLCStyle.colors.white
-    colorHover: VLCStyle.colors.buttonBannerDark
-    colorFocus: VLCStyle.colors.white
+    size: VLCStyle.icon_track
 }

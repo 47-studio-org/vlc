@@ -26,7 +26,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface NSColor (VLCAdditions)
 
-+ (instancetype)VLClibraryHighlightColor;
++ (instancetype)VLCAccentColor;
++ (instancetype)VLCOrangeElementColor;
 + (instancetype)VLClibraryLightTitleColor;
 + (instancetype)VLClibraryDarkTitleColor;
 + (instancetype)VLClibrarySubtitleColor;
@@ -41,6 +42,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)VLClibraryCollectionViewItemBackgroundLightColor;
 + (instancetype)VLClibraryCollectionViewItemBackgroundDarkColor;
 + (instancetype)VLCSliderFillColor;
++ (instancetype)VLCSliderLightBackgroundColor;
++ (instancetype)VLCSliderDarkBackgroundColor;
 
 @end
 

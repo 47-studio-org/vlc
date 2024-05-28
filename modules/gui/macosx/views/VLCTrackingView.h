@@ -28,6 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (readwrite) BOOL animatesTransition;
 @property (readwrite, assign, nullable) NSView *viewToHide;
+@property (readwrite, assign, nullable) NSView *viewToShow;
 
 @end
 

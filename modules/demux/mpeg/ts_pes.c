@@ -105,12 +105,14 @@ static bool ts_pes_Push( ts_pes_parse_callback *cb,
     if ( b_unit_start && p_pes->gather.p_data )
     {
         block_t *p_datachain = p_pes->gather.p_data;
+        uint32_t i_flags = p_pes->gather.i_block_flags;
         /* Flush the pes from pid */
         p_pes->gather.p_data = NULL;
         p_pes->gather.i_data_size = 0;
         p_pes->gather.i_gathered = 0;
+        p_pes->gather.i_block_flags = 0;
         p_pes->gather.pp_last = &p_pes->gather.p_data;
-        cb->pf_parse( cb->p_obj, cb->priv, p_datachain, p_pes->gather.i_append_pcr );
+        cb->pf_parse( cb->p_obj, cb->priv, p_datachain, i_flags, p_pes->gather.i_append_pcr );
         b_ret = true;
     }
 
@@ -191,13 +193,21 @@ bool ts_pes_Gather( ts_pes_parse_callback *cb,
     /* On dropped blocks discontinuity */
     else if( p_pkt->i_flags & BLOCK_FLAG_DISCONTINUITY )
     {
+        /* If we know the final size and didn't gather enough bytes it is corrupted
+           or if the discontinuity doesn't carry the start code */
+        if( p_pes->gather.i_gathered && (p_pes->gather.i_data_size ||
+                                         (b_aligned_ts_payload && !b_unit_start) ) )
+            p_pes->gather.i_block_flags |= BLOCK_FLAG_CORRUPTED;
+        b_ret |= ts_pes_Push( cb, p_pes, NULL, true, i_append_pcr );
+
         /* it can't match the target size and need to resync on sync code */
         p_pes->gather.i_data_size = 0;
         /* can't reuse prev bytes to lookup sync code */
         p_pes->gather.i_saved = 0;
         /* Propagate to output block to notify packetizers/decoders */
         if( p_pes->p_es )
-            p_pes->p_es->i_next_block_flags |= BLOCK_FLAG_DISCONTINUITY|BLOCK_FLAG_CORRUPTED;
+            p_pes->p_es->i_next_block_flags |= BLOCK_FLAG_DISCONTINUITY;
+        p_pes->gather.i_block_flags|= BLOCK_FLAG_DISCONTINUITY;
     }
 
     if ( unlikely(p_pes->gather.i_saved > 0) )

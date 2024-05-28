@@ -19,56 +19,37 @@ import QtQuick 2.11
 import QtQuick.Controls 2.4
 import QtQuick.Templates 2.4 as T
 import QtQml.Models 2.2
+
 import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
 
 import "qrc:///util/" as Util
 import "qrc:///widgets/" as Widgets
 import "qrc:///main/" as MainInterface
+import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///style/"
 
-FocusScope {
+MainInterface.MainViewLoader {
     id: root
-    property alias model: genreModel
+
+    // Properties
+
     property var sortModel: [
         { text: I18n.qtr("Alphabetic"), criteria: "title" }
     ]
 
-    readonly property var currentIndex: _currentView.currentIndex
-    //the index to "go to" when the view is loaded
-    property int initialIndex: 0
+    readonly property var currentIndex: Helpers.get(currentItem, "currentIndex", - 1)
 
-    property alias _currentView: view.currentItem
+    // FIXME: remove this
+    property var _currentView: currentItem
 
     signal showAlbumView(var id, string name, int reason)
 
-    onInitialIndexChanged:  resetFocus()
+    model: genreModel
 
-    Component.onCompleted: loadView()
-
-    function loadView() {
-        if (MainCtx.gridView) {
-            view.replace(gridComponent)
-        } else {
-            view.replace(tableComponent)
-        }
-    }
-
-    function resetFocus() {
-        if (genreModel.count === 0) {
-            return
-        }
-        var initialIndex = root.initialIndex
-        if (initialIndex >= genreModel.count)
-            initialIndex = 0
-        selectionModel.select(genreModel.index(initialIndex, 0), ItemSelectionModel.ClearAndSelect)
-        if (_currentView)
-            _currentView.positionViewAtIndex(initialIndex, ItemView.Contain)
-    }
-
-    function setCurrentItemFocus(reason) {
-        _currentView.setCurrentItemFocus(reason);
-    }
+    list: tableComponent
+    grid: gridComponent
+    emptyLabel: emptyLabelComponent
 
     MLGenreModel {
         id: genreModel
@@ -93,12 +74,6 @@ FocusScope {
         }
     }
 
-    Util.SelectableDelegateModel {
-        id: selectionModel
-
-        model: genreModel
-    }
-
     Widgets.MLDragItem {
         id: genreDragItem
 
@@ -117,10 +92,11 @@ FocusScope {
     onActiveFocusChanged: {
         if (activeFocus && genreModel.count > 0 && !selectionModel.hasSelection) {
             var initialIndex = 0
-            if (_currentView.currentIndex !== -1)
-                initialIndex = _currentView.currentIndex
+            if (currentIndex !== -1)
+                initialIndex = currentIndex
+
             selectionModel.select(genreModel.index(initialIndex, 0), ItemSelectionModel.ClearAndSelect)
-            _currentView.currentIndex = initialIndex
+            currentItem.currentIndex = initialIndex
         }
     }
 
@@ -213,12 +189,6 @@ FocusScope {
             onActionAtIndex: _actionAtIndex(index)
 
             Navigation.parentItem: root
-            Navigation.cancelAction: function() {
-                if (_currentView.currentIndex <= 0)
-                    root.Navigation.defaultNavigationCancel()
-                else
-                    _currentView.currentIndex = 0;
-            }
         }
     }
 
@@ -228,31 +198,62 @@ FocusScope {
         MainInterface.MainTableView {
             id: tableView_id
 
-            readonly property int _nameColSpan: Math.max(
-                                                    VLCStyle.gridColumnsForWidth(tableView_id.availableRowWidth - VLCStyle.listAlbumCover_width - VLCStyle.column_margin_width) - 1
-                                                    , 1)
+            property int _nbCols: VLCStyle.gridColumnsForWidth(availableRowWidth)
+
+            property var _modelSmall: [{
+                size: Math.max(2, tableView_id._nbCols),
+
+                model: {
+                    criteria: "name",
+
+                    subCriterias: [ "nb_tracks" ],
+
+                    text: I18n.qtr("Name"),
+
+                    headerDelegate: tableColumns.titleHeaderDelegate,
+                    colDelegate: tableColumns.titleDelegate
+                }
+            }]
+
+            property var _modelMedium: [{
+                size: 1,
+
+                model: {
+                    criteria: "cover",
+
+                    headerDelegate: tableColumns.titleHeaderDelegate,
+                    colDelegate: tableColumns.titleDelegate
+                }
+            }, {
+                size: Math.max(1, _nbCols - 2),
+
+                model: {
+                    criteria: "name",
+
+                    text: I18n.qtr("Name")
+                }
+            }, {
+                size: 1,
+
+                model: {
+                    criteria: "nb_tracks",
+
+                    text: I18n.qtr("Tracks")
+                }
+            }]
 
             model: genreModel
+
+            sortModel: (availableRowWidth < VLCStyle.colWidth(4)) ? _modelSmall
+                                                                  : _modelMedium
+
             selectionDelegateModel: selectionModel
-            headerColor: VLCStyle.colors.bg
             focus: true
             onActionForSelection: _actionAtIndex(selection)
             Navigation.parentItem: root
-            Navigation.cancelAction: function() {
-                if (_currentView.currentIndex <= 0)
-                    root.Navigation.defaultNavigationCancel()
-                else
-                    _currentView.currentIndex = 0;
-            }
             dragItem: genreDragItem
             rowHeight: VLCStyle.tableCoverRow_height
             headerTopPadding: VLCStyle.margin_normal
-
-            sortModel:  [
-                { isPrimary: true, criteria: "cover", width: VLCStyle.listAlbumCover_width, headerDelegate: tableColumns.titleHeaderDelegate, colDelegate: tableColumns.titleDelegate },
-                { criteria: "name", width: VLCStyle.colWidth(tableView_id._nameColSpan), text: I18n.qtr("Name") },
-                { criteria: "nb_tracks", width: VLCStyle.colWidth(1), text: I18n.qtr("Tracks") }
-            ]
 
             onItemDoubleClicked: {
                 root.showAlbumView(model.id, model.name, Qt.MouseFocusReason)
@@ -264,7 +265,9 @@ FocusScope {
             Widgets.TableColumns {
                 id: tableColumns
 
-                showTitleText: false
+                showTitleText: (tableView_id.sortModel === tableView_id._modelSmall)
+                showCriterias: showTitleText
+
                 titleCover_height: VLCStyle.listAlbumCover_height
                 titleCover_width: VLCStyle.listAlbumCover_width
                 titleCover_radius: VLCStyle.listAlbumCover_radius
@@ -272,32 +275,14 @@ FocusScope {
         }
     }
 
-    Widgets.StackViewExt {
-        id: view
 
-        initialItem: MainCtx.gridView ? gridComponent : tableComponent
+    Component {
+        id: emptyLabelComponent
 
-        anchors.fill: parent
-        focus: genreModel.count !== 0
-    }
-
-    Connections {
-        target: MainCtx
-        onGridViewChanged: {
-            if (MainCtx.gridView) {
-                view.replace(gridComponent)
-            } else {
-                view.replace(tableComponent)
-            }
+        EmptyLabelButton {
+            text: I18n.qtr("No genres found\nPlease try adding sources, by going to the Browse tab")
+            Navigation.parentItem: root
+            cover: VLCStyle.noArtAlbumCover
         }
-    }
-
-    EmptyLabelButton {
-        anchors.fill: parent
-        visible: genreModel.count === 0
-        focus: genreModel.count === 0
-        text: I18n.qtr("No genres found\nPlease try adding sources, by going to the Network tab")
-        Navigation.parentItem: root
-        cover: VLCStyle.noArtAlbumCover
     }
 }

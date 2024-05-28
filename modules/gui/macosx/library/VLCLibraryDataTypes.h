@@ -29,6 +29,7 @@ extern NSString *VLCMediaLibraryMediaItemPasteboardType;
 
 @class VLCMediaLibraryMediaItem;
 @class VLCMediaLibraryAlbum;
+@class VLCMediaLibraryArtist;
 @class VLCInputItem;
 
 extern const CGFloat VLCMediaLibrary4KWidth;
@@ -48,6 +49,7 @@ extern const long long int VLCMediaLibraryMediaItemDurationDenominator;
 @property (readonly) BOOL external;
 @property (readonly) BOOL removable;
 @property (readonly) BOOL present;
+@property (readonly) time_t lastModificationDate;
 
 @end
 
@@ -95,58 +97,100 @@ extern const long long int VLCMediaLibraryMediaItemDurationDenominator;
 
 @end
 
-@interface VLCMediaLibraryArtist : NSObject
+#pragma mark - Media library classes
 
-+ (nullable instancetype)artistWithID:(int64_t)artistID;
-- (instancetype)initWithArtist:(struct vlc_ml_artist_t *)p_artist;
+@protocol VLCLocallyManipulableItemProtocol <NSObject>
+
+- (void)revealInFinder;
+- (void)moveToTrash;
+
+@end
+
+// Protocol with common methods and properties expected for media library items
+@protocol VLCMediaLibraryItemProtocol <VLCLocallyManipulableItemProtocol>
+
+@property (readonly) int64_t libraryID;
+@property (readonly) BOOL smallArtworkGenerated;
+@property (readonly) NSImage *smallArtworkImage;
+@property (readonly) NSString *smallArtworkMRL;
+@property (readonly) NSString *displayString;
+@property (readonly) NSString *detailString;
+@property (readonly) NSString *durationString;
+@property (readonly) VLCMediaLibraryMediaItem *firstMediaItem;
+
 - (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock;
 
-@property (readonly) int64_t artistID;
-@property (readonly) NSString *name;
-@property (readonly) NSString *shortBiography;
-@property (readonly) NSString *artworkMRL;
-@property (readonly) NSString *musicBrainzID;
-@property (readonly) unsigned int numberOfAlbums;
+@end
+
+// Extended VLCMediaLibraryItemProtocol that includes additional properties for media library item
+// audio groups (i.e. artists, genres, etc.)
+@protocol VLCMediaLibraryAudioGroupProtocol <VLCMediaLibraryItemProtocol>
+
 @property (readonly) unsigned int numberOfTracks;
-@property (readonly) NSArray <VLCMediaLibraryAlbum *> *albums;
-
-@end
-
-@interface VLCMediaLibraryAlbum : NSObject
-
-- (instancetype)initWithAlbum:(struct vlc_ml_album_t *)p_album;
-- (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock;
-
-@property (readonly) int64_t albumID;
-@property (readonly) NSString *title;
-@property (readonly) NSString *summary;
-@property (readonly) NSString *artworkMRL;
-@property (readonly) NSString *artistName;
-@property (readonly) int64_t artistID;
-@property (readonly) size_t numberOfTracks;
-@property (readonly) unsigned int duration;
-@property (readonly) unsigned int year;
-@property (readonly) NSArray <VLCMediaLibraryMediaItem *> *tracksAsMediaItems;
-
-@end
-
-@interface VLCMediaLibraryGenre : NSObject
-
-- (instancetype)initWithGenre:(struct vlc_ml_genre_t *)p_genre;
-
-@property (readonly) int64_t genreID;
-@property (readonly) NSString *name;
-@property (readonly) size_t numberOfTracks;
 @property (readonly) NSArray <VLCMediaLibraryArtist *> *artists;
 @property (readonly) NSArray <VLCMediaLibraryAlbum *> *albums;
 @property (readonly) NSArray <VLCMediaLibraryMediaItem *> *tracksAsMediaItems;
 
-- (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock orderedBy:(int)mediaItemParentType;
+@end
+
+// Base abstract class with common implementations of properties used by media library items.
+// Do not use directly -- subclass to create new media library item types.
+@interface VLCAbstractMediaLibraryItem : NSObject
+
+@property (readonly) int64_t libraryID;
+@property (readonly) BOOL smallArtworkGenerated;
+@property (readonly) NSImage *smallArtworkImage;
+@property (readonly, strong, atomic) NSString *smallArtworkMRL;
+
+@end
+
+// Like VLCAbstractMediaLibraryItem but with some additional functionality for audio groupings
+// such as artists and genres. Do not use directly, subclass instead.
+@interface VLCAbstractMediaLibraryAudioGroup : VLCAbstractMediaLibraryItem<VLCLocallyManipulableItemProtocol>
+
+@property (readonly) NSArray <VLCMediaLibraryMediaItem *> *tracksAsMediaItems;
+@property (readonly) VLCMediaLibraryMediaItem *firstMediaItem;
+
 - (void)iterateMediaItemsWithBlock:(void (^)(VLCMediaLibraryMediaItem*))mediaItemBlock;
 
 @end
 
-@interface VLCMediaLibraryMediaItem : NSObject
+@interface VLCMediaLibraryArtist : VLCAbstractMediaLibraryAudioGroup<VLCMediaLibraryAudioGroupProtocol>
+
++ (nullable instancetype)artistWithID:(int64_t)artistID;
+- (instancetype)initWithArtist:(struct vlc_ml_artist_t *)p_artist;
+
+@property (readonly) NSString *name;
+@property (readonly) NSString *shortBiography;
+@property (readonly) NSString *musicBrainzID;
+@property (readonly) unsigned int numberOfAlbums;
+
+@end
+
+@interface VLCMediaLibraryAlbum : VLCAbstractMediaLibraryAudioGroup<VLCMediaLibraryAudioGroupProtocol>
+
++ (nullable instancetype)albumWithID:(int64_t)albumID;
+- (instancetype)initWithAlbum:(struct vlc_ml_album_t *)p_album;
+
+@property (readonly) NSString *title;
+@property (readonly) NSString *summary;
+@property (readonly) NSString *artistName;
+@property (readonly) int64_t artistID;
+@property (readonly) unsigned int duration;
+@property (readonly) unsigned int year;
+
+@end
+
+@interface VLCMediaLibraryGenre : VLCAbstractMediaLibraryAudioGroup<VLCMediaLibraryAudioGroupProtocol>
+
++ (nullable instancetype)genreWithID:(int64_t)genreID;
+- (instancetype)initWithGenre:(struct vlc_ml_genre_t *)p_genre;
+
+@property (readonly) NSString *name;
+
+@end
+
+@interface VLCMediaLibraryMediaItem : VLCAbstractMediaLibraryItem<VLCMediaLibraryItemProtocol>
 
 + (nullable instancetype)mediaItemForLibraryID:(int64_t)libraryID;
 + (nullable instancetype)mediaItemForURL:(NSURL *)url;
@@ -154,7 +198,6 @@ extern const long long int VLCMediaLibraryMediaItemDurationDenominator;
 - (nullable instancetype)initWithExternalURL:(NSURL *)url;
 - (nullable instancetype)initWithStreamURL:(NSURL *)url;
 
-@property (readonly) int64_t libraryID;
 @property (readonly) vlc_ml_media_type_t mediaType;
 @property (readonly) NSString *readableMediaType;
 @property (readonly) vlc_ml_media_subtype_t mediaSubType;
@@ -172,10 +215,6 @@ extern const long long int VLCMediaLibraryMediaItemDurationDenominator;
 @property (readonly) float progress;
 @property (readonly) NSString *title;
 
-@property (readonly, nullable) NSString *smallArtworkMRL;
-@property (readonly, nullable) NSImage *smallArtworkImage;
-
-@property (readonly) BOOL smallArtworkGenerated;
 @property (readonly) BOOL favorited;
 
 @property (readonly, nullable) VLCMediaLibraryShowEpisode *showEpisode;
@@ -205,7 +244,6 @@ extern const long long int VLCMediaLibraryMediaItemDurationDenominator;
 @property (readonly) int trackNumber;
 @property (readonly) int discNumber;
 
-
 @end
 
 @interface VLCMediaLibraryEntryPoint : NSObject
@@ -216,6 +254,13 @@ extern const long long int VLCMediaLibraryMediaItemDurationDenominator;
 @property (readonly) NSString *decodedMRL;
 @property (readonly) BOOL isPresent;
 @property (readonly) BOOL isBanned;
+
+@end
+
+@interface VLCMediaLibraryDummyItem : NSObject<VLCMediaLibraryItemProtocol>
+
+- (instancetype)initWithDisplayString:(NSString*)displayString
+                     withDetailString:(NSString*)detailString;
 
 @end
 

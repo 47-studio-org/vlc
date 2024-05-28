@@ -44,9 +44,9 @@ static void Log(void *priv, enum pl_log_level level, const char *msg)
     }
 }
 
-struct pl_context *vlc_placebo_CreateContext(vlc_object_t *obj)
+pl_log vlc_placebo_CreateLog(vlc_object_t *obj)
 {
-    return pl_context_create(PL_API_VER, &(struct pl_context_params) {
+    return pl_log_create(PL_API_VER, &(struct pl_log_params) {
         .log_level = PL_LOG_DEBUG,
         .log_cb    = Log,
         .log_priv  = obj,
@@ -327,7 +327,7 @@ int vlc_placebo_PlaneFormat(const video_format_t *fmt, struct pl_plane_data data
 }
 
 int vlc_placebo_PlaneData(const picture_t *pic, struct pl_plane_data data[4],
-                          const struct pl_buf *buf)
+                          pl_buf buf)
 {
     int planes = vlc_placebo_PlaneFormat(&pic->format, data);
     if (!planes)
@@ -350,7 +350,7 @@ int vlc_placebo_PlaneData(const picture_t *pic, struct pl_plane_data data[4],
     return planes;
 }
 
-bool vlc_placebo_FormatSupported(const struct pl_gpu *gpu, vlc_fourcc_t fcc)
+bool vlc_placebo_FormatSupported(pl_gpu gpu, vlc_fourcc_t fcc)
 {
     const struct fmt_desc *desc = FindDesc(fcc);
     if (!desc)
@@ -452,15 +452,32 @@ struct pl_color_repr vlc_placebo_ColorRepr(const video_format_t *fmt)
     };
 }
 
-#if PL_API_VER >= 187
-void vlc_placebo_DoviMetadata(struct pl_frame *frame, const picture_t *pic,
+void vlc_placebo_HdrMetadata(const vlc_video_hdr_dynamic_metadata_t *src,
+                             struct pl_hdr_metadata *dst)
+{
+#if PL_API_VER >= 242
+    for (size_t i = 0; i < ARRAY_SIZE(dst->scene_max); i++)
+        dst->scene_max[i] = src->maxscl[i];
+    dst->scene_avg = src->average_maxrgb;
+
+    if (src->tone_mapping_flag) {
+        static_assert(sizeof(dst->ootf.anchors) == sizeof(src->bezier_curve_anchors), "array mismatch");
+        memcpy(dst->ootf.anchors, src->bezier_curve_anchors, sizeof(dst->ootf.anchors));
+        dst->ootf.num_anchors = src->num_bezier_anchors;
+        dst->ootf.target_luma = src->targeted_luminance;
+        dst->ootf.knee_x = src->knee_point_x;
+        dst->ootf.knee_y = src->knee_point_y;
+    }
+#else
+    (void) src;
+    (void) dst;
+#endif
+}
+
+#if PL_API_VER >= 185
+void vlc_placebo_DoviMetadata(const vlc_video_dovi_metadata_t *src,
                               struct pl_dovi_metadata *dst)
 {
-    struct vlc_ancillary *ancillary = picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI);
-    if (!ancillary)
-        return;
-
-    const vlc_video_dovi_metadata_t *src = vlc_ancillary_GetData(ancillary);
     static_assert(sizeof(dst->nonlinear_offset) == sizeof(src->nonlinear_offset), "array mismatch");
     static_assert(sizeof(dst->nonlinear) == sizeof(src->nonlinear_matrix), "matrix mismatch");
     static_assert(sizeof(dst->linear) == sizeof(src->linear_matrix), "matrix mismatch");
@@ -500,6 +517,17 @@ void vlc_placebo_DoviMetadata(struct pl_frame *frame, const picture_t *pic,
             }
         }
     }
+}
+
+void vlc_placebo_frame_DoviMetadata(struct pl_frame *frame, const picture_t *pic,
+                                    struct pl_dovi_metadata *dst)
+{
+    struct vlc_ancillary *ancillary = picture_GetAncillary(pic, VLC_ANCILLARY_ID_DOVI);
+    if (!ancillary)
+        return;
+
+    const vlc_video_dovi_metadata_t *src = vlc_ancillary_GetData(ancillary);
+    vlc_placebo_DoviMetadata(src, dst);
 
     // The output of the Dolby Vision reshaping process is always BT.2020/PQ,
     // no matter the color space of the base layer, so override these fields
@@ -612,9 +640,7 @@ void vlc_placebo_ColorMapParams(vlc_object_t *obj, const char *prefix,
 #else
     case GAMUT_MODE_CLIP:   break;
     case GAMUT_MODE_WARN:   params->gamut_warning = true; break;
-# if PL_API_VER >= 80
     case GAMUT_MODE_DESAT:  params->gamut_clipping = true; break;
-# endif
 #endif
     }
 

@@ -31,6 +31,11 @@
 #ifdef HAVE_SEARCH_H
 #include <search.h>
 #endif
+#if defined(_WIN32)
+/* the Win32 prototype of lfind() expects an unsigned* for 'nelp' */
+# define lfind(a,b,c,d,e) \
+         lfind((a),(b), &(unsigned){ (*(c) > UINT_MAX) ? UINT_MAX : *(c) }, (d),(e))
+#endif
 
 #include "dtv.h"
 
@@ -425,7 +430,7 @@ typedef struct
     tuner_setup_t pf_setup;
 } access_sys_t;
 
-static block_t *Read (stream_t *, bool *);
+static block_t *Read (stream_t *, bool * restrict);
 static int Control (stream_t *, int, va_list);
 static dtv_delivery_t GuessSystem (const char *, dvb_device_t *);
 static dtv_delivery_t GetDeliveryByScheme(const char *psz_scheme);
@@ -659,7 +664,7 @@ static const char *var_InheritModulation (vlc_object_t *obj, const char *var)
     if (mod == NULL)
         return "";
 
-    size_t n = sizeof (modulation_vlc) / sizeof (modulation_vlc[0]);
+    size_t n = ARRAY_SIZE(modulation_vlc);
     const char *const *p = lfind (mod, modulation_vlc, &n, sizeof (mod), modcmp);
     if (p != NULL)
     {

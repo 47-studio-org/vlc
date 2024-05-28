@@ -21,10 +21,12 @@ endif
 
 libfilesystem_plugin_la_SOURCES = access/fs.h access/file.c access/directory.c access/fs.c
 libfilesystem_plugin_la_CPPFLAGS = $(AM_CPPFLAGS)
-if HAVE_WIN32
-libfilesystem_plugin_la_LIBADD = -lshlwapi
-endif
 access_LTLIBRARIES += libfilesystem_plugin.la
+
+if HAVE_EMSCRIPTEN
+libemjsfile_plugin_la_SOURCES = access/emjsfile.c
+access_LTLIBRARIES += libemjsfile_plugin.la
+endif
 
 libidummy_plugin_la_SOURCES = access/idummy.c
 access_LTLIBRARIES += libidummy_plugin.la
@@ -460,7 +462,7 @@ EXTRA_LTLIBRARIES += libaccess_mtp_plugin.la
 
 ### SRT ###
 
-libaccess_srt_plugin_la_SOURCES = access/srt.c access/srt_common.c access/srt_common.h dummy.cpp
+libaccess_srt_plugin_la_SOURCES = access/srt.c access/srt_common.c access/srt_common.h
 libaccess_srt_plugin_la_CFLAGS = $(AM_CFLAGS) $(SRT_CFLAGS)
 libaccess_srt_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) $(SRT_CPPFLAGS)
 libaccess_srt_plugin_la_LIBADD = $(SRT_LIBS)

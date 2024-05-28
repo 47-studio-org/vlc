@@ -339,10 +339,10 @@ QString VLCKeyToString( unsigned val, bool locale )
 SpinningIcon::SpinningIcon( QWidget *parent ) : QLabel( parent )
 {
     QList<QString> frames;
-    frames << ":/util/wait1.svg";
-    frames << ":/util/wait2.svg";
-    frames << ":/util/wait3.svg";
-    frames << ":/util/wait4.svg";
+    frames << ":/misc/wait1.svg";
+    frames << ":/misc/wait2.svg";
+    frames << ":/misc/wait3.svg";
+    frames << ":/misc/wait4.svg";
     animator = new PixmapAnimator( this, frames, SPINNER_SIZE, SPINNER_SIZE );
     connect( animator, &PixmapAnimator::pixmapReady, this, [=]( const QPixmap &pixmap ) {
         this->setPixmap( pixmap );
@@ -424,11 +424,11 @@ YesNoCheckBox::YesNoCheckBox( QWidget *parent ) : QCheckBox( parent )
     setStyleSheet("\
                   QCheckBox::indicator:unchecked:hover,\
                   QCheckBox::indicator:unchecked {\
-                      image: url(:/toolbar/clear.svg);\
+                      image: url(:/menu/clear.svg);\
                   }\
                   QCheckBox::indicator:checked:hover,\
                   QCheckBox::indicator:checked {\
-                      image: url(:/valid.svg);\
+                      image: url(:/menu/valid.svg);\
                   }\
         ");
 }

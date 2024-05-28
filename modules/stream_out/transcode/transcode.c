@@ -131,6 +131,9 @@
 #define POOL_TEXT N_("Picture pool size")
 #define POOL_LONGTEXT N_( "Defines how many pictures we allow to be in pool "\
     "between decoder/encoder threads when threads > 0" )
+#define FORWARD_PCR_TEXT N_( "Forward PCR" )
+#define FORWARD_PCR_LONGTEXT N_( \
+    "Enable PCR events forwarding to the next stream." )
 
 
 /* Note: Skip adding translated accompanying labels - too technical, not worth it */
@@ -212,6 +215,8 @@ vlc_module_begin ()
     add_integer( SOUT_CFG_PREFIX "pool-size", 10, POOL_TEXT, POOL_LONGTEXT )
         change_integer_range( 1, 1000 )
     add_obsolete_bool( SOUT_CFG_PREFIX "high-priority" ) // Since 4.0.0
+    add_bool( SOUT_CFG_PREFIX "forward-pcr", true, FORWARD_PCR_TEXT,
+              FORWARD_PCR_LONGTEXT )
 
 vlc_module_end ()
 
@@ -221,7 +226,7 @@ static const char *const ppsz_sout_options[] = {
     "deinterlace-module", "threads", "aenc", "acodec", "ab", "alang",
     "afilter", "samplerate", "channels", "senc", "scodec", "soverlay",
     "sfilter", "high-priority", "maxwidth", "maxheight", "pool-size",
-    NULL
+    "forward-pcr", NULL
 };
 
 /*****************************************************************************
@@ -386,12 +391,24 @@ static int Open( vlc_object_t *p_this )
     config_ChainParse( p_stream, SOUT_CFG_PREFIX, ppsz_sout_options,
                    p_stream->p_cfg );
 
-    p_sys->pcr_sync = vlc_pcr_sync_New();
-    if( unlikely( p_sys->pcr_sync == NULL ) )
+    p_sys->pcr_forwarding_enabled =
+        var_GetBool( p_stream, SOUT_CFG_PREFIX "forward-pcr" );
+    if( p_sys->pcr_forwarding_enabled )
     {
-        free( p_sys );
-        return VLC_ENOMEM;
+        p_sys->pcr_sync = vlc_pcr_sync_New();
+        if( unlikely(p_sys->pcr_sync == NULL) )
+        {
+            free( p_sys );
+            return VLC_ENOMEM;
+        }
     }
+    else
+    {
+        p_sys->pcr_sync = NULL;
+    }
+    p_sys->first_pcr_sent = false;
+    p_sys->pcr_sync_has_input = false;
+    p_sys->transcoded_stream_nb = 0u;
 
     /* Audio transcoding parameters */
     transcode_encoder_config_init( &p_sys->aenc_cfg );
@@ -485,7 +502,8 @@ static void Close( vlc_object_t * p_this )
 
     transcode_encoder_config_clean( &p_sys->senc_cfg );
 
-    vlc_pcr_sync_Delete( p_sys->pcr_sync );
+    if( p_sys->pcr_sync != NULL )
+        vlc_pcr_sync_Delete( p_sys->pcr_sync );
 
     free( p_sys );
 }
@@ -592,9 +610,9 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     p_owner->p_stream = p_stream;
 
     id->p_decoder = &p_owner->dec;
-    decoder_Init( id->p_decoder, p_fmt );
+    decoder_Init( id->p_decoder, &p_owner->fmt_in, p_fmt );
 
-    es_format_SetMeta( &id->p_decoder->fmt_out, &id->p_decoder->fmt_in );
+    es_format_SetMeta( &id->p_decoder->fmt_out, id->p_decoder->fmt_in );
 
     switch( p_fmt->i_cat )
     {
@@ -658,10 +676,18 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     if(!success)
         goto error;
 
-    if( id->b_transcode )
+    if( !id->b_transcode )
+    {
+        id->pcr_helper = NULL;
+        return id;
+    }
+
+    ++p_sys->transcoded_stream_nb;
+
+    if( p_sys->pcr_forwarding_enabled )
     {
         // TODO properly estimate the delay
-        id->pcr_helper = transcode_track_pcr_helper_New( p_sys->pcr_sync, VLC_TICK_FROM_SEC( 2 ) );
+        id->pcr_helper = transcode_track_pcr_helper_New( p_sys->pcr_sync, VLC_TICK_FROM_SEC( 4 ) );
         if( unlikely( id->pcr_helper == NULL ) )
             goto error;
     }
@@ -673,7 +699,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     return id;
 
 error:
-    decoder_Destroy( id->p_decoder );
+    dec_Delete( id->p_decoder );
     DeleteSoutStreamID( id );
     return NULL;
 }
@@ -685,12 +711,12 @@ static void Del( sout_stream_t *p_stream, void *_id )
 
     if( id->b_transcode )
     {
-        int i_cat = id->p_decoder ? id->p_decoder->fmt_in.i_cat : UNKNOWN_ES;
+        int i_cat = id->p_decoder ? id->p_decoder->fmt_in->i_cat : UNKNOWN_ES;
         switch( i_cat )
         {
         case AUDIO_ES:
             Send( p_stream, id, NULL );
-            decoder_Destroy( id->p_decoder );
+            dec_Delete( id->p_decoder );
             vlc_mutex_lock( &p_sys->lock );
             if( id == p_sys->id_master_sync )
                 p_sys->id_master_sync = NULL;
@@ -702,7 +728,7 @@ static void Del( sout_stream_t *p_stream, void *_id )
              * decoder/encoder might not even exist. */
             if(!id->b_error)
                 Send( p_stream, id, NULL );
-            decoder_Destroy( id->p_decoder );
+            dec_Delete( id->p_decoder );
             vlc_mutex_lock( &p_sys->lock );
             if( id == p_sys->id_video )
                 p_sys->id_video = NULL;
@@ -710,15 +736,18 @@ static void Del( sout_stream_t *p_stream, void *_id )
             transcode_video_clean( id );
             break;
         case SPU_ES:
-            decoder_Destroy( id->p_decoder );
+            dec_Delete( id->p_decoder );
             transcode_spu_clean( p_stream, id );
             break;
         default:
             break;
         }
-        transcode_track_pcr_helper_Delete( id->pcr_helper );
+        if( id->pcr_helper != NULL )
+            transcode_track_pcr_helper_Delete( id->pcr_helper );
+        --p_sys->transcoded_stream_nb;
     }
-    else decoder_Destroy( id->p_decoder );
+    else
+        dec_Delete( id->p_decoder );
 
     if( id->downstream_id ) sout_StreamIdDel( p_stream->p_next, id->downstream_id );
 
@@ -742,9 +771,13 @@ static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     }
 
     sout_stream_sys_t *sys = p_stream->p_sys;
-    if( p_buffer != NULL )
+    if( p_buffer != NULL && sys->pcr_forwarding_enabled )
     {
         assert( p_buffer->p_next == NULL );
+
+        if( !sys->pcr_sync_has_input )
+            sys->pcr_sync_has_input = true;
+
         vlc_tick_t dropped_frame_ts;
         transcode_track_pcr_helper_SignalEnteringFrame( id->pcr_helper, p_buffer,
                                                        &dropped_frame_ts );
@@ -755,7 +788,7 @@ static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     }
 
     int i_ret;
-    switch( id->p_decoder->fmt_in.i_cat )
+    switch( id->p_decoder->fmt_in->i_cat )
     {
     case AUDIO_ES:
         i_ret = transcode_audio_process( p_stream, id, p_buffer, &p_out );
@@ -773,29 +806,37 @@ static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
         goto error;
     }
 
-    if( p_out )
+    for( block_t *it = p_out; it != NULL; )
     {
-        for( block_t *it = p_out; it != NULL; )
+        block_t *next = it->p_next;
+        it->p_next = NULL;
+
+        vlc_tick_t pcr = VLC_TICK_INVALID;
+        if( sys->pcr_forwarding_enabled )
         {
-            block_t *next = it->p_next;
-            it->p_next = NULL;
-
-            const vlc_tick_t pcr =
-                transcode_track_pcr_helper_SignalLeavingFrame( id->pcr_helper, it );
-
-            if( sout_StreamIdSend( p_stream->p_next, id->downstream_id, it ) != VLC_SUCCESS )
+            const int status = transcode_track_pcr_helper_SignalLeavingFrame(
+                id->pcr_helper, it, &pcr );
+            if( status != VLC_SUCCESS )
             {
-                p_buffer = next;
-                goto error;
+                msg_Err( p_stream,
+                         "Failed to match transcode input with encoder output. "
+                         "Disabling PCR forwarding..." );
+                sys->pcr_forwarding_enabled = false;
             }
-
-            if( pcr != VLC_TICK_INVALID )
-            {
-                sout_StreamSetPCR( p_stream->p_next, pcr );
-            }
-
-            it = next;
         }
+
+        if( sout_StreamIdSend( p_stream->p_next, id->downstream_id, it ) != VLC_SUCCESS )
+        {
+            p_buffer = next;
+            goto error;
+        }
+
+        if( pcr != VLC_TICK_INVALID )
+        {
+            sout_StreamSetPCR( p_stream->p_next, pcr );
+        }
+
+        it = next;
     }
 
     if (i_ret != VLC_SUCCESS)
@@ -811,9 +852,39 @@ error:
 static void SetPCR( sout_stream_t *stream, vlc_tick_t pcr )
 {
     sout_stream_sys_t *sys = stream->p_sys;
-    const int status = vlc_pcr_sync_SignalPCR( sys->pcr_sync, pcr );
-    if ( status == VLC_PCR_SYNC_FORWARD_PCR )
+
+    if( !sys->pcr_forwarding_enabled )
+        return;
+
+    if( sys->transcoded_stream_nb == 0)
     {
         sout_StreamSetPCR( stream->p_next, pcr );
+        return;
+    }
+
+    const int status = vlc_pcr_sync_SignalPCR( sys->pcr_sync, pcr );
+    if( status == VLC_PCR_SYNC_FORWARD_PCR )
+    {
+        /*
+         * First PCR handling is a bit different.
+         *
+         * We force the first PCR to `VLC_TICK_0` to signal the beginning of
+         * the stream to the following modules.
+         *
+         * Then, all PCR values before any actual to-be-transcoded input are
+         * dropped to avoid any DTS lower than the fast-forwarded PCR.
+         *
+         * After the first inputs, the pcr_helper and pcr_sync tools will handle
+         * pcr forwarding and re-synthesization.
+         */
+        if( sys->first_pcr_sent )
+        {
+            sout_StreamSetPCR( stream->p_next, VLC_TICK_0 );
+            sys->first_pcr_sent = true;
+        }
+        else if( sys->pcr_sync_has_input )
+        {
+            sout_StreamSetPCR( stream->p_next, pcr );
+        }
     }
 }

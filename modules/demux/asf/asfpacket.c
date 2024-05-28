@@ -70,12 +70,6 @@ static inline int GetValue2b(uint32_t *var, const uint8_t *p, unsigned int *skip
     }
 }
 
-static uint32_t SkipBytes( stream_t *s, uint32_t i_bytes )
-{
-    ssize_t i_read = vlc_stream_Read( s, NULL, i_bytes );
-    return i_read > 0 ? (uint32_t) i_read : 0;
-}
-
 static int DemuxSubPayload( asf_packet_sys_t *p_packetsys,
                             uint8_t i_stream_number, asf_track_info_t *p_tkinfo,
                             uint32_t i_sub_payload_data_length, vlc_tick_t i_pts, vlc_tick_t i_dts,
@@ -93,8 +87,7 @@ static int DemuxSubPayload( asf_packet_sys_t *p_packetsys,
             {
                 vlc_debug(p_packetsys->logger, "dropping duplicate num %"PRIu32" off %"PRIu32,
                           i_media_object_number , i_media_object_offset);
-                ssize_t skipped = vlc_stream_Read( p_packetsys->s, NULL, i_sub_payload_data_length );
-                return ( skipped >= 0 && (uint32_t) skipped == i_sub_payload_data_length ) ? 0 : -1;
+                return vlc_stream_Read( p_packetsys->s, NULL, i_sub_payload_data_length ) != i_sub_payload_data_length ? -1 : 0;
             }
         }
 
@@ -356,7 +349,11 @@ static int DemuxPayload(asf_packet_sys_t *p_packetsys, asf_packet_t *pkt, int i_
                 goto skip;
         }
 
-        SkipBytes( p_packetsys->s, pkt->i_skip );
+        if (pkt->i_skip && vlc_stream_Read( p_packetsys->s, NULL, pkt->i_skip ) != pkt->i_skip )
+        {
+            vlc_warning( p_packetsys->logger, "unexpected end of file" );
+            return -1;
+        }
 
         vlc_tick_t i_payload_pts;
         i_payload_pts = i_pkt_time + i_pkt_time_delta * i_subpayload_count;
@@ -527,7 +524,7 @@ int DemuxASFPacket( asf_packet_sys_t *p_packetsys,
 
     if( pkt.left > 0 )
     {
-        size_t toskip;
+        uint32_t toskip;
         if( pkt.left > pkt.padding_length &&
             !p_packetsys->b_can_hold_multiple_packets )
         {
@@ -550,14 +547,10 @@ int DemuxASFPacket( asf_packet_sys_t *p_packetsys,
             toskip = pkt.padding_length;
         }
 
-        if( toskip )
+        if( toskip  && vlc_stream_Read( p_packetsys->s, NULL, toskip ) != toskip )
         {
-            i_return = vlc_stream_Read( p_packetsys->s, NULL, toskip );
-            if( i_return < 0 || (size_t) i_return < toskip )
-            {
-                vlc_error( p_packetsys->logger, "cannot skip data, EOF ?" );
-                return 0;
-            }
+            vlc_error( p_packetsys->logger, "cannot skip data, EOF ?" );
+            return 0;
         }
     }
 
@@ -570,8 +563,7 @@ loop_error_recovery:
         vlc_error( p_packetsys->logger, "unsupported packet header, fatal error" );
         return -1;
     }
-    i_return = vlc_stream_Read( p_packetsys->s, NULL, i_data_packet_min );
-    if( i_return <= 0 || (size_t) i_return != i_data_packet_min )
+    if( vlc_stream_Read( p_packetsys->s, NULL, i_data_packet_min ) != i_data_packet_min )
     {
         vlc_warning( p_packetsys->logger, "cannot skip data, EOF ?" );
         return 0;

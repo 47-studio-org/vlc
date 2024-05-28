@@ -160,7 +160,7 @@ static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_DAALA )
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_DAALA )
     {
         return VLC_EGENERIC;
     }
@@ -283,7 +283,7 @@ static int ProcessHeaders( decoder_t *p_dec )
     const void *pp_data[XIPH_MAX_HEADER_COUNT];
     unsigned i_count;
     if( xiph_SplitHeaders( pi_size, pp_data, &i_count,
-                           p_dec->fmt_in.i_extra, p_dec->fmt_in.p_extra) )
+                           p_dec->fmt_in->i_extra, p_dec->fmt_in->p_extra) )
         return VLC_EGENERIC;
     if( i_count < 3 )
         return VLC_EGENERIC;
@@ -393,16 +393,16 @@ static int ProcessHeaders( decoder_t *p_dec )
     else
     {
         void* p_extra = realloc( p_dec->fmt_out.p_extra,
-                                 p_dec->fmt_in.i_extra );
+                                 p_dec->fmt_in->i_extra );
         if( unlikely( p_extra == NULL ) )
         {
             ret = VLC_ENOMEM;
             goto cleanup;
         }
         p_dec->fmt_out.p_extra = p_extra;
-        p_dec->fmt_out.i_extra = p_dec->fmt_in.i_extra;
+        p_dec->fmt_out.i_extra = p_dec->fmt_in->i_extra;
         memcpy( p_dec->fmt_out.p_extra,
-                p_dec->fmt_in.p_extra, p_dec->fmt_out.i_extra );
+                p_dec->fmt_in->p_extra, p_dec->fmt_out.i_extra );
     }
 
 cleanup:
@@ -561,21 +561,16 @@ static void CloseDecoder( vlc_object_t *p_this )
 static void daala_CopyPicture( picture_t *p_pic,
                                daala_image *ycbcr )
 {
-    const int i_planes = p_pic->i_planes < 3 ? p_pic->i_planes : 3;
+    const int i_planes = __MIN(p_pic->i_planes, 3);
     for( int i_plane = 0; i_plane < i_planes; i_plane++ )
     {
-        const int i_total_lines = __MIN(p_pic->p[i_plane].i_lines,
-                ycbcr->height >> ycbcr->planes[i_plane].ydec);
-        uint8_t *p_dst = p_pic->p[i_plane].p_pixels;
-        uint8_t *p_src = ycbcr->planes[i_plane].data;
-        const int i_dst_stride  = p_pic->p[i_plane].i_pitch;
-        const int i_src_stride  = ycbcr->planes[i_plane].ystride;
-        for( int i_line = 0; i_line < i_total_lines; i_line++ )
-        {
-            memcpy( p_dst, p_src, i_src_stride );
-            p_src += i_src_stride;
-            p_dst += i_dst_stride;
-        }
+        plane_t src;
+        src.i_lines = __MIN(p_pic->p[i_plane].i_lines, ycbcr->height >> ycbcr->planes[i_plane].ydec);
+        src.p_pixels = ycbcr->planes[i_plane].data;
+        src.i_pitch = ycbcr->planes[i_plane].ystride;
+        src.i_visible_pitch = src.i_pitch;
+        src.i_visible_lines = src.i_lines;
+        plane_CopyPixels( &p_pic->p[i_plane], &src );
     }
 }
 

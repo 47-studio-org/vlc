@@ -44,7 +44,10 @@ Item {
     // Events
     //---------------------------------------------------------------------------------------------
 
-    Component.onCompleted: if (DialogErrorModel.count) errorPopup.state = "visible"
+    Component.onCompleted: if (DialogErrorModel.repeatedMessageCount){
+                               hideErrorPopupTimer.restart()
+                               errorPopup.state = "visible"
+                           }
 
     Component.onDestruction: {
         if (questionDialog.dialogId !== null) {
@@ -116,7 +119,10 @@ Item {
     {
         target: DialogErrorModel
 
-        onCountChanged: errorPopup.state = "visible"
+        onCountChanged: {
+            hideErrorPopupTimer.restart()
+            errorPopup.state = "visible"
+        }
     }
 
     //---------------------------------------------------------------------------------------------
@@ -131,52 +137,99 @@ Item {
 
     Widgets.DrawerExt {
         id: errorPopup
+
+        property string messageText
+        property int repeatedMessageCount: 0
+
         anchors {
             bottom: parent.bottom
             horizontalCenter: parent.horizontalCenter
+            bottomMargin: VLCStyle.margin_small
         }
+
         edge: Widgets.DrawerExt.Edges.Bottom
-        width: parent.width * 0.8
+        width: contentItem.layoutWidth
+        height: contentItem.height
         z: 10
 
+        ColorContext {
+            id: errorMsgTheme
+            palette: VLCStyle.palette
+            colorSet: ColorContext.Window
+        }
+
         component: Rectangle {
-            color: "gray"
-            opacity: 0.7
-            width: errorPopup.width
-            height: VLCStyle.fontHeight_normal * 5
+            color: errorMsgTheme.bg.negative
+
+            height: messageText.implicitHeight + VLCStyle.margin_normal
             radius: VLCStyle.fontHeight_normal / 2
 
-            Flickable {
-                anchors.fill: parent
-                anchors.margins: VLCStyle.fontHeight_normal / 2
-                ScrollBar.vertical: ScrollBar{}
-                contentY: VLCStyle.fontHeight_normal * ((DialogErrorModel.count * 2) - 4)
-                clip: true
+            property real layoutWidth: layout.width
 
-                ListView {
-                    width: parent.width
-                    height: VLCStyle.fontHeight_normal * DialogErrorModel.count * 2
-                    model: DialogErrorModel
-                    delegate: Column {
-                        Text {
-                            text: model.title
-                            font.pixelSize: VLCStyle.fontSize_normal
-                            font.bold: true
-                            color: "red"
-                        }
-                        Text {
-                            text: model.text
-                            font.pixelSize: VLCStyle.fontSize_normal
-                        }
+            RowLayout {
+                id: layout
+
+                spacing: VLCStyle.margin_xsmall
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+
+                Widgets.IconLabel {
+                    text: VLCIcons.info
+                    color: errorMsgTheme.fg.negative
+                    Layout.leftMargin: VLCStyle.margin_xxsmall
+                }
+
+                Text {
+                    id: messageText
+
+                    Layout.maximumWidth: root.width * 0.5
+                    Layout.leftMargin: VLCStyle.margin_xxsmall
+                    Layout.rightMargin: VLCStyle.margin_xxsmall
+
+                    text: (DialogErrorModel.repeatedMessageCount > 1 ? '[' + DialogErrorModel.repeatedMessageCount + '] ' : '')
+                          + DialogErrorModel.notificationText
+
+                    wrapMode: Text.WrapAnywhere
+                    font.pixelSize: VLCStyle.fontSize_normal
+                    font.bold: true
+                    color: errorMsgTheme.fg.negative
+                }
+
+                Widgets.TextToolButton {
+                    id: detailsBtn
+
+                    text: I18n.qtr("Show Details")
+
+                    colorContext.colorSet: ColorContext.ButtonAccent
+
+                    onClicked: {
+                        hideErrorPopupTimer.stop()
+                        errorPopup.state = "hidden"
+                        DialogErrorModel.resetRepeatedMessageCount()
+                        DialogsProvider.messagesDialog(1)
+                    }
+                }
+
+                Widgets.IconToolButton {
+                    id: closeBtn
+                    size: VLCStyle.icon_normal
+                    iconText: VLCIcons.clear
+                    text: I18n.qtr("Dismiss")
+                    Layout.rightMargin: VLCStyle.margin_xxsmall
+
+                    color: closeBtn.colorContext.fg.negative
+                    backgroundColor: closeBtn.colorContext.bg.negative
+
+                    onClicked: {
+                        hideErrorPopupTimer.stop()
+                        errorPopup.state = "hidden"
+                        DialogErrorModel.resetRepeatedMessageCount()
                     }
                 }
             }
         }
 
         state: "hidden"
-        onStateChanged: {
-            hideErrorPopupTimer.restart()
-        }
 
         Timer {
             id: hideErrorPopupTimer
@@ -184,6 +237,7 @@ Item {
             repeat: false
             onTriggered: {
                 errorPopup.state = "hidden"
+                DialogErrorModel.resetRepeatedMessageCount()
             }
         }
     }
@@ -201,18 +255,23 @@ Item {
         contentItem: GridLayout {
             columns: 2
 
+            readonly property ColorContext colorContext: ColorContext {
+                id: loginContentTheme
+                palette: VLCStyle.palette
+                colorSet: ColorContext.Window
+            }
+
             Text {
                 text: I18n.qtr("User")
-                color: VLCStyle.colors.text
+                color: loginContentTheme.fg.primary
                 font.pixelSize: VLCStyle.fontSize_normal
             }
 
-            TextField {
+            Widgets.TextFieldExt {
                 id: username
 
                 focus: true
                 text: loginDialog.defaultUsername
-                font.pixelSize: VLCStyle.fontSize_normal
 
                 Layout.fillWidth:true
 
@@ -223,11 +282,11 @@ Item {
 
             Text {
                 text: I18n.qtr("Password")
-                color: VLCStyle.colors.text
+                color: loginContentTheme.fg.primary
                 font.pixelSize: VLCStyle.fontSize_normal
             }
 
-            TextField {
+            Widgets.TextFieldExt {
                 id: password
 
                 echoMode: TextInput.Password
@@ -242,7 +301,7 @@ Item {
 
             Text {
                 text: I18n.qtr("Save password")
-                color: VLCStyle.colors.text
+                color: loginContentTheme.fg.primary
                 font.pixelSize: VLCStyle.fontSize_normal
             }
             CheckBox {
@@ -259,8 +318,14 @@ Item {
             id: loginButtons
             implicitHeight: VLCStyle.icon_normal
 
+            readonly property ColorContext colorContext: ColorContext {
+                id: loginFooterTheme
+                palette: VLCStyle.palette
+                colorSet: ColorContext.Window
+            }
+
             Rectangle {
-                color: VLCStyle.colors.topBanner
+                color: loginFooterTheme.bg.primary
                 anchors.fill: parent
 
                 RowLayout {
@@ -336,7 +401,7 @@ Item {
             id: content
             focus: false
             font.pixelSize: VLCStyle.fontSize_normal
-            color: VLCStyle.colors.text
+            color: questionDialog.colorContext.fg.primary
             wrapMode: Text.WordWrap
         }
 
@@ -345,8 +410,13 @@ Item {
             id: questionButtons
             implicitHeight: VLCStyle.icon_normal
 
+            readonly property ColorContext colorContext: ColorContext {
+                palette: VLCStyle.palette
+                colorSet: ColorContext.Window
+            }
+
             Rectangle {
-                color: VLCStyle.colors.topBanner
+                color: questionDialog.colorContext.bg.primary
                 anchors.fill: parent
                 anchors.leftMargin: VLCStyle.margin_xxsmall
                 anchors.rightMargin: VLCStyle.margin_xxsmall

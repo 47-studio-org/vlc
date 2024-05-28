@@ -1,6 +1,6 @@
 # mfx (Media SDK)
 
-mfx_GITURL := https://github.com/lu-zero/mfx_dispatch.git
+mfx_GITURL := $(GITHUB)/lu-zero/mfx_dispatch.git
 MFX_GITHASH := 7efc7505465bc1f16fbd1da3d24aa5bd9d46c5ca
 
 ifeq ($(call need_pkg,"mfx"),)
@@ -12,12 +12,9 @@ PKGS += mfx
 endif
 endif
 
-MFX_CFLAGS := $(CFLAGS)
-MFX_CXXFLAGS := $(CFLAGS)
-
 ifdef HAVE_WINSTORE
-MFX_CFLAGS   += -DMEDIASDK_UWP_LOADER -DMEDIASDK_UWP_PROCTABLE
-MFX_CXXFLAGS += -DMEDIASDK_UWP_LOADER -DMEDIASDK_UWP_PROCTABLE
+MFX_CONF := CFLAGS="$(CFLAGS) -DMEDIASDK_UWP_LOADER -DMEDIASDK_UWP_PROCTABLE"
+MFX_CONF += CXXFLAGS="$(CXXFLAGS) -DMEDIASDK_UWP_LOADER -DMEDIASDK_UWP_PROCTABLE"
 endif
 
 $(TARBALLS)/mfx-$(MFX_GITHASH).tar.xz:
@@ -36,6 +33,8 @@ mfx: mfx-$(MFX_GITHASH).tar.xz .sum-mfx
 	$(MOVE)
 
 .mfx: mfx
-	cd $< && $(HOSTVARS) CFLAGS="$(MFX_CFLAGS)" CXXFLAGS="$(MFX_CXXFLAGS)" ./configure $(HOSTCONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(MFX_CONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

@@ -1,9 +1,9 @@
 # cargo/cargo-c installation via rustup
 
-RUST_VERSION=1.62.0
-CARGOC_VERSION=0.9.10
-RUSTUP_VERSION=1.24.3
-RUSTUP_URL=https://github.com/rust-lang/rustup/archive/$(RUSTUP_VERSION).tar.gz
+RUST_VERSION=1.66.1
+CARGOC_VERSION=0.9.15
+RUSTUP_VERSION=1.25.1
+RUSTUP_URL=$(GITHUB)/rust-lang/rustup/archive/$(RUSTUP_VERSION).tar.gz
 
 RUSTUP = . $(CARGO_HOME)/env && \
 	RUSTUP_HOME=$(RUSTUP_HOME) CARGO_HOME=$(CARGO_HOME) rustup
@@ -33,8 +33,8 @@ endif
 	cd $< && RUSTUP_INIT_SKIP_PATH_CHECK=yes \
 	  RUSTUP_HOME=$(RUSTUP_HOME) CARGO_HOME=$(CARGO_HOME) \
 	  ./rustup-init.sh --no-modify-path -y --default-toolchain $(RUST_VERSION)
-	$(RUSTUP) default $(RUST_VERSION)
-	$(RUSTUP) target add $(RUST_TARGET)
+	+$(RUSTUP) default $(RUST_VERSION)
+	+$(RUSTUP) target add $(RUST_TARGET)
 	unset PKG_CONFIG_LIBDIR PKG_CONFIG_PATH CFLAGS CPPFLAGS LDFLAGS; \
 		$(CARGO) install --locked $(CARGOC_FEATURES) cargo-c --version $(CARGOC_VERSION)
 	touch $@

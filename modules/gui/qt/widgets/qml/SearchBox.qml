@@ -70,6 +70,9 @@ FocusScope {
             PropertyAction { property: "focus" }
         }
     }
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+    }
 
     Row {
         id: content
@@ -83,7 +86,7 @@ FocusScope {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
 
-            size: VLCStyle.banner_icon_size
+            size: VLCStyle.icon_banner
 
             iconText: VLCIcons.search
             text: I18n.qtr("Filter")
@@ -99,7 +102,7 @@ FocusScope {
             }
         }
 
-        TextField {
+        TextFieldExt {
             id: textField
 
             property bool _keyPressed: false
@@ -115,14 +118,6 @@ FocusScope {
             padding: VLCStyle.dp(6)
             leftPadding: padding + VLCStyle.dp(4)
             rightPadding: (textField.width - clearButton.x)
-
-            font.pixelSize: VLCStyle.fontSize_normal
-
-            palette.text: VLCStyle.colors.buttonText
-            palette.highlightedText: VLCStyle.colors.bgHoverText
-            palette.base: VLCStyle.colors.button
-            palette.highlight: VLCStyle.colors.accent
-            palette.mid: VLCStyle.colors.buttonBorder
 
             selectByMouse: true
 
@@ -166,12 +161,6 @@ FocusScope {
                 Navigation.defaultKeyReleaseAction(event)
             }
 
-            Component.onCompleted: {
-                background.border.width = Qt.binding(function() { return root.activeFocus ? VLCStyle.dp(2)
-                                                                                          : VLCStyle.dp(1) })
-
-            }
-
             Widgets.IconToolButton {
                 id: clearButton
 
@@ -179,7 +168,7 @@ FocusScope {
                 anchors.right: parent.right
                 anchors.rightMargin: VLCStyle.margin_xxsmall
 
-                size: VLCStyle.icon_small
+                size: VLCStyle.icon_banner
                 iconText: VLCIcons.close
 
                 visible: (textField.text.length > 0)

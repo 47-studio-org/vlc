@@ -348,13 +348,13 @@ end:
 }
 
 /*****************************************************************************
- * libvlc_audio_get_channel : Get the current audio channel
+ * libvlc_audio_get_stereomode : Get the current audio stereo-mode
  *****************************************************************************/
-int libvlc_audio_get_channel( libvlc_media_player_t *mp )
+libvlc_audio_output_stereomode_t libvlc_audio_get_stereomode( libvlc_media_player_t *mp )
 {
     audio_output_t *p_aout = GetAOut( mp );
     if( !p_aout )
-        return 0;
+        return libvlc_AudioStereoMode_Unset;
 
     int val = var_GetInteger( p_aout, "stereo-mode" );
     aout_Release(p_aout);
@@ -362,19 +362,70 @@ int libvlc_audio_get_channel( libvlc_media_player_t *mp )
 }
 
 /*****************************************************************************
- * libvlc_audio_set_channel : Set the current audio channel
+ * libvlc_audio_set_stereomode : Set the current audio stereo-mode
  *****************************************************************************/
-int libvlc_audio_set_channel( libvlc_media_player_t *mp, int channel )
+int libvlc_audio_set_stereomode( libvlc_media_player_t *mp, libvlc_audio_output_stereomode_t mode )
 {
+    static_assert(libvlc_AudioStereoMode_Unset == AOUT_VAR_CHAN_UNSET &&
+                  libvlc_AudioStereoMode_Stereo == AOUT_VAR_CHAN_STEREO &&
+                  libvlc_AudioStereoMode_RStereo == AOUT_VAR_CHAN_RSTEREO &&
+                  libvlc_AudioStereoMode_Left == AOUT_VAR_CHAN_LEFT &&
+                  libvlc_AudioStereoMode_Right == AOUT_VAR_CHAN_RIGHT &&
+                  libvlc_AudioStereoMode_Dolbys == AOUT_VAR_CHAN_DOLBYS &&
+                  libvlc_AudioStereoMode_Mono == AOUT_VAR_CHAN_MONO,
+                  "Mismatch with stereo-mode LibVLC/VLC enums");
+
     audio_output_t *p_aout = GetAOut( mp );
     int ret = 0;
 
     if( !p_aout )
         return -1;
 
-    if( var_SetInteger( p_aout, "stereo-mode", channel ) < 0 )
+    if( var_SetInteger( p_aout, "stereo-mode", mode ) < 0 )
     {
-        libvlc_printerr( "Audio channel out of range" );
+        libvlc_printerr( "Audio stereo-mode out of range" );
+        ret = -1;
+    }
+    aout_Release(p_aout);
+    return ret;
+}
+
+/*****************************************************************************
+ * libvlc_audio_get_mixmode : Get the current audio mix-mode
+ *****************************************************************************/
+libvlc_audio_output_mixmode_t libvlc_audio_get_mixmode( libvlc_media_player_t *mp )
+{
+    audio_output_t *p_aout = GetAOut( mp );
+    if( !p_aout )
+        return libvlc_AudioMixMode_Unset;
+
+    int val = var_GetInteger( p_aout, "mix-mode" );
+    aout_Release(p_aout);
+    return val;
+}
+
+/*****************************************************************************
+ * libvlc_audio_set_mixmode : Set the current audio mix-mode
+ *****************************************************************************/
+int libvlc_audio_set_mixmode( libvlc_media_player_t *mp, libvlc_audio_output_mixmode_t mode )
+{
+    static_assert(libvlc_AudioMixMode_Unset == AOUT_VAR_CHAN_UNSET &&
+                  libvlc_AudioMixMode_Stereo == AOUT_MIX_MODE_STEREO &&
+                  libvlc_AudioMixMode_Binaural == AOUT_MIX_MODE_BINAURAL &&
+                  libvlc_AudioMixMode_4_0 == AOUT_MIX_MODE_4_0 &&
+                  libvlc_AudioMixMode_5_1 == AOUT_MIX_MODE_5_1 &&
+                  libvlc_AudioMixMode_7_1 == AOUT_MIX_MODE_7_1,
+                  "Mismatch with mix-mode LibVLC/VLC enums");
+
+    audio_output_t *p_aout = GetAOut( mp );
+    int ret = 0;
+
+    if( !p_aout )
+        return -1;
+
+    if( var_SetInteger( p_aout, "mix-mode", mode ) < 0 )
+    {
+        libvlc_printerr( "Audio mix-mode out of range" );
         ret = -1;
     }
     aout_Release(p_aout);

@@ -545,8 +545,8 @@ static void decode_yuv411_8(void *restrict *restrict planes,
     }
 }
 
-typedef void (*vlc_rtp_video_raw_cb)(void *restrict *,
-                                     const unsigned char *, size_t);
+typedef void (*vlc_rtp_video_raw_cb)(void *restrict * restrict,
+                                     const unsigned char * restrict, size_t);
 
 struct vlc_rtp_video_raw_dec {
     unsigned int pgroup;
@@ -763,15 +763,15 @@ static const struct vlc_rtp_video_raw_samplings samplings = {
 static int Open(vlc_object_t *obj)
 {
     decoder_t *dec = (decoder_t *)obj;
-    const char *sname = dec->fmt_in.p_extra;
+    const char *sname = dec->fmt_in->p_extra;
 
-    if (dec->fmt_in.i_codec != VLC_CODEC_RTP_VIDEO_RAW)
+    if (dec->fmt_in->i_codec != VLC_CODEC_RTP_VIDEO_RAW)
         return VLC_ENOTSUP;
-    if (dec->fmt_in.i_extra <= 0 || sname[dec->fmt_in.i_extra - 1] != '\0')
+    if (dec->fmt_in->i_extra <= 0 || sname[dec->fmt_in->i_extra - 1] != '\0')
         return VLC_EINVAL;
 
     /* Sampling is supplied as extra data, bit depth as level */
-    unsigned int depth = dec->fmt_in.i_level;
+    unsigned int depth = dec->fmt_in->i_level;
     const struct vlc_rtp_video_raw_sampling *sampling;
     unsigned int spmp; /* samples per macropixel */
     bool half_height_uv = false;
@@ -836,7 +836,7 @@ static int Open(vlc_object_t *obj)
     if (unlikely(sys == NULL))
         return VLC_ENOMEM;
 
-    es_format_Copy(&dec->fmt_out, &dec->fmt_in);
+    es_format_Copy(&dec->fmt_out, dec->fmt_in);
     dec->fmt_out.i_codec = format->fourcc;
     dec->fmt_out.video.i_chroma = format->fourcc;
 

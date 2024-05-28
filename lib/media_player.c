@@ -111,6 +111,25 @@ on_state_changed(vlc_player_t *player, enum vlc_player_state new_state,
 }
 
 static void
+on_recording_changed(vlc_player_t *player, bool recording, void *data)
+{
+    (void) player;
+    libvlc_media_player_t *mp = data;
+
+    /* "record-file" is only valid when recording ends */
+    char *file_path = !recording ? var_GetString(mp, "record-file") : NULL;
+
+    libvlc_event_t event;
+    event.type = libvlc_MediaPlayerRecordChanged;
+    event.u.media_player_record_changed.recorded_file_path = file_path;
+    event.u.media_player_record_changed.recording = recording;
+
+    libvlc_event_send(&mp->event_manager, &event);
+
+    free(file_path);
+}
+
+static void
 on_error_changed(vlc_player_t *player, enum vlc_player_error error, void *data)
 {
     (void) player;
@@ -175,7 +194,7 @@ on_capabilities_changed(vlc_player_t *player, int old_caps, int new_caps, void *
 }
 
 static void
-on_position_changed(vlc_player_t *player, vlc_tick_t new_time, float new_pos,
+on_position_changed(vlc_player_t *player, vlc_tick_t new_time, double new_pos,
                     void *data)
 {
     (void) player;
@@ -504,6 +523,7 @@ static const struct vlc_player_cbs vlc_player_cbs = {
     .on_media_subitems_changed = on_media_subitems_changed,
     .on_cork_changed = on_cork_changed,
     .on_vout_changed = on_vout_changed,
+    .on_recording_changed = on_recording_changed,
 };
 
 static const struct vlc_player_aout_cbs vlc_player_aout_cbs = {
@@ -716,7 +736,12 @@ libvlc_media_player_new( libvlc_instance_t *instance )
     var_Create (mp, "equalizer-preamp", VLC_VAR_FLOAT);
     var_Create (mp, "equalizer-vlcfreqs", VLC_VAR_BOOL);
     var_Create (mp, "equalizer-bands", VLC_VAR_STRING);
+    var_Create (mp, "equalizer-preset", VLC_VAR_STRING);
 
+    /* variables for signalling creation of new files */
+    var_Create(mp, "record-file", VLC_VAR_STRING);
+
+    mp->timer.id = NULL;
     mp->p_md = NULL;
     mp->p_libvlc_instance = instance;
     /* use a reentrant lock to allow calling libvlc functions from callbacks */
@@ -1258,7 +1283,7 @@ libvlc_time_t libvlc_media_player_get_length(
     vlc_player_Lock(player);
 
     vlc_tick_t length = vlc_player_GetLength(player);
-    libvlc_time_t i_time = from_mtime(length);
+    libvlc_time_t i_time = libvlc_time_from_vlc_tick(length);
 
     vlc_player_Unlock(player);
     return i_time;
@@ -1270,7 +1295,7 @@ libvlc_time_t libvlc_media_player_get_time( libvlc_media_player_t *p_mi )
     vlc_player_Lock(player);
 
     vlc_tick_t tick = vlc_player_GetTime(player);
-    libvlc_time_t i_time = from_mtime(tick);
+    libvlc_time_t i_time = libvlc_time_from_vlc_tick(tick);
 
     vlc_player_Unlock(player);
     return i_time;
@@ -1279,7 +1304,7 @@ libvlc_time_t libvlc_media_player_get_time( libvlc_media_player_t *p_mi )
 int libvlc_media_player_set_time( libvlc_media_player_t *p_mi,
                                    libvlc_time_t i_time, bool b_fast )
 {
-    vlc_tick_t tick = to_mtime(i_time);
+    vlc_tick_t tick = vlc_tick_from_libvlc_time(i_time);
 
     vlc_player_t *player = p_mi->player;
     vlc_player_Lock(player);
@@ -1295,7 +1320,7 @@ int libvlc_media_player_set_time( libvlc_media_player_t *p_mi,
 }
 
 int libvlc_media_player_set_position( libvlc_media_player_t *p_mi,
-                                       float position, bool b_fast )
+                                      double position, bool b_fast )
 {
     vlc_player_t *player = p_mi->player;
     vlc_player_Lock(player);
@@ -1310,12 +1335,12 @@ int libvlc_media_player_set_position( libvlc_media_player_t *p_mi,
     return 0;
 }
 
-float libvlc_media_player_get_position( libvlc_media_player_t *p_mi )
+double libvlc_media_player_get_position( libvlc_media_player_t *p_mi )
 {
     vlc_player_t *player = p_mi->player;
     vlc_player_Lock(player);
 
-    float f_position = vlc_player_GetPosition(player);
+    double f_position = vlc_player_GetPosition(player);
 
     vlc_player_Unlock(player);
     return f_position;
@@ -1496,11 +1521,26 @@ int libvlc_media_player_get_full_chapter_descriptions( libvlc_media_player_t *p_
         goto end;
 
     size_t titles_count = vlc_player_title_list_GetCount(titles);
-    if (i_chapters_of_title >= (int) titles_count)
-       goto end;
+
+    ssize_t title_idx;
+    if (i_chapters_of_title < 0)
+    {
+        title_idx = vlc_player_GetSelectedTitleIdx(player);
+        if (title_idx == -1)
+            goto end;
+
+        assert((size_t)title_idx < titles_count);
+    }
+    else
+    {
+        title_idx = i_chapters_of_title;
+
+        if ((size_t) title_idx  >= titles_count)
+           goto end;
+    }
 
     const struct vlc_player_title *title =
-        vlc_player_title_list_GetAt(titles, i_chapters_of_title);
+        vlc_player_title_list_GetAt(titles, title_idx);
     assert(title);
 
     size_t i_chapter_count = title->chapter_count;
@@ -1776,14 +1816,14 @@ void libvlc_media_player_set_video_title_display( libvlc_media_player_t *p_mi, l
 
 libvlc_media_tracklist_t *
 libvlc_media_player_get_tracklist(libvlc_media_player_t *p_mi,
-                                  libvlc_track_type_t type)
+                                  libvlc_track_type_t type, bool selected)
 {
     vlc_player_t *player = p_mi->player;
 
     vlc_player_Lock(player);
 
     libvlc_media_tracklist_t *list =
-        libvlc_media_tracklist_from_player(player, type);
+        libvlc_media_tracklist_from_player(player, type, selected);
 
     vlc_player_Unlock(player);
 
@@ -1859,7 +1899,7 @@ libvlc_media_player_select_track(libvlc_media_player_t *p_mi,
 
     const libvlc_media_trackpriv_t *trackpriv =
         libvlc_media_track_to_priv(track);
-    
+
     // It must be a player track
     assert(trackpriv->es_id);
 
@@ -2190,6 +2230,138 @@ int libvlc_media_player_get_role(libvlc_media_player_t *mp)
 
     free(str);
     return ret;
+}
+
+void libvlc_media_player_record( libvlc_media_player_t *p_mi,
+                                 bool enable,
+                                 const char *path)
+{
+    vlc_player_t *player = p_mi->player;
+
+    vlc_player_Lock(player);
+    vlc_player_SetRecordingEnabled(player, enable, path);
+    vlc_player_Unlock(player);
+}
+
+#define PLAYER_TIME_CORE_TO_LIB(point) { \
+    .position = point->position, \
+    .rate = point->rate, \
+    .ts_us = US_FROM_VLC_TICK(point->ts), \
+    .length_us = US_FROM_VLC_TICK(point->length), \
+    .system_date_us = US_FROM_VLC_TICK(point->system_date), \
+}
+
+#define PLAYER_TIME_LIB_TO_CORE(point) { \
+    .position = point->position, \
+    .rate = point->rate, \
+    .ts = VLC_TICK_FROM_US(point->ts_us), \
+    .length = VLC_TICK_FROM_US(point->length_us), \
+    .system_date = VLC_TICK_FROM_US(point->system_date_us), \
+}
+
+static void player_timer_on_update(const struct vlc_player_timer_point *point,
+                                   void *data)
+{
+    libvlc_media_player_t *p_mi = data;
+
+    const libvlc_media_player_time_point_t libpoint = PLAYER_TIME_CORE_TO_LIB(point);
+
+    p_mi->timer.on_update(&libpoint, p_mi->timer.cbs_data);
+}
+
+static void player_timer_on_discontinuity(vlc_tick_t system_date, void *data)
+{
+    libvlc_media_player_t *p_mi = data;
+
+    if (p_mi->timer.on_discontinuity == NULL)
+        return;
+
+    p_mi->timer.on_discontinuity(US_FROM_VLC_TICK(system_date),
+                                 p_mi->timer.cbs_data);
+}
+
+int
+libvlc_media_player_watch_time(libvlc_media_player_t *p_mi,
+                               int64_t min_period_us,
+                               libvlc_media_player_watch_time_on_update on_update,
+                               libvlc_media_player_watch_time_on_discontinuity on_discontinuity,
+                               void *cbs_data)
+{
+    assert(on_update != NULL);
+
+    static const struct vlc_player_timer_cbs player_timer_cbs = {
+        .on_update = player_timer_on_update,
+        .on_discontinuity = player_timer_on_discontinuity,
+    };
+
+    vlc_player_t *player = p_mi->player;
+    vlc_player_Lock(player);
+
+    if (p_mi->timer.id != NULL)
+    {
+        libvlc_printerr("libvlc_media_player_watch_time error:"
+                        "already watching for events");
+        vlc_player_Unlock(player);
+        return -1;
+    }
+
+    p_mi->timer.on_update = on_update;
+    p_mi->timer.on_discontinuity = on_discontinuity;
+    p_mi->timer.cbs_data = cbs_data;
+
+    p_mi->timer.id = vlc_player_AddTimer(player, VLC_TICK_FROM_US(min_period_us),
+                                         &player_timer_cbs, p_mi);
+    vlc_player_Unlock(player);
+
+    if (unlikely(p_mi->timer.id == NULL))
+        return -1;
+
+    return 0;
+}
+
+void
+libvlc_media_player_unwatch_time(libvlc_media_player_t *p_mi)
+{
+    vlc_player_t *player = p_mi->player;
+
+    vlc_player_Lock(player);
+
+    assert(p_mi->timer.id != NULL);
+    vlc_player_RemoveTimer(player, p_mi->timer.id);
+    p_mi->timer.id = NULL;
+
+    vlc_player_Unlock(player);
+}
+
+int
+libvlc_media_player_time_point_interpolate(const libvlc_media_player_time_point_t *libpoint,
+                                           int64_t system_now_us,
+                                           int64_t *out_ts_us, double *out_pos)
+{
+    const struct vlc_player_timer_point point = PLAYER_TIME_LIB_TO_CORE(libpoint);
+
+    vlc_tick_t out_ts;
+    int ret = vlc_player_timer_point_Interpolate(&point,
+                                                 VLC_TICK_FROM_US(system_now_us),
+                                                 &out_ts, out_pos);
+    *out_ts_us = US_FROM_VLC_TICK(out_ts);
+    return ret;
+}
+
+int64_t
+libvlc_media_player_time_point_get_next_date(const libvlc_media_player_time_point_t *libpoint,
+                                             int64_t system_now_us,
+                                             int64_t interpolated_ts_us,
+                                             int64_t next_interval_us)
+{
+    const struct vlc_player_timer_point point = PLAYER_TIME_LIB_TO_CORE(libpoint);
+
+    vlc_tick_t date =
+        vlc_player_timer_point_GetNextIntervalDate(&point,
+                                                   VLC_TICK_FROM_US(system_now_us),
+                                                   VLC_TICK_FROM_US(interpolated_ts_us),
+                                                   VLC_TICK_FROM_US(next_interval_us));
+    return US_FROM_VLC_TICK(date);
 }
 
 #include <vlc_vout_display.h>

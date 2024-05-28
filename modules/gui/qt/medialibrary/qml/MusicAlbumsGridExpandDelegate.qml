@@ -33,6 +33,12 @@ FocusScope {
 
     property var model
 
+    property var headerFocusScope
+    property var enqueueActionBtn
+    property var playActionBtn
+
+    property bool forcePlayActionBtnFocusOnce: false
+
     signal retract()
 
     implicitWidth: layout.implicitWidth
@@ -51,7 +57,9 @@ FocusScope {
     clip: true
 
     function setCurrentItemFocus(reason) {
-        playActionBtn.forceActiveFocus(reason);
+        root.playActionBtn.forceActiveFocus(reason);
+        if (VLCStyle.isScreenSmall)
+            root.forcePlayActionBtnFocusOnce = true;
     }
 
     function _getStringTrack() {
@@ -63,9 +71,14 @@ FocusScope {
             return I18n.qtr("%1 tracks").arg(count);
     }
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.View
+    }
+
     Rectangle {
         anchors.fill: parent
-        color: VLCStyle.colors.expandDelegate
+        color: theme.bg.secondary
 
         Rectangle {
             anchors {
@@ -73,7 +86,7 @@ FocusScope {
                 left: parent.left
                 right: parent.right
             }
-            color: VLCStyle.colors.border
+            color: theme.border
             height: VLCStyle.expandDelegate_border
         }
 
@@ -83,7 +96,7 @@ FocusScope {
                 left: parent.left
                 right: parent.right
             }
-            color: VLCStyle.colors.border
+            color: theme.border
             height: VLCStyle.expandDelegate_border
         }
     }
@@ -98,14 +111,217 @@ FocusScope {
         anchors.bottomMargin: VLCStyle.margin_xxsmall
         spacing: VLCStyle.margin_large
 
+        Component {
+            id: cover
+
+            RoundImage {
+                id: expand_cover_id
+
+                property int cover_height: parent.cover_height
+                property int cover_width: parent.cover_width
+
+                height: cover_height
+                width: cover_width
+                radius: VLCStyle.expandCover_music_radius
+                source: (root.model && root.model.cover && root.model.cover !== "")
+                    ?  root.model.cover
+                    : VLCStyle.noArtAlbumCover
+
+                Widgets.ListCoverShadow {
+                    anchors.fill: parent
+                }
+            }
+        }
+
+        Component {
+            id: buttons
+
+            Widgets.NavigableRow {
+                id: actionButtons
+
+                property alias enqueueActionBtn: _enqueueActionBtn
+                property alias playActionBtn: _playActionBtn
+
+                focus: true
+                width: expand_cover_id.width
+                spacing: VLCStyle.margin_small
+
+                Layout.alignment: Qt.AlignCenter
+
+                model: ObjectModel {
+                    Widgets.ActionButtonPrimary {
+                        id: _playActionBtn
+
+                        iconTxt: VLCIcons.play_outline
+                        text: I18n.qtr("Play")
+                        onClicked: MediaLib.addAndPlay( root.model.id )
+
+                        onActiveFocusChanged: {
+                            // root.setCurrentItemFocus sets active focus to playActionBtn, but it gets stolen
+                            // by the delegate of the first track at initial load when playActionBtn is in the
+                            // header of tracks
+                            if (VLCStyle.isScreenSmall && root.forcePlayActionBtnFocusOnce) {
+                                root.forcePlayActionBtnFocusOnce = false
+                                root.playActionBtn.forceActiveFocus(Qt.TabFocusReason)
+                            }
+                        }
+                    }
+
+                    Widgets.ButtonExt {
+                        id: _enqueueActionBtn
+
+                        iconTxt: VLCIcons.enqueue
+                        text: I18n.qtr("Enqueue")
+                        onClicked: MediaLib.addToPlaylist( root.model.id )
+                    }
+                }
+
+                Navigation.parentItem: root
+                Navigation.rightItem: VLCStyle.isScreenSmall ? root.headerFocusScope : tracks
+                Navigation.upItem: VLCStyle.isScreenSmall ? root.headerFocusScope : null
+
+                Navigation.downAction: function () {
+                    if (!VLCStyle.isScreenSmall)
+                        return
+
+                    if (tracks.count > 0) {
+                        tracks.setCurrentItemFocus(Qt.TabFocusReason)
+                    } else {
+                        root.Navigation.downAction()
+                    }
+                }
+            }
+        }
+
+        Component {
+            id: header_common
+
+            FocusScope {
+                id: headerFocusScope
+
+                property int bottomPadding: parent.bottomPadding
+
+                width: parent.width
+                height: implicitHeight
+                implicitHeight: col.implicitHeight
+
+                focus: true
+
+                Navigation.parentItem: root
+                Navigation.leftItem: root.enqueueActionBtn
+                Navigation.downAction: function () {
+                    if (VLCStyle.isScreenSmall) {
+                        root.enqueueActionBtn.forceActiveFocus(Qt.TabFocusReason);
+                        return
+                    }
+
+                    if (tracks.count > 0) {
+                        tracks.setCurrentItemFocus(Qt.TabFocusReason)
+                    } else {
+                        root.Navigation.downAction()
+                    }
+                }
+
+                Column {
+                    id: col
+
+                    anchors.fill: parent
+                    bottomPadding: headerFocusScope.bottomPadding
+
+                    RowLayout {
+                        width: parent.width
+
+                        /* The title of the albums */
+                        Widgets.SubtitleLabel {
+                            id: expand_infos_title_id
+
+                            text: Helpers.get(root.model, "title", I18n.qtr("Unknown title"))
+
+                            Layout.fillWidth: true
+                        }
+
+                        Widgets.IconControlButton {
+                            iconText: VLCIcons.close
+                            focus: true
+
+                            Navigation.parentItem: headerFocusScope
+                            Layout.rightMargin: VLCStyle.margin_small
+
+                            onClicked: root.retract()
+                        }
+                    }
+
+                    Widgets.CaptionLabel {
+                        id: expand_infos_subtitle_id
+
+                        width: parent.width
+                        text: I18n.qtr("%1 - %2 - %3 - %4")
+                            .arg(Helpers.get(root.model, "main_artist", I18n.qtr("Unknown artist")))
+                            .arg(Helpers.get(root.model, "release_year", ""))
+                            .arg(_getStringTrack())
+                            .arg((root.model && root.model.duration) ? root.model.duration.formatHMS() : 0)
+                    }
+                }
+            }
+        }
+
+        Component {
+            id: header_small
+
+            RowLayout {
+                id: row
+
+                width: parent.width
+                height: implicitHeight
+                implicitHeight: col.implicitHeight
+
+                Loader {
+                    sourceComponent: cover
+                    property int cover_height: VLCStyle.cover_small
+                    property int cover_width: VLCStyle.cover_small
+
+                    Layout.bottomMargin: VLCStyle.margin_large
+                    Layout.rightMargin: VLCStyle.margin_xxsmall
+                }
+
+                Column {
+                    id: col
+
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.bottomMargin: VLCStyle.margin_large
+
+                    Loader {
+                        sourceComponent: header_common
+                        width: parent.width
+                        property int bottomPadding: VLCStyle.margin_xsmall
+
+                        onLoaded: {
+                            root.headerFocusScope = item
+                        }
+                    }
+
+                    Loader {
+                        sourceComponent: buttons
+
+                        onLoaded: {
+                            root.enqueueActionBtn = item.enqueueActionBtn
+                            root.playActionBtn = item.playActionBtn
+                        }
+                    }
+                }
+            }
+        }
+
         FocusScope {
             id: artAndControl
 
-            Layout.preferredHeight: artAndControlLayout.implicitHeight
-            Layout.preferredWidth: artAndControlLayout.implicitWidth
-            Layout.alignment: Qt.AlignTop
+            visible: !VLCStyle.isScreenSmall
+            focus: !VLCStyle.isScreenSmall
 
-            focus: true
+            implicitHeight: artAndControlLayout.implicitHeight
+            implicitWidth: artAndControlLayout.implicitWidth
+            Layout.alignment: Qt.AlignTop
 
             Column {
                 id: artAndControlLayout
@@ -114,61 +330,28 @@ FocusScope {
                 bottomPadding: VLCStyle.margin_large
 
                 /* A bigger cover for the album */
-                Item {
-                    height: VLCStyle.expandCover_music_height
-                    width: VLCStyle.expandCover_music_width
-
-                    RoundImage {
-                        id: expand_cover_id
-
-                        height: VLCStyle.expandCover_music_height
-                        width: VLCStyle.expandCover_music_width
-                        radius: VLCStyle.expandCover_music_radius
-                        source: Helpers.get(model, "cover", VLCStyle.noArtAlbumCover)
-                    }
-
-                    Widgets.ListCoverShadow {
-                        anchors.fill: parent
-                    }
+                Loader {
+                    sourceComponent: !VLCStyle.isScreenSmall ? cover : null
+                    property int cover_height: VLCStyle.expandCover_music_height
+                    property int cover_width: VLCStyle.expandCover_music_width
                 }
 
-                Widgets.NavigableRow {
-                    id: actionButtons
+                Loader {
+                    sourceComponent: !VLCStyle.isScreenSmall ? buttons : null
 
-                    focus: true
-                    width: expand_cover_id.width
-                    spacing: VLCStyle.margin_small
-
-                    Layout.alignment: Qt.AlignCenter
-
-                    model: ObjectModel {
-                        Widgets.ActionButtonPrimary {
-                            id: playActionBtn
-
-                            iconTxt: VLCIcons.play_outline
-                            text: I18n.qtr("Play")
-                            onClicked: MediaLib.addAndPlay( model.id )
-                        }
-
-                        Widgets.TabButtonExt {
-                            id: enqueueActionBtn
-
-                            iconTxt: VLCIcons.enqueue
-                            text: I18n.qtr("Enqueue")
-                            onClicked: MediaLib.addToPlaylist( model.id )
-                        }
+                    onLoaded: {
+                        root.playActionBtn = item.playActionBtn
+                        root.enqueueActionBtn = item.enqueueActionBtn
                     }
-
-                    Navigation.parentItem: root
-                    Navigation.rightItem: tracks
                 }
-
             }
         }
 
         /* The list of the tracks available */
         MusicTrackListDisplay {
             id: tracks
+
+            headerColor: theme.bg.secondary
 
             readonly property int _nbCols: VLCStyle.gridColumnsForWidth(tracks.availableRowWidth)
 
@@ -179,7 +362,7 @@ FocusScope {
 
                 Widgets.ListLabel {
                     text: !!rowModel && !!rowModel.track_number ? rowModel.track_number : ""
-                    color: foregroundColor
+                    color: theme.fg.primary
                     font.weight: Font.Normal
 
                     Layout.fillHeight: true
@@ -189,7 +372,7 @@ FocusScope {
 
                 Widgets.ListLabel {
                     text: !!rowModel && !!rowModel.title ? rowModel.title : ""
-                    color: foregroundColor
+                    color: theme.fg.primary
 
                     Layout.fillHeight: true
                     Layout.fillWidth: true
@@ -201,52 +384,22 @@ FocusScope {
                 Widgets.CaptionLabel {
                     text: "#"
                     width: VLCStyle.margin_large
+                    color: theme.fg.secondary
                 }
 
                 Widgets.CaptionLabel {
                     text: I18n.qtr("Title")
+                    color: theme.fg.secondary
                 }
             }
 
-            header: Column {
+            header: Loader {
+                sourceComponent: VLCStyle.isScreenSmall
+                                 ? header_small
+                                 : header_common
                 width: tracks.width
-                height: implicitHeight
-                bottomPadding: VLCStyle.margin_large
 
-                RowLayout {
-                    width: parent.width
-
-                    /* The title of the albums */
-                    Widgets.SubtitleLabel {
-                        id: expand_infos_title_id
-
-                        text: Helpers.get(model, "title", I18n.qtr("Unknown title"))
-
-                        Layout.fillWidth: true
-                    }
-
-                    Widgets.IconLabel {
-                        text: VLCIcons.close
-
-                        Layout.rightMargin: VLCStyle.margin_small
-
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: root.retract()
-                        }
-                    }
-                }
-
-                Widgets.CaptionLabel {
-                    id: expand_infos_subtitle_id
-
-                    width: parent.width
-                    text: I18n.qtr("%1 - %2 - %3 - %4")
-                        .arg(Helpers.get(model, "main_artist", I18n.qtr("Unknown artist")))
-                        .arg(Helpers.get(model, "release_year", ""))
-                        .arg(_getStringTrack())
-                        .arg(Helpers.msToString(Helpers.get(model, "duration", 0)))
-                }
+                property int bottomPadding: VLCStyle.margin_large //used only by header_common
             }
 
             clip: true // content may overflow if not enough space is provided
@@ -257,20 +410,45 @@ FocusScope {
             Layout.fillHeight: true
 
             rowHeight: VLCStyle.tableRow_height
-            headerColor: VLCStyle.colors.expandDelegate
 
             parentId: Helpers.get(root.model, "id")
             onParentIdChanged: {
                 currentIndex = 0
             }
 
-            sortModel: [
-                { isPrimary: true, criteria: "title", width: VLCStyle.colWidth(Math.max(tracks._nbCols - 1, 1)), visible: true, text: I18n.qtr("Title"), showSection: "", colDelegate: titleDelegate, headerDelegate: titleHeaderDelegate },
-                { criteria: "duration",               width: VLCStyle.colWidth(1), visible: true, showSection: "", colDelegate: tableColumns.timeColDelegate, headerDelegate: tableColumns.timeHeaderDelegate },
-            ]
+            sortModel: [{
+                size: Math.max(tracks._nbCols - 1, 1),
+
+                model: {
+                    criteria: "title",
+
+                    visible: true,
+
+                    text: I18n.qtr("Title"),
+
+                    showSection: "",
+
+                    colDelegate: titleDelegate,
+                    headerDelegate: titleHeaderDelegate
+                }
+            }, {
+                size: 1,
+
+                model: {
+                    criteria: "duration",
+
+                    visible: true,
+
+                    showSection: "",
+
+                    colDelegate: tableColumns.timeColDelegate,
+                    headerDelegate: tableColumns.timeHeaderDelegate
+                }
+            }]
 
             Navigation.parentItem: root
-            Navigation.leftItem: actionButtons
+            Navigation.leftItem: VLCStyle.isScreenSmall ? null : root.enqueueActionBtn
+            Navigation.upItem: headerItem
 
             Widgets.TableColumns {
                 id: tableColumns

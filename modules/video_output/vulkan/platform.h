@@ -24,13 +24,13 @@
 #include <vlc_common.h>
 #include <vlc_window.h>
 
-#include <vulkan/vulkan.h>
+#include "instance.h"
 
 struct vlc_vk_platform_t;
 struct vlc_vk_platform_operations
 {
     void (*close)(struct vlc_vk_platform_t *);
-    int (*create_surface)(struct vlc_vk_platform_t *, VkInstance, VkSurfaceKHR *);
+    int (*create_surface)(struct vlc_vk_platform_t *, const vlc_vk_instance_t *, VkSurfaceKHR *);
 };
 
 
@@ -52,10 +52,20 @@ vlc_vk_platform_t *vlc_vk_platform_Create(struct vlc_window *, const char *) VLC
 void vlc_vk_platform_Release(vlc_vk_platform_t *);
 
 // Create a vulkan surface and store it to `surface_out`
-static inline int vlc_vk_CreateSurface(vlc_vk_platform_t * vk, VkInstance instance,
+static inline int vlc_vk_CreateSurface(vlc_vk_platform_t * vk,
+                                       const vlc_vk_instance_t *instance,
                                        VkSurfaceKHR *surface_out)
 {
     return vk->ops->create_surface(vk, instance, surface_out);
+}
+
+static inline void vlc_vk_DestroySurface(const vlc_vk_instance_t *inst,
+                                         VkSurfaceKHR surface)
+{
+    PFN_vkDestroySurfaceKHR DestroySurfaceKHR = (PFN_vkDestroySurfaceKHR)
+        inst->get_proc_address(inst->instance, "vkDestroySurfaceKHR");
+
+    DestroySurfaceKHR(inst->instance, surface, NULL);
 }
 
 #endif // VLC_VULKAN_PLATFORM_H

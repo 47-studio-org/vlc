@@ -168,38 +168,38 @@ static const struct
     vlc_fourcc_t     i_chroma;
     enum aom_img_fmt i_chroma_id;
     uint8_t          i_bitdepth;
-    uint8_t          i_needs_hack;
+    enum aom_transfer_characteristics transfer_characteristics;
 
 } chroma_table[] =
 {
-    { VLC_CODEC_I420, AOM_IMG_FMT_I420, 8, 0 },
-    { VLC_CODEC_I422, AOM_IMG_FMT_I422, 8, 0 },
-    { VLC_CODEC_I444, AOM_IMG_FMT_I444, 8, 0 },
+    /* Transfer characteristic-dependent mappings must come first */
+    { VLC_CODEC_GBR_PLANAR, AOM_IMG_FMT_I444, 8, AOM_CICP_TC_SRGB },
+    { VLC_CODEC_GBR_PLANAR_10L, AOM_IMG_FMT_I44416, 10, AOM_CICP_TC_SRGB },
 
-    { VLC_CODEC_YV12, AOM_IMG_FMT_YV12, 8, 0 },
+    { VLC_CODEC_I420, AOM_IMG_FMT_I420, 8, AOM_CICP_TC_UNSPECIFIED },
+    { VLC_CODEC_I422, AOM_IMG_FMT_I422, 8, AOM_CICP_TC_UNSPECIFIED },
+    { VLC_CODEC_I444, AOM_IMG_FMT_I444, 8, AOM_CICP_TC_UNSPECIFIED },
 
-    { VLC_CODEC_GBR_PLANAR, AOM_IMG_FMT_I444, 8, 1 },
-    { VLC_CODEC_GBR_PLANAR_10L, AOM_IMG_FMT_I44416, 10, 1 },
+    { VLC_CODEC_YV12, AOM_IMG_FMT_YV12, 8, AOM_CICP_TC_UNSPECIFIED },
 
-    { VLC_CODEC_I420_10L, AOM_IMG_FMT_I42016, 10, 0 },
-    { VLC_CODEC_I422_10L, AOM_IMG_FMT_I42216, 10, 0 },
-    { VLC_CODEC_I444_10L, AOM_IMG_FMT_I44416, 10, 0 },
+    { VLC_CODEC_I420_10L, AOM_IMG_FMT_I42016, 10, AOM_CICP_TC_UNSPECIFIED },
+    { VLC_CODEC_I422_10L, AOM_IMG_FMT_I42216, 10, AOM_CICP_TC_UNSPECIFIED },
+    { VLC_CODEC_I444_10L, AOM_IMG_FMT_I44416, 10, AOM_CICP_TC_UNSPECIFIED },
 
-    { VLC_CODEC_I420_12L, AOM_IMG_FMT_I42016, 12, 0 },
-    { VLC_CODEC_I422_12L, AOM_IMG_FMT_I42216, 12, 0 },
-    { VLC_CODEC_I444_12L, AOM_IMG_FMT_I44416, 12, 0 },
+    { VLC_CODEC_I420_12L, AOM_IMG_FMT_I42016, 12, AOM_CICP_TC_UNSPECIFIED },
+    { VLC_CODEC_I422_12L, AOM_IMG_FMT_I42216, 12, AOM_CICP_TC_UNSPECIFIED },
+    { VLC_CODEC_I444_12L, AOM_IMG_FMT_I44416, 12, AOM_CICP_TC_UNSPECIFIED },
 
-    { VLC_CODEC_I444_16L, AOM_IMG_FMT_I44416, 16, 0 },
+    { VLC_CODEC_I444_16L, AOM_IMG_FMT_I44416, 16, AOM_CICP_TC_UNSPECIFIED },
 };
 
 static vlc_fourcc_t FindVlcChroma( struct aom_image *img )
 {
-    uint8_t hack = (img->fmt & AOM_IMG_FMT_I444) && (img->tc == AOM_CICP_TC_SRGB);
-
     for( unsigned int i = 0; i < ARRAY_SIZE(chroma_table); i++ )
         if( chroma_table[i].i_chroma_id == img->fmt &&
             chroma_table[i].i_bitdepth == img->bit_depth &&
-            chroma_table[i].i_needs_hack == hack )
+            ( chroma_table[i].transfer_characteristics == AOM_CICP_TC_UNSPECIFIED ||
+              chroma_table[i].transfer_characteristics == img->tc ) )
             return chroma_table[i].i_chroma;
 
     return 0;
@@ -267,7 +267,7 @@ static void OutputFrame(decoder_t *dec, const struct aom_image *img)
         dec->fmt_out.video.i_sar_den = 1;
     }
 
-    if(dec->fmt_in.video.primaries == COLOR_PRIMARIES_UNDEF)
+    if(dec->fmt_in->video.primaries == COLOR_PRIMARIES_UNDEF)
     {
         v->primaries = iso_23001_8_cp_to_vlc_primaries(img->cp);
         v->transfer = iso_23001_8_tc_to_vlc_xfer(img->tc);
@@ -275,9 +275,9 @@ static void OutputFrame(decoder_t *dec, const struct aom_image *img)
         v->color_range = img->range == AOM_CR_FULL_RANGE ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
     }
 
-    dec->fmt_out.video.projection_mode = dec->fmt_in.video.projection_mode;
-    dec->fmt_out.video.multiview_mode = dec->fmt_in.video.multiview_mode;
-    dec->fmt_out.video.pose = dec->fmt_in.video.pose;
+    dec->fmt_out.video.projection_mode = dec->fmt_in->video.projection_mode;
+    dec->fmt_out.video.multiview_mode = dec->fmt_in->video.multiview_mode;
+    dec->fmt_out.video.pose = dec->fmt_in->video.pose;
 
     if (decoder_UpdateVideoFormat(dec) == 0)
     {
@@ -369,7 +369,7 @@ static int OpenDecoder(vlc_object_t *p_this)
     const aom_codec_iface_t *iface;
     int av_version;
 
-    if (dec->fmt_in.i_codec != VLC_CODEC_AV1)
+    if (dec->fmt_in->i_codec != VLC_CODEC_AV1)
         return VLC_EGENERIC;
 
     iface = &aom_codec_av1_dx_algo;
@@ -399,18 +399,18 @@ static int OpenDecoder(vlc_object_t *p_this)
     dec->pf_decode = Decode;
     dec->pf_flush = FlushDecoder;
 
-    dec->fmt_out.video.i_width = dec->fmt_in.video.i_width;
-    dec->fmt_out.video.i_height = dec->fmt_in.video.i_height;
+    dec->fmt_out.video.i_width = dec->fmt_in->video.i_width;
+    dec->fmt_out.video.i_height = dec->fmt_in->video.i_height;
     dec->fmt_out.i_codec = VLC_CODEC_I420;
 
-    if (dec->fmt_in.video.i_sar_num > 0 && dec->fmt_in.video.i_sar_den > 0) {
-        dec->fmt_out.video.i_sar_num = dec->fmt_in.video.i_sar_num;
-        dec->fmt_out.video.i_sar_den = dec->fmt_in.video.i_sar_den;
+    if (dec->fmt_in->video.i_sar_num > 0 && dec->fmt_in->video.i_sar_den > 0) {
+        dec->fmt_out.video.i_sar_num = dec->fmt_in->video.i_sar_num;
+        dec->fmt_out.video.i_sar_den = dec->fmt_in->video.i_sar_den;
     }
-    dec->fmt_out.video.primaries   = dec->fmt_in.video.primaries;
-    dec->fmt_out.video.transfer    = dec->fmt_in.video.transfer;
-    dec->fmt_out.video.space       = dec->fmt_in.video.space;
-    dec->fmt_out.video.color_range = dec->fmt_in.video.color_range;
+    dec->fmt_out.video.primaries   = dec->fmt_in->video.primaries;
+    dec->fmt_out.video.transfer    = dec->fmt_in->video.transfer;
+    dec->fmt_out.video.space       = dec->fmt_in->video.space;
+    dec->fmt_out.video.color_range = dec->fmt_in->video.color_range;
 
     return VLC_SUCCESS;
 }
@@ -517,8 +517,7 @@ static int OpenEncoder(vlc_object_t *p_this)
                     break;
                 default:
                     msg_Err( p_enc, "%d bit is unsupported for profile %d", i_bit_depth, i_profile );
-                    free( p_sys );
-                    return VLC_EGENERIC;
+                    goto error_nocontext;
             }
             enccfg.g_bit_depth = i_bit_depth;
             break;
@@ -531,8 +530,7 @@ static int OpenEncoder(vlc_object_t *p_this)
             /* fallthrough */
         default:
             msg_Err( p_enc, "Unsupported profile %d", i_profile );
-            free( p_sys );
-            return VLC_EGENERIC;
+            goto error_nocontext;
     }
 
     msg_Dbg(p_this, "AV1: using libaom version %s (build options %s)",
@@ -542,26 +540,21 @@ static int OpenEncoder(vlc_object_t *p_this)
     if (aom_codec_enc_init(ctx, iface, &enccfg, enc_flags) != AOM_CODEC_OK)
     {
         AOM_ERR(p_this, ctx, "Failed to initialize encoder");
-        free(p_sys);
-        return VLC_EGENERIC;
+        goto error_nocontext;
     }
 
     if (i_tile_rows >= 0 &&
         aom_codec_control(ctx, AV1E_SET_TILE_ROWS, i_tile_rows))
     {
         AOM_ERR(p_this, ctx, "Failed to set tile rows");
-        destroy_context(p_this, ctx);
-        free(p_sys);
-        return VLC_EGENERIC;
+        goto error;
     }
 
     if (i_tile_columns >= 0 &&
         aom_codec_control(ctx, AV1E_SET_TILE_COLUMNS, i_tile_columns))
     {
         AOM_ERR(p_this, ctx, "Failed to set tile columns");
-        destroy_context(p_this, ctx);
-        free(p_sys);
-        return VLC_EGENERIC;
+        goto error;
     }
 
 #ifdef AOM_CTRL_AV1E_SET_ROW_MT
@@ -569,9 +562,7 @@ static int OpenEncoder(vlc_object_t *p_this)
         aom_codec_control(ctx, AV1E_SET_ROW_MT, b_row_mt))
     {
         AOM_ERR(p_this, ctx, "Failed to set row-multithreading");
-        destroy_context(p_this, ctx);
-        free(p_sys);
-        return VLC_EGENERIC;
+        goto error;
     }
 #endif
 
@@ -579,9 +570,7 @@ static int OpenEncoder(vlc_object_t *p_this)
     if (aom_codec_control(ctx, AOME_SET_CPUUSED, i_cpu_used))
     {
         AOM_ERR(p_this, ctx, "Failed to set cpu-used");
-        destroy_context(p_this, ctx);
-        free(p_sys);
-        return VLC_EGENERIC;
+        goto error;
     }
 
     static const struct vlc_encoder_operations ops =
@@ -592,6 +581,12 @@ static int OpenEncoder(vlc_object_t *p_this)
     p_enc->ops = &ops;
 
     return VLC_SUCCESS;
+
+error:
+    destroy_context(p_this, ctx);
+error_nocontext:
+    free(p_sys);
+    return VLC_EGENERIC;
 }
 
 /****************************************************************************
@@ -610,15 +605,16 @@ static block_t *Encode(encoder_t *p_enc, picture_t *p_pict)
     const aom_img_fmt_t img_fmt = p_enc->fmt_in.i_codec == VLC_CODEC_I420_10L ?
         AOM_IMG_FMT_I42016 : AOM_IMG_FMT_I420;
 
-    /* Create and initialize the aom_image */
-    if (!aom_img_wrap(&img, img_fmt, i_w, i_h, 32, p_pict->p[0].p_pixels))
+    /* Create and initialize the aom_image (use 1 and correct later to avoid getting
+       rejected for non-power of 2 pitch) */
+    if (!aom_img_wrap(&img, img_fmt, i_w, i_h, 1, p_pict->p[0].p_pixels))
     {
         AOM_ERR(p_enc, ctx, "Failed to wrap image");
         return NULL;
     }
 
-    /* Correct chroma plane offsets. */
-    for (int plane = 1; plane < p_pict->i_planes; plane++) {
+    /* Fill in real plane/stride values. */
+    for (int plane = 0; plane < p_pict->i_planes; plane++) {
         img.planes[plane] = p_pict->p[plane].p_pixels;
         img.stride[plane] = p_pict->p[plane].i_pitch;
     }
@@ -637,7 +633,6 @@ static block_t *Encode(encoder_t *p_enc, picture_t *p_pict)
     {
         if (pkt->kind == AOM_CODEC_CX_FRAME_PKT)
         {
-            int keyframe = pkt->data.frame.flags & AOM_FRAME_IS_KEY;
             block_t *p_block = block_Alloc(pkt->data.frame.sz);
             if (unlikely(p_block == NULL)) {
                 block_ChainRelease(p_out);
@@ -648,8 +643,10 @@ static block_t *Encode(encoder_t *p_enc, picture_t *p_pict)
             /* FIXME: do this in-place */
             memcpy(p_block->p_buffer, pkt->data.frame.buf, pkt->data.frame.sz);
             p_block->i_dts = p_block->i_pts = VLC_TICK_FROM_US(pkt->data.frame.pts);
-            if (keyframe)
+
+            if (pkt->data.frame.flags & AOM_FRAME_IS_KEY)
                 p_block->i_flags |= BLOCK_FLAG_TYPE_I;
+
             block_ChainAppend(&p_out, p_block);
         }
     }

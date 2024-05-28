@@ -395,7 +395,10 @@ void MediaLibrary::onRescanStarted()
 
 MediaLibrary* MediaLibrary::create( vlc_medialibrary_module_t* vlc_ml )
 {
-    auto userDir = vlc::wrap_cptr( config_GetUserDir( VLC_USERDATA_DIR ) );
+    char *userdir = config_GetUserDir( VLC_USERDATA_DIR );
+    if (unlikely(userdir == nullptr))
+        return nullptr;
+    auto userDir = vlc::wrap_cptr( userdir );
     auto mlDir = std::string{ userDir.get() } + "/ml/";
     auto dbPath = mlDir + "ml.db";
     auto mlFolderPath = mlDir + "mlstorage/";
@@ -416,6 +419,8 @@ MediaLibrary* MediaLibrary::create( vlc_medialibrary_module_t* vlc_ml )
                         medialibrary::LogLevel::Debug : medialibrary::LogLevel::Warning;
     cfg.logger = std::make_shared<Logger>( VLC_OBJECT( vlc_ml ) );
 
+    msg_Dbg(VLC_OBJECT(vlc_ml), "Opening medialibrary from %s, db at %s",
+            dbPath.c_str(), mlFolderPath.c_str());
     auto ml = NewMediaLibrary( dbPath.c_str(), mlFolderPath.c_str(), true, &cfg );
     if ( !ml )
         return nullptr;
@@ -514,6 +519,8 @@ int MediaLibrary::Control( int query, va_list args )
         case VLC_ML_UNBAN_FOLDER:
         case VLC_ML_RELOAD_FOLDER:
         case VLC_ML_RESUME_BACKGROUND:
+        case VLC_ML_NEW_EXTERNAL_MEDIA:
+        case VLC_ML_NEW_STREAM:
         case VLC_ML_MEDIA_GENERATE_THUMBNAIL:
         {
             /* These operations require the media library to be started
@@ -623,6 +630,7 @@ int MediaLibrary::Control( int query, va_list args )
         case VLC_ML_MEDIA_ADD_EXTERNAL_MRL:
         case VLC_ML_MEDIA_SET_TYPE:
         case VLC_ML_MEDIA_SET_PLAYED:
+        case VLC_ML_MEDIA_SET_FAVORITE:
         case VLC_ML_MEDIA_ADD_BOOKMARK:
         case VLC_ML_MEDIA_REMOVE_BOOKMARK:
         case VLC_ML_MEDIA_REMOVE_ALL_BOOKMARKS:
@@ -1468,6 +1476,13 @@ int MediaLibrary::controlMedia( int query, va_list args )
                     return VLC_EGENERIC;
             }
             else if ( m->removeFromHistory() == false )
+                return VLC_EGENERIC;
+            return VLC_SUCCESS;
+        }
+        case VLC_ML_MEDIA_SET_FAVORITE:
+        {
+            bool favorite = va_arg( args, int );
+            if ( m->setFavorite( favorite ) == false )
                 return VLC_EGENERIC;
             return VLC_SUCCESS;
         }

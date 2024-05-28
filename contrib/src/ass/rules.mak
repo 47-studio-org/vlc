@@ -1,6 +1,6 @@
 # ASS
 ASS_VERSION := 0.16.0
-ASS_URL := https://github.com/libass/libass/releases/download/$(ASS_VERSION)/libass-$(ASS_VERSION).tar.gz
+ASS_URL := $(GITHUB)/libass/libass/releases/download/$(ASS_VERSION)/libass-$(ASS_VERSION).tar.gz
 
 PKGS += ass
 ifeq ($(call need_pkg,"libass"),)
@@ -23,8 +23,13 @@ WITH_FONTCONFIG = 0
 WITH_HARFBUZZ = 1
 WITH_DWRITE = 1
 else
+ifdef HAVE_EMSCRIPTEN
+WITH_FONTCONFIG = 0
+WITH_HARFBUZZ = 1
+else
 WITH_FONTCONFIG = 1
 WITH_HARFBUZZ = 1
+endif
 endif
 endif
 endif
@@ -36,10 +41,12 @@ $(TARBALLS)/libass-$(ASS_VERSION).tar.gz:
 
 libass: libass-$(ASS_VERSION).tar.gz .sum-ass
 	$(UNPACK)
+	$(call pkg_static,"libass.pc.in")
 	$(MOVE)
 
-DEPS_ass = freetype2 $(DEPS_freetype2) fribidi iconv $(DEPS_iconv)
+DEPS_ass = freetype2 $(DEPS_freetype2) fribidi $(DEPS_fribidi) iconv $(DEPS_iconv)
 
+ASS_CONF = --disable-test
 ifneq ($(WITH_FONTCONFIG), 0)
 DEPS_ass += fontconfig $(DEPS_fontconfig)
 else
@@ -60,15 +67,9 @@ ifeq ($(WITH_ASS_ASM), 0)
 ASS_CONF += --disable-asm
 endif
 
-ifdef WITH_OPTIMIZATION
-ASS_CFLAGS += -O3
-else
-ASS_CFLAGS += -g
-endif
-
 .ass: libass
-	cd $< && $(HOSTVARS) CFLAGS="$(CFLAGS) $(ASS_CFLAGS)" ./configure $(HOSTCONF) $(ASS_CONF)
-	cd $< && $(MAKE)
-	$(call pkg_static,"libass.pc")
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(ASS_CONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

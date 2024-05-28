@@ -9,7 +9,7 @@ noinst_LTLIBRARIES += libchroma_copy.la
 libswscale_plugin_la_SOURCES = video_chroma/swscale.c codec/avcodec/chroma.c
 libswscale_plugin_la_CFLAGS = $(AM_CFLAGS) $(SWSCALE_CFLAGS)
 libswscale_plugin_la_LIBADD = $(SWSCALE_LIBS) $(LIBM)
-libswscale_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(chromadir)'
+libswscale_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(SYMBOLIC_LDFLAGS) -rpath '$(chromadir)'
 
 libgrey_yuv_plugin_la_SOURCES = video_chroma/grey_yuv.c
 
@@ -83,16 +83,20 @@ chroma_LTLIBRARIES += \
 endif
 
 libcvpx_plugin_la_SOURCES = codec/vt_utils.c codec/vt_utils.h video_chroma/cvpx.c
-if HAVE_IOS
-libcvpx_plugin_la_CFLAGS = $(AM_CFLAGS) -miphoneos-version-min=8.0
-endif
-if HAVE_TVOS
-libcvpx_plugin_la_CFLAGS = $(AM_CFLAGS) -mtvos-version-min=10.2
-endif
 libcvpx_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(chromadir)' -Wl,-framework,Foundation -Wl,-framework,VideoToolbox -Wl,-framework,CoreMedia -Wl,-framework,CoreVideo
 libcvpx_plugin_la_LIBADD = libchroma_copy.la
-EXTRA_LTLIBRARIES += libcvpx_plugin.la
-chroma_LTLIBRARIES += $(LTLIBcvpx)
+if HAVE_DARWIN
+chroma_LTLIBRARIES += libcvpx_plugin.la
+endif
+
+libgst_mem_plugin_la_SOURCES = video_chroma/gst_mem.c \
+	codec/gstreamer/gstcopypicture.c codec/gstreamer/gstcopypicture.h codec/gstreamer/gst_mem.h
+libgst_mem_plugin_la_CFLAGS = $(AM_CFLAGS) $(GST_VIDEO_CFLAGS) $(GST_APP_CFLAGS)
+libgst_mem_plugin_la_LIBADD = $(GST_VIDEO_LIBS) $(GST_APP_LIBS)
+
+if HAVE_GST_DECODE
+chroma_LTLIBRARIES += libgst_mem_plugin.la
+endif
 
 # Tests
 chroma_copy_sse_test_SOURCES = $(libchroma_copy_la_SOURCES)

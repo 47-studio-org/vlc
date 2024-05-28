@@ -1,6 +1,6 @@
 # SALSA-lib
 
-SALSA_URL = https://github.com/tiwai/salsa-lib.git
+SALSA_URL = $(GITHUB)/tiwai/salsa-lib.git
 SALSA_TAG = v0.2.0
 SALSA_HASH = a3e5accc0b34ddc59fea2342f1ab1f8be179cf9d
 
@@ -23,12 +23,15 @@ $(TARBALLS)/salsa-lib-$(SALSA_TAG).tar.xz:
 
 salsa-lib: salsa-lib-$(SALSA_TAG).tar.xz .sum-salsa
 	$(UNPACK)
+	$(APPLY) $(SRC)/salsa/salsa-cast-fix.patch
 	$(MOVE)
 
 .salsa: salsa-lib
 	$(RECONF)
-	cd $< && ./configure $(HOSTVARS) $(HOSTCONF) $(SALSACONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(SALSACONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@
 
 # ALSA placeholder

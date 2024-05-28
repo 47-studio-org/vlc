@@ -21,10 +21,9 @@ import "qrc:///style/"
 
 T.Label {
     elide: Text.ElideRight
-    color: VLCStyle.colors.icon
 
     font {
-        pixelSize: VLCStyle.icon_small
+        pixelSize: VLCStyle.icon_normal
         family: VLCIcons.fontFamily
     }
     textFormat: Text.PlainText

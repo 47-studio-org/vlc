@@ -77,22 +77,28 @@ protected:
 
 private:
     void setDPR(qreal value);
-    void handleImageRequestFinished();
-    void resetImageRequest();
+    void handleImageResponseFinished();
+    void resetImageResponse(bool cancel);
     void load();
     void setRoundImage(QImage image);
     void setStatus(const Status status);
     void regenerateRoundImage();
 
+private slots:
+    void adjustQSGCustomGeometry(const QQuickWindow* const window);
+
+private:
     QUrl m_source;
     qreal m_radius = 0.0;
     qreal m_dpr = 1.0; // device pixel ratio
     Status m_status = Status::Null;
 
+    bool m_QSGCustomGeometry = false;
+
     QImage m_roundImage;
     bool m_dirty = false;
 
-    QQuickImageResponse *m_activeImageRequest {};
+    QQuickImageResponse *m_activeImageResponse {};
 
     bool m_enqueuedGeneration = false;
 };

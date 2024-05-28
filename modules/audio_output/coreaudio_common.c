@@ -25,6 +25,8 @@
 #include "coreaudio_common.h"
 #include <CoreAudio/CoreAudioTypes.h>
 
+#define TIMING_REPORT_DELAY_TICKS VLC_TICK_FROM_MS(1000)
+
 static inline uint64_t
 BytesToFrames(struct aout_sys_common *p_sys, size_t i_bytes)
 {
@@ -37,6 +39,12 @@ FramesToTicks(struct aout_sys_common *p_sys, int64_t i_nb_frames)
     return vlc_tick_from_samples(i_nb_frames, p_sys->i_rate);
 }
 
+static inline vlc_tick_t
+BytesToTicks(struct aout_sys_common *p_sys, size_t i_bytes)
+{
+    return FramesToTicks(p_sys, BytesToFrames(p_sys, i_bytes));
+}
+
 static inline size_t
 FramesToBytes(struct aout_sys_common *p_sys, uint64_t i_frames)
 {
@@ -47,6 +55,12 @@ static inline int64_t
 TicksToFrames(struct aout_sys_common *p_sys, vlc_tick_t i_ticks)
 {
     return samples_from_vlc_tick(i_ticks, p_sys->i_rate);
+}
+
+static inline size_t
+TicksToBytes(struct aout_sys_common *p_sys, vlc_tick_t i_ticks)
+{
+    return FramesToBytes(p_sys, TicksToFrames(p_sys, i_ticks));
 }
 
 /**
@@ -62,19 +76,6 @@ HostTimeToTick(struct aout_sys_common *p_sys, int64_t i_host_time)
     return VLC_TICK_FROM_NS(i_host_time * p_sys->tinfo.numer / p_sys->tinfo.denom);
 }
 
-/**
- * Convert relative vlc_ticks to an audio host time
- *
- * \warning  This function may only be used to convert relative
- *           vlc_ticks, as vlc_ticks do not have the same origin
- *           as the audio host clock!
- */
-static inline int64_t
-TickToHostTime(struct aout_sys_common *p_sys, vlc_tick_t i_ticks)
-{
-    return NS_FROM_VLC_TICK(i_ticks * p_sys->tinfo.denom / p_sys->tinfo.numer);
-}
-
 static void
 ca_ClearOutBuffers(audio_output_t *p_aout)
 {
@@ -83,8 +84,6 @@ ca_ClearOutBuffers(audio_output_t *p_aout)
     block_ChainRelease(p_sys->p_out_chain);
     p_sys->p_out_chain = NULL;
     p_sys->pp_out_last = &p_sys->p_out_chain;
-
-    p_sys->i_out_size = 0;
 }
 
 static inline void
@@ -124,9 +123,9 @@ ca_Open(audio_output_t *p_aout)
 
     assert(p_sys->tinfo.denom != 0 && p_sys->tinfo.numer != 0);
 
-    vlc_sem_init(&p_sys->flush_sem, 0);
     lock_init(p_sys);
     p_sys->p_out_chain = NULL;
+    p_sys->pp_out_last = &p_sys->p_out_chain;
     p_sys->chans_to_reorder = 0;
 
     p_aout->play = ca_Play;
@@ -137,147 +136,130 @@ ca_Open(audio_output_t *p_aout)
     return VLC_SUCCESS;
 }
 
-/* Called from render callbacks. No lock, wait, and IO here */
-void
-ca_Render(audio_output_t *p_aout, uint64_t i_host_time,
-          uint8_t *p_output, size_t i_requested, bool *is_silence)
+static vlc_tick_t
+GetLatency(audio_output_t *p_aout)
 {
     struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
 
-    vlc_tick_t i_now_ticks = vlc_tick_now();
+    vlc_tick_t dev_latency_ticks =
+        p_sys->get_latency != NULL ? p_sys->get_latency(p_aout)
+                                   : p_sys->i_dev_latency_ticks;
+
+    /* Add the AudioUnit latency to the auhal/audiounit_ios latency */
+    return dev_latency_ticks + p_sys->au_latency_ticks;
+}
+
+/* Called from render callbacks. No lock, wait, and IO here */
+void
+ca_Render(audio_output_t *p_aout, uint64_t host_time,
+          uint8_t *data, size_t bytes, bool *is_silence)
+{
+    struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
+
+    vlc_tick_t host_delay_ticks = 0;
+    if (host_time != 0)
+    {
+        uint64_t now_nsec = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        host_delay_ticks = HostTimeToTick(p_sys, host_time)
+                         - VLC_TICK_FROM_NS(now_nsec);
+    }
+    const vlc_tick_t bytes_ticks = BytesToTicks(p_sys, bytes);
+
+    const vlc_tick_t now_ticks = vlc_tick_now();
+    const vlc_tick_t end_ticks = now_ticks + bytes_ticks + host_delay_ticks;
 
     lock_lock(p_sys);
 
-    if (p_sys->b_do_flush)
-    {
-        ca_ClearOutBuffers(p_aout);
-        /* Signal that the renderer is flushed */
-        p_sys->b_do_flush = false;
-        vlc_sem_post(&p_sys->flush_sem);
-    }
-
-    if (unlikely(p_sys->i_first_render_host_time == 0))
-        goto drop;
-
     if (p_sys->b_paused)
     {
-        p_sys->i_render_host_time = i_host_time;
-        goto drop;
+        if (is_silence != NULL)
+            *is_silence = true;
+        memset(data, 0, bytes);
+        lock_unlock(p_sys);
+        return;
     }
 
-    /* Start deferred: write silence (zeros) until we reach the first render
-     * host time. */
-    if (unlikely(p_sys->i_first_render_host_time > i_host_time ))
+    if (!p_sys->started)
     {
-        /* Convert the requested bytes into host time and check that it does
-         * not overlap between the first_render host time and the current one.
-         * */
-        const vlc_tick_t i_requested_ticks =
-            FramesToTicks(p_sys, BytesToFrames(p_sys, i_requested));
-        const int64_t i_requested_host_time =
-            TickToHostTime(p_sys, i_requested_ticks);
-        if (p_sys->i_first_render_host_time >= i_host_time + i_requested_host_time)
-        {
-            /* Fill the buffer with silence */
-            goto drop;
-        }
+        size_t tocopy;
 
-        /* Write silence to reach the first_render host time */
-        const vlc_tick_t i_silence_ticks =
-            HostTimeToTick(p_sys, p_sys->i_first_render_host_time - i_host_time);
-
-        const size_t i_silence_bytes =
-            FramesToBytes(p_sys, TicksToFrames(p_sys, i_silence_ticks));
-        assert(i_silence_bytes <= i_requested);
-        memset(p_output, 0, i_silence_bytes);
-
-        i_requested -= i_silence_bytes;
-        p_output += i_silence_bytes;
-
-        /* Start the first rendering */
-    }
-    p_sys->i_render_host_time = i_host_time;
-
-    size_t i_copied = 0;
-    block_t *p_block = p_sys->p_out_chain;
-    while (p_block != NULL && i_requested != 0)
-    {
-        size_t i_tocopy = __MIN(i_requested, p_block->i_buffer);
-        if (unlikely(p_sys->b_muted))
-            memset(p_output, 0, i_tocopy);
-        else
-            memcpy(p_output, p_block->p_buffer, i_tocopy);
-        i_requested -= i_tocopy;
-        i_copied += i_tocopy;
-        p_output += i_tocopy;
-
-        if (i_tocopy == p_block->i_buffer)
-        {
-            block_t *p_release = p_block;
-            p_block = p_block->p_next;
-            block_Release(p_release);
-        }
+        if (p_sys->first_play_date == VLC_TICK_INVALID)
+            tocopy = bytes;
         else
         {
-            assert(i_requested == 0);
+            /* Write silence to reach the first play date */
+            vlc_tick_t silence_ticks = p_sys->first_play_date - end_ticks
+                                     - GetLatency(p_aout) + bytes_ticks;
+            if (silence_ticks > 0)
+            {
+                tocopy = TicksToBytes(p_sys, silence_ticks);
+                if (tocopy > bytes)
+                    tocopy = bytes;
+            }
+            else
+                tocopy = 0;
+        }
 
-            p_block->p_buffer += i_tocopy;
-            p_block->i_buffer -= i_tocopy;
+        if (tocopy > 0)
+        {
+            memset(data, 0, tocopy);
+
+            data += tocopy;
+            bytes -= tocopy;
+
+            if (bytes == 0 && is_silence != NULL)
+                *is_silence = true;
         }
     }
-    p_sys->p_out_chain = p_block;
-    if (!p_sys->p_out_chain)
-        p_sys->pp_out_last = &p_sys->p_out_chain;
-    p_sys->i_out_size -= i_copied;
 
-    p_sys->i_total_frames += i_copied;
-
-    /* Pad with 0 */
-    if (i_requested > 0)
+    size_t bytes_copied = 0;
+    while (bytes > 0)
     {
-        assert(p_sys->i_out_size == 0);
-        p_sys->i_underrun_size += i_requested;
-        memset(p_output, 0, i_requested);
+        vlc_frame_t *f = p_sys->p_out_chain;
+        if (f == NULL)
+        {
+            p_sys->i_underrun_size += bytes;
+            memset(data, 0, bytes);
+            lock_unlock(p_sys);
+            return;
+        }
+
+        size_t tocopy = f->i_buffer > bytes ? bytes : f->i_buffer;
+
+        p_sys->i_out_size -= tocopy;
+        p_sys->i_total_bytes += tocopy;
+
+        p_sys->started = true;
+
+        memcpy(data, f->p_buffer, tocopy);
+
+        data += tocopy;
+        bytes -= tocopy;
+        f->i_buffer -= tocopy;
+        f->p_buffer += tocopy;
+        bytes_copied += tocopy;
+
+        if (f->i_buffer == 0)
+        {
+            p_sys->p_out_chain = f->p_next;
+            if (p_sys->p_out_chain == NULL)
+                p_sys->pp_out_last = &p_sys->p_out_chain;
+
+            block_Release(f);
+        }
     }
 
-    if (is_silence != NULL)
-        *is_silence = p_sys->b_muted;
-
-    /* Convert host time to ticks */
-    vlc_tick_t i_host_ticks = HostTimeToTick(p_sys, i_host_time - mach_absolute_time())
-                            + i_now_ticks;
-
-    /* Report a timing every seconds */
-    if (p_sys->i_last_latency_ticks == VLC_TICK_INVALID
-     || i_host_ticks - p_sys->i_last_latency_ticks >= VLC_TICK_FROM_SEC(1))
+    if (p_sys->timing_report_last_written_bytes >=
+        p_sys->timing_report_delay_bytes)
     {
-        vlc_tick_t frames_tick = FramesToTicks(p_sys,
-                                    BytesToFrames(p_sys, p_sys->i_total_frames))
-                               + p_sys->i_dev_latency_ticks;
-
-        aout_TimingReport(p_aout, i_host_ticks, frames_tick);
-        p_sys->i_last_latency_ticks = i_host_ticks;
+        p_sys->timing_report_last_written_bytes = 0;
+        vlc_tick_t pos_ticks = BytesToTicks(p_sys, p_sys->i_total_bytes);
+        aout_TimingReport(p_aout, end_ticks + GetLatency(p_aout), pos_ticks);
     }
+    else
+        p_sys->timing_report_last_written_bytes += bytes_copied;
 
     lock_unlock(p_sys);
-
-    return;
-
-drop:
-    memset(p_output, 0, i_requested);
-    if (is_silence != NULL)
-        *is_silence = true;
-    lock_unlock(p_sys);
-}
-
-static vlc_tick_t
-ca_GetLatencyLocked(audio_output_t *p_aout)
-{
-    struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
-
-    const int64_t i_out_frames = BytesToFrames(p_sys, p_sys->i_out_size);
-    return FramesToTicks(p_sys, i_out_frames)
-           + p_sys->i_dev_latency_ticks;
 }
 
 void
@@ -285,22 +267,16 @@ ca_Flush(audio_output_t *p_aout)
 {
     struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
 
+
     lock_lock(p_sys);
 
-    assert(!p_sys->b_do_flush);
-    if (p_sys->b_paused)
-        ca_ClearOutBuffers(p_aout);
-    else
-    {
-        p_sys->b_do_flush = true;
-        lock_unlock(p_sys);
-        vlc_sem_wait(&p_sys->flush_sem);
-        lock_lock(p_sys);
-    }
+    p_sys->started = false;
+    p_sys->i_out_size = 0;
+    p_sys->i_total_bytes = 0;
+    p_sys->first_play_date = VLC_TICK_INVALID;
+    p_sys->timing_report_last_written_bytes = 0;
 
-    p_sys->i_render_host_time = p_sys->i_first_render_host_time = 0;
-    p_sys->i_last_latency_ticks = VLC_TICK_INVALID;
-    p_sys->i_total_frames = 0;
+    ca_ClearOutBuffers(p_aout);
     lock_unlock(p_sys);
 
     p_sys->b_played = false;
@@ -314,6 +290,7 @@ ca_Pause(audio_output_t * p_aout, bool pause, vlc_tick_t date)
 
     lock_lock(p_sys);
     p_sys->b_paused = pause;
+    p_sys->started = false;
     lock_unlock(p_sys);
 }
 
@@ -340,73 +317,21 @@ ca_Play(audio_output_t * p_aout, block_t * p_block, vlc_tick_t date)
 
     lock_lock(p_sys);
 
-    if (p_sys->i_render_host_time == 0)
+    if (!p_sys->started)
     {
-        /* Setup the first render time, this date must be updated until the
-         * first (non-silence/zero) frame is rendered by the render callback.
-         * Once the rendering is truly started, the date can be ignored. */
+        vlc_tick_t now = vlc_tick_now();
+        p_sys->first_play_date = date - BytesToTicks(p_sys, p_sys->i_out_size);
 
-        /* We can't convert date to host time directly since the clock source
-         * may be different (MONOTONIC vs continue during sleep). The solution
-         * is to convert it to a relative time and then add it to
-         * mach_absolute_time() */
-        const vlc_tick_t first_render_delay = date - vlc_tick_now()
-                                            - ca_GetLatencyLocked(p_aout);
-        p_sys->i_first_render_host_time
-            = mach_absolute_time() + TickToHostTime(p_sys, first_render_delay);
+        if (p_sys->first_play_date > now)
+            msg_Dbg(p_aout, "deferring start (%"PRId64" us)",
+                    p_sys->first_play_date - now);
+        else
+            msg_Dbg(p_aout, "starting late (%"PRId64" us)",
+                    p_sys->first_play_date - now);
     }
 
-    do
-    {
-        const size_t i_avalaible_bytes =
-            __MIN(p_block->i_buffer, p_sys->i_out_max_size - p_sys->i_out_size);
-
-        if (unlikely(i_avalaible_bytes != p_block->i_buffer))
-        {
-            /* Not optimal but unlikely code path. */
-
-            lock_unlock(p_sys);
-
-            block_t *p_new = block_Alloc(i_avalaible_bytes);
-            if (!p_new)
-            {
-                block_Release(p_block);
-                return;
-            }
-
-            memcpy(p_new->p_buffer, p_block->p_buffer, i_avalaible_bytes);
-
-            p_block->p_buffer += i_avalaible_bytes;
-            p_block->i_buffer -= i_avalaible_bytes;
-
-            lock_lock(p_sys);
-
-            block_ChainLastAppend(&p_sys->pp_out_last, p_new);
-            p_sys->i_out_size += i_avalaible_bytes;
-
-            if (p_sys->b_paused)
-            {
-                lock_unlock(p_sys);
-                block_Release(p_block);
-                return;
-            }
-
-            /* The render buffer is full, Wait for the renderer to play half
-             * the data. */
-            const vlc_tick_t i_sleep_ticks =
-                FramesToTicks(p_sys, BytesToFrames(p_sys, p_sys->i_out_max_size)) / 2;
-
-            lock_unlock(p_sys);
-            vlc_tick_sleep(i_sleep_ticks);
-            lock_lock(p_sys);
-        }
-        else
-        {
-            block_ChainLastAppend(&p_sys->pp_out_last, p_block);
-            p_sys->i_out_size += i_avalaible_bytes;
-            p_block = NULL;
-        }
-    } while (p_block != NULL);
+    p_sys->i_out_size += p_block->i_buffer;
+    block_ChainLastAppend(&p_sys->pp_out_last, p_block);
 
     size_t i_underrun_size = p_sys->i_underrun_size;
     p_sys->i_underrun_size = 0;
@@ -423,37 +348,29 @@ ca_Play(audio_output_t * p_aout, block_t * p_block, vlc_tick_t date)
 
 int
 ca_Initialize(audio_output_t *p_aout, const audio_sample_format_t *fmt,
-              vlc_tick_t i_dev_latency_ticks)
+              vlc_tick_t i_dev_latency_ticks, get_latency_cb get_latency)
 {
     struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
 
+    p_sys->au_latency_ticks = 0;
     p_sys->i_underrun_size = 0;
     p_sys->b_paused = false;
+    p_sys->started = false;
     p_sys->b_muted = false;
-    p_sys->i_render_host_time = p_sys->i_first_render_host_time = 0;
-    p_sys->i_last_latency_ticks = VLC_TICK_INVALID;
-    p_sys->i_total_frames = 0;
+    p_sys->i_out_size = 0;
+    p_sys->i_total_bytes = 0;
+    p_sys->first_play_date = VLC_TICK_INVALID;
+    p_sys->timing_report_last_written_bytes = 0;
 
     p_sys->i_rate = fmt->i_rate;
     p_sys->i_bytes_per_frame = fmt->i_bytes_per_frame;
     p_sys->i_frame_length = fmt->i_frame_length;
 
-    p_sys->i_dev_latency_ticks = i_dev_latency_ticks;
-
-    /* setup circular buffer */
-    size_t i_audiobuffer_size = fmt->i_rate * fmt->i_bytes_per_frame
-                              / p_sys->i_frame_length;
-    if (fmt->channel_type == AUDIO_CHANNEL_TYPE_AMBISONICS)
-    {
-        /* lower latency: 200 ms of buffering. XXX: Decrease when VLC's core
-         * can handle lower audio latency */
-        p_sys->i_out_max_size = i_audiobuffer_size / 5;
-    }
+    if (get_latency != NULL)
+        p_sys->get_latency = get_latency;
     else
-    {
-        /* 2 seconds of buffering */
-        p_sys->i_out_max_size = i_audiobuffer_size * 2;
-    }
+        p_sys->i_dev_latency_ticks = i_dev_latency_ticks;
+    p_sys->timing_report_delay_bytes = TicksToBytes(p_sys, TIMING_REPORT_DELAY_TICKS);
 
     ca_ClearOutBuffers(p_aout);
     p_sys->b_played = false;
@@ -466,7 +383,6 @@ ca_Uninitialize(audio_output_t *p_aout)
 {
     struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
     ca_ClearOutBuffers(p_aout);
-    p_sys->i_out_max_size = 0;
     p_sys->chans_to_reorder = 0;
 }
 
@@ -476,29 +392,17 @@ ca_SetAliveState(audio_output_t *p_aout, bool alive)
     struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
 
     lock_lock(p_sys);
-
-    bool b_sem_post = false;
     p_sys->b_paused = !alive;
-    if (!alive && p_sys->b_do_flush)
-    {
-        ca_ClearOutBuffers(p_aout);
-        p_sys->b_played = false;
-        p_sys->b_do_flush = false;
-        b_sem_post = true;
-    }
-
     lock_unlock(p_sys);
-
-    if (b_sem_post)
-        vlc_sem_post(&p_sys->flush_sem);
 }
 
-void ca_SetDeviceLatency(audio_output_t *p_aout, vlc_tick_t i_dev_latency_ticks)
+void ca_ResetDeviceLatency(audio_output_t *p_aout)
 {
     struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
 
     lock_lock(p_sys);
-    p_sys->i_dev_latency_ticks = i_dev_latency_ticks;
+    /* Trigger aout_TimingReport() to be called from the next render callback */
+    p_sys->timing_report_last_written_bytes = p_sys->timing_report_delay_bytes;
     lock_unlock(p_sys);
 }
 
@@ -545,13 +449,18 @@ RenderCallback(void *p_data, AudioUnitRenderActionFlags *ioActionFlags,
     VLC_UNUSED(ioActionFlags);
     VLC_UNUSED(inTimeStamp);
     VLC_UNUSED(inBusNumber);
+
+    audio_output_t * p_aout = p_data;
+    struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
+
+    assert(inNumberFrames == BytesToFrames(p_sys, ioData->mBuffers[0].mDataByteSize));
     VLC_UNUSED(inNumberFrames);
 
     uint64_t i_host_time = (inTimeStamp->mFlags & kAudioTimeStampHostTimeValid)
                          ? inTimeStamp->mHostTime : 0;
 
     bool is_silence;
-    ca_Render(p_data, i_host_time, ioData->mBuffers[0].mData,
+    ca_Render(p_aout, i_host_time, ioData->mBuffers[0].mData,
               ioData->mBuffers[0].mDataByteSize, &is_silence);
     if (is_silence)
         *ioActionFlags |= kAudioUnitRenderAction_OutputIsSilence;
@@ -601,21 +510,86 @@ GetLayoutDescription(audio_output_t *p_aout,
     return reslayout;
 }
 
+static unsigned
+AudioChannelLabelToVlcChan(AudioChannelLabel chan, bool swap_rear_surround)
+{
+    /* maps auhal channels to vlc ones */
+    switch (chan)
+    {
+        case kAudioChannelLabel_Left:
+            return AOUT_CHAN_LEFT;
+        case kAudioChannelLabel_Right:
+            return AOUT_CHAN_RIGHT;
+        case kAudioChannelLabel_Center:
+            return AOUT_CHAN_CENTER;
+        case kAudioChannelLabel_LFEScreen:
+            return AOUT_CHAN_LFE;
+        case kAudioChannelLabel_LeftSurround:
+            return swap_rear_surround ? AOUT_CHAN_MIDDLELEFT
+                                      : AOUT_CHAN_REARLEFT;
+        case kAudioChannelLabel_RightSurround:
+            return swap_rear_surround ? AOUT_CHAN_MIDDLERIGHT
+                                      : AOUT_CHAN_REARRIGHT;
+        case kAudioChannelLabel_RearSurroundLeft:
+            return swap_rear_surround ? AOUT_CHAN_REARLEFT
+                                      : AOUT_CHAN_MIDDLELEFT;
+        case kAudioChannelLabel_RearSurroundRight:
+            return swap_rear_surround ? AOUT_CHAN_REARRIGHT
+                                      : AOUT_CHAN_MIDDLERIGHT;
+        case kAudioChannelLabel_CenterSurround:
+            return AOUT_CHAN_REARCENTER;
+        case kAudioChannelLabel_LeftSurroundDirect:
+            return AOUT_CHAN_MIDDLELEFT;
+        case kAudioChannelLabel_RightSurroundDirect:
+            return AOUT_CHAN_MIDDLERIGHT;
+        default:
+            return 0;
+    }
+}
+
+static AudioChannelLabel
+VlcChanToAudioChannelLabel(unsigned chan, bool swap_rear_surround)
+{
+    /* maps auhal channels to vlc ones */
+    switch (chan)
+    {
+        case AOUT_CHAN_LEFT:
+            return kAudioChannelLabel_Left;
+        case AOUT_CHAN_RIGHT:
+            return kAudioChannelLabel_Right;
+        case AOUT_CHAN_CENTER:
+            return kAudioChannelLabel_Center;
+        case AOUT_CHAN_LFE:
+            return kAudioChannelLabel_LFEScreen;
+        case AOUT_CHAN_REARLEFT:
+            return swap_rear_surround ? kAudioChannelLabel_RearSurroundLeft
+                                      : kAudioChannelLabel_LeftSurround;
+        case AOUT_CHAN_REARRIGHT:
+            return swap_rear_surround ? kAudioChannelLabel_RearSurroundRight
+                                      : kAudioChannelLabel_RightSurround;
+        case AOUT_CHAN_MIDDLELEFT:
+            return swap_rear_surround ? kAudioChannelLabel_LeftSurround
+                                      : kAudioChannelLabel_RearSurroundLeft;
+        case AOUT_CHAN_MIDDLERIGHT:
+            return swap_rear_surround ? kAudioChannelLabel_RightSurround
+                                      : kAudioChannelLabel_RearSurroundRight;
+        case AOUT_CHAN_REARCENTER:
+            return kAudioChannelLabel_CenterSurround;
+        default:
+            vlc_assert_unreachable();
+    }
+}
+
 static int
 MapOutputLayout(audio_output_t *p_aout, audio_sample_format_t *fmt,
                 const AudioChannelLayout *outlayout, bool *warn_configuration)
 {
+    struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
     /* Fill VLC physical_channels from output layout */
-    fmt->i_physical_channels = 0;
     uint32_t i_original = fmt->i_physical_channels;
+    fmt->i_physical_channels = 0;
     AudioChannelLayout *reslayout = NULL;
-
-    if (outlayout == NULL)
-    {
-        msg_Dbg(p_aout, "not output layout, default to Stereo");
-        fmt->i_physical_channels = AOUT_CHANS_STEREO;
-        goto end;
-    }
+    assert(outlayout != NULL);
 
     if (outlayout->mChannelLayoutTag !=
         kAudioChannelLayoutTag_UseChannelDescriptions)
@@ -646,25 +620,28 @@ MapOutputLayout(audio_output_t *p_aout, audio_sample_format_t *fmt,
 
         msg_Dbg(p_aout, "output layout of AUHAL has %i channels",
                 outlayout->mNumberChannelDescriptions);
+        uint32_t chans_out[AOUT_CHAN_MAX];
 
-        /* maps auhal channels to vlc ones */
-        static const unsigned i_auhal_channel_mapping[] = {
-            [kAudioChannelLabel_Left]           = AOUT_CHAN_LEFT,
-            [kAudioChannelLabel_Right]          = AOUT_CHAN_RIGHT,
-            [kAudioChannelLabel_Center]         = AOUT_CHAN_CENTER,
-            [kAudioChannelLabel_LFEScreen]      = AOUT_CHAN_LFE,
-            [kAudioChannelLabel_LeftSurround]   = AOUT_CHAN_REARLEFT,
-            [kAudioChannelLabel_RightSurround]  = AOUT_CHAN_REARRIGHT,
-            /* needs to be swapped with rear */
-            [kAudioChannelLabel_RearSurroundLeft]  = AOUT_CHAN_MIDDLELEFT,
-            /* needs to be swapped with rear */
-            [kAudioChannelLabel_RearSurroundRight] = AOUT_CHAN_MIDDLERIGHT,
-            [kAudioChannelLabel_CenterSurround] = AOUT_CHAN_REARCENTER
-        };
-        static const size_t i_auhal_size = sizeof(i_auhal_channel_mapping)
-                                         / sizeof(i_auhal_channel_mapping[0]);
+        /* For 7.1, AOUT_CHAN_MIDDLELEFT/RIGHT needs to be swapped with
+         * AOUT_CHAN_REARLEFT/RIGHT. Auhal
+         * kAudioChannelLabel_Left/RightSurround are used as surround for 5.1,
+         * but as middle speakers for rear 7.1. */
+        unsigned swap_rear_surround = 0;
+        if (outlayout->mNumberChannelDescriptions == 8)
+        {
+            for (unsigned i = 0; i < outlayout->mNumberChannelDescriptions; i++)
+            {
+                AudioChannelLabel chan =
+                    outlayout->mChannelDescriptions[i].mChannelLabel;
+                if (chan == kAudioChannelLabel_RearSurroundLeft
+                 || chan == kAudioChannelLabel_RearSurroundRight)
+                    swap_rear_surround++;
+            }
+            if (swap_rear_surround == 2)
+                msg_Dbg(p_aout, "swapping Surround and RearSurround channels "
+                        "for 7.1 Rear Surround");
+        }
 
-        /* We want more than stereo and we can do that */
         for (unsigned i = 0; i < outlayout->mNumberChannelDescriptions; i++)
         {
             AudioChannelLabel chan =
@@ -672,11 +649,19 @@ MapOutputLayout(audio_output_t *p_aout, audio_sample_format_t *fmt,
 #ifndef NDEBUG
             msg_Dbg(p_aout, "this is channel: %d", (int) chan);
 #endif
-            if (chan < i_auhal_size && i_auhal_channel_mapping[chan] > 0)
-                fmt->i_physical_channels |= i_auhal_channel_mapping[chan];
+            unsigned mapped_chan =
+                AudioChannelLabelToVlcChan(chan, swap_rear_surround == 2);
+            if (mapped_chan != 0)
+            {
+                chans_out[i] = mapped_chan;
+                fmt->i_physical_channels |= mapped_chan;
+            }
             else
+            {
+                chans_out[i] = 0;
                 msg_Dbg(p_aout, "found nonrecognized channel %d at index "
                         "%d", chan, i);
+            }
         }
         if (fmt->i_physical_channels == 0)
         {
@@ -684,194 +669,64 @@ MapOutputLayout(audio_output_t *p_aout, audio_sample_format_t *fmt,
             if (warn_configuration)
                 *warn_configuration = true;
         }
-
+        else
+        {
+            p_sys->chans_to_reorder =
+                aout_CheckChannelReorder(NULL, chans_out,
+                                         fmt->i_physical_channels,
+                                         p_sys->chan_table);
+            if (p_sys->chans_to_reorder)
+                msg_Dbg(p_aout, "channel reordering needed");
+        }
     }
 
-end:
     free(reslayout);
     aout_FormatPrepare(fmt);
 
-    msg_Dbg(p_aout, "selected %d physical channels for device output",
-            aout_FormatNbChannels(fmt));
     msg_Dbg(p_aout, "VLC will output: %s", aout_FormatPrintChannels(fmt));
 
     return VLC_SUCCESS;
 }
 
 static int
-SetupInputLayout(audio_output_t *p_aout, const audio_sample_format_t *fmt,
-                 AudioChannelLayoutTag *inlayout_tag)
+MapInputLayout(audio_output_t *p_aout, const audio_sample_format_t *fmt,
+               AudioChannelLayout **inlayoutp, size_t *inlayout_size)
 {
-    struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
-    uint32_t chans_out[AOUT_CHAN_MAX];
+    unsigned channels = aout_FormatNbChannels(fmt);
 
-    /* Some channel abbreviations used below:
-     * L - left
-     * R - right
-     * C - center
-     * Ls - left surround
-     * Rs - right surround
-     * Cs - center surround
-     * Rls - rear left surround
-     * Rrs - rear right surround
-     * Lw - left wide
-     * Rw - right wide
-     * Lsd - left surround direct
-     * Rsd - right surround direct
-     * Lc - left center
-     * Rc - right center
-     * Ts - top surround
-     * Vhl - vertical height left
-     * Vhc - vertical height center
-     * Vhr - vertical height right
-     * Lt - left matrix total. for matrix encoded stereo.
-     * Rt - right matrix total. for matrix encoded stereo. */
+    size_t size;
+    if (mul_overflow(channels, sizeof(AudioChannelDescription), &size))
+        return VLC_ENOMEM;
+    if (add_overflow(size, sizeof(AudioChannelLayout), &size))
+        return VLC_ENOMEM;
+    AudioChannelLayout *inlayout = malloc(size);
+    if (inlayout == NULL)
+        return VLC_ENOMEM;
 
-    switch (aout_FormatNbChannels(fmt))
+    *inlayoutp = inlayout;
+    *inlayout_size = size;
+    inlayout->mChannelLayoutTag = kAudioChannelLayoutTag_UseChannelDescriptions;
+    inlayout->mNumberChannelDescriptions = aout_FormatNbChannels(fmt);
+
+    bool swap_rear_surround = (fmt->i_physical_channels & AOUT_CHANS_7_0) == AOUT_CHANS_7_0;
+    if (swap_rear_surround)
+        msg_Dbg(p_aout, "swapping Surround and RearSurround channels "
+                "for 7.1 Rear Surround");
+    unsigned chan_idx = 0;
+    for (unsigned i = 0; i < AOUT_CHAN_MAX; ++i)
     {
-        case 1:
-            *inlayout_tag = kAudioChannelLayoutTag_Mono;
-            break;
-        case 2:
-            *inlayout_tag = kAudioChannelLayoutTag_Stereo;
-            break;
-        case 3:
-            if (fmt->i_physical_channels & AOUT_CHAN_CENTER) /* L R C */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_7;
-            else if (fmt->i_physical_channels & AOUT_CHAN_LFE) /* L R LFE */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_4;
-            break;
-        case 4:
-            if (fmt->i_physical_channels & (AOUT_CHAN_CENTER | AOUT_CHAN_LFE)) /* L R C LFE */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_10;
-            else if (fmt->i_physical_channels & AOUT_CHANS_REAR) /* L R Ls Rs */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_3;
-            else if (fmt->i_physical_channels & AOUT_CHANS_CENTER) /* L R C Cs */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_3;
-            break;
-        case 5:
-            if (fmt->i_physical_channels & (AOUT_CHAN_CENTER)) /* L R Ls Rs C */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_19;
-            else if (fmt->i_physical_channels & (AOUT_CHAN_LFE)) /* L R Ls Rs LFE */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_18;
-            break;
-        case 6:
-            if (fmt->i_physical_channels & (AOUT_CHAN_LFE))
-            {
-                /* L R Ls Rs C LFE */
-                *inlayout_tag = kAudioChannelLayoutTag_DVD_20;
+        unsigned vlcchan = pi_vlc_chan_order_wg4[i];
+        if ((vlcchan & fmt->i_physical_channels) == 0)
+            continue;
 
-                chans_out[0] = AOUT_CHAN_LEFT;
-                chans_out[1] = AOUT_CHAN_RIGHT;
-                chans_out[2] = AOUT_CHAN_REARLEFT;
-                chans_out[3] = AOUT_CHAN_REARRIGHT;
-                chans_out[4] = AOUT_CHAN_CENTER;
-                chans_out[5] = AOUT_CHAN_LFE;
-
-                p_sys->chans_to_reorder =
-                    aout_CheckChannelReorder(NULL, chans_out,
-                                             fmt->i_physical_channels,
-                                             p_sys->chan_table);
-                if (p_sys->chans_to_reorder)
-                    msg_Dbg(p_aout, "channel reordering needed for 5.1 output");
-            }
-            else
-            {
-                /* L R Ls Rs C Cs */
-                *inlayout_tag = kAudioChannelLayoutTag_AudioUnit_6_0;
-
-                chans_out[0] = AOUT_CHAN_LEFT;
-                chans_out[1] = AOUT_CHAN_RIGHT;
-                chans_out[2] = AOUT_CHAN_REARLEFT;
-                chans_out[3] = AOUT_CHAN_REARRIGHT;
-                chans_out[4] = AOUT_CHAN_CENTER;
-                chans_out[5] = AOUT_CHAN_REARCENTER;
-
-                p_sys->chans_to_reorder =
-                    aout_CheckChannelReorder(NULL, chans_out,
-                                             fmt->i_physical_channels,
-                                             p_sys->chan_table);
-                if (p_sys->chans_to_reorder)
-                    msg_Dbg(p_aout, "channel reordering needed for 6.0 output");
-            }
-            break;
-        case 7:
-            /* L R C LFE Ls Rs Cs */
-            *inlayout_tag = kAudioChannelLayoutTag_MPEG_6_1_A;
-
-            chans_out[0] = AOUT_CHAN_LEFT;
-            chans_out[1] = AOUT_CHAN_RIGHT;
-            chans_out[2] = AOUT_CHAN_CENTER;
-            chans_out[3] = AOUT_CHAN_LFE;
-            chans_out[4] = AOUT_CHAN_REARLEFT;
-            chans_out[5] = AOUT_CHAN_REARRIGHT;
-            chans_out[6] = AOUT_CHAN_REARCENTER;
-
-            p_sys->chans_to_reorder =
-                aout_CheckChannelReorder(NULL, chans_out,
-                                         fmt->i_physical_channels,
-                                         p_sys->chan_table);
-            if (p_sys->chans_to_reorder)
-                msg_Dbg(p_aout, "channel reordering needed for 6.1 output");
-
-            break;
-        case 8:
-            if (fmt->i_physical_channels & (AOUT_CHAN_LFE))
-            {
-                /* L R C LFE Ls Rs Rls Rrs */
-                *inlayout_tag = kAudioChannelLayoutTag_MPEG_7_1_C;
-
-                chans_out[0] = AOUT_CHAN_LEFT;
-                chans_out[1] = AOUT_CHAN_RIGHT;
-                chans_out[2] = AOUT_CHAN_CENTER;
-                chans_out[3] = AOUT_CHAN_LFE;
-                chans_out[4] = AOUT_CHAN_MIDDLELEFT;
-                chans_out[5] = AOUT_CHAN_MIDDLERIGHT;
-                chans_out[6] = AOUT_CHAN_REARLEFT;
-                chans_out[7] = AOUT_CHAN_REARRIGHT;
-            }
-            else
-            {
-                /* Lc C Rc L R Ls Cs Rs */
-                *inlayout_tag = kAudioChannelLayoutTag_DTS_8_0_B;
-
-                chans_out[0] = AOUT_CHAN_MIDDLELEFT;
-                chans_out[1] = AOUT_CHAN_CENTER;
-                chans_out[2] = AOUT_CHAN_MIDDLERIGHT;
-                chans_out[3] = AOUT_CHAN_LEFT;
-                chans_out[4] = AOUT_CHAN_RIGHT;
-                chans_out[5] = AOUT_CHAN_REARLEFT;
-                chans_out[6] = AOUT_CHAN_REARCENTER;
-                chans_out[7] = AOUT_CHAN_REARRIGHT;
-            }
-            p_sys->chans_to_reorder =
-                aout_CheckChannelReorder(NULL, chans_out,
-                                         fmt->i_physical_channels,
-                                         p_sys->chan_table);
-            if (p_sys->chans_to_reorder)
-                msg_Dbg(p_aout, "channel reordering needed for 7.1 / 8.0 output");
-            break;
-        case 9:
-            /* Lc C Rc L R Ls Cs Rs LFE */
-            *inlayout_tag = kAudioChannelLayoutTag_DTS_8_1_B;
-            chans_out[0] = AOUT_CHAN_MIDDLELEFT;
-            chans_out[1] = AOUT_CHAN_CENTER;
-            chans_out[2] = AOUT_CHAN_MIDDLERIGHT;
-            chans_out[3] = AOUT_CHAN_LEFT;
-            chans_out[4] = AOUT_CHAN_RIGHT;
-            chans_out[5] = AOUT_CHAN_REARLEFT;
-            chans_out[6] = AOUT_CHAN_REARCENTER;
-            chans_out[7] = AOUT_CHAN_REARRIGHT;
-            chans_out[8] = AOUT_CHAN_LFE;
-
-            p_sys->chans_to_reorder =
-                aout_CheckChannelReorder(NULL, chans_out,
-                                         fmt->i_physical_channels,
-                                         p_sys->chan_table);
-            if (p_sys->chans_to_reorder)
-                msg_Dbg(p_aout, "channel reordering needed for 8.1 output");
-            break;
+        inlayout->mChannelDescriptions[chan_idx].mChannelLabel =
+            VlcChanToAudioChannelLabel(vlcchan, swap_rear_surround);
+        inlayout->mChannelDescriptions[chan_idx].mChannelFlags =
+            kAudioChannelFlags_AllOff;
+        chan_idx++;
     }
+
+    msg_Dbg(p_aout, "VLC keeping the same input layout");
 
     return VLC_SUCCESS;
 }
@@ -879,10 +734,13 @@ SetupInputLayout(audio_output_t *p_aout, const audio_sample_format_t *fmt,
 int
 au_Initialize(audio_output_t *p_aout, AudioUnit au, audio_sample_format_t *fmt,
               const AudioChannelLayout *outlayout, vlc_tick_t i_dev_latency_ticks,
-              bool *warn_configuration)
+              get_latency_cb get_latency, bool *warn_configuration)
 {
+    struct aout_sys_common *p_sys = (struct aout_sys_common *) p_aout->sys;
     int ret;
-    AudioChannelLayoutTag inlayout_tag;
+    AudioChannelLayout *inlayout_buf = NULL;
+    const AudioChannelLayout *inlayout = NULL;
+    size_t inlayout_size = 0;
 
     if (warn_configuration)
         *warn_configuration = false;
@@ -893,13 +751,19 @@ au_Initialize(audio_output_t *p_aout, AudioUnit au, audio_sample_format_t *fmt,
     {
         /* PCM */
         fmt->i_format = VLC_CODEC_FL32;
-        ret = MapOutputLayout(p_aout, fmt, outlayout, warn_configuration);
-        if (ret != VLC_SUCCESS)
-            return ret;
-
-        ret = SetupInputLayout(p_aout, fmt, &inlayout_tag);
-        if (ret != VLC_SUCCESS)
-            return ret;
+        if (outlayout != NULL)
+        {
+            ret = MapOutputLayout(p_aout, fmt, outlayout, warn_configuration);
+            if (ret != VLC_SUCCESS)
+                return ret;
+        }
+        else
+        {
+            ret = MapInputLayout(p_aout, fmt, &inlayout_buf, &inlayout_size);
+            if (ret != VLC_SUCCESS)
+                return ret;
+            inlayout = inlayout_buf;
+        }
 
         desc.mFormatFlags = kAudioFormatFlagsNativeFloatPacked;
         desc.mChannelsPerFrame = aout_FormatNbChannels(fmt);
@@ -912,7 +776,11 @@ au_Initialize(audio_output_t *p_aout, AudioUnit au, audio_sample_format_t *fmt,
         fmt->i_bytes_per_frame = 4;
         fmt->i_frame_length = 1;
 
-        inlayout_tag = kAudioChannelLayoutTag_Stereo;
+        static const AudioChannelLayout inlayout_spdif = {
+            .mChannelLayoutTag = kAudioChannelLayoutTag_Stereo,
+        };
+        inlayout = &inlayout_spdif;
+        inlayout_size = sizeof(inlayout_spdif);
 
         desc.mFormatFlags = kLinearPCMFormatFlagIsSignedInteger |
                             kLinearPCMFormatFlagIsPacked; /* S16LE */
@@ -934,6 +802,7 @@ au_Initialize(audio_output_t *p_aout, AudioUnit au, audio_sample_format_t *fmt,
     if (err != noErr)
     {
         ca_LogErr("failed to set stream format");
+        free(inlayout_buf);
         return VLC_EGENERIC;
     }
     msg_Dbg(p_aout, STREAM_FORMAT_MSG("Current AU format: " , desc));
@@ -945,6 +814,7 @@ au_Initialize(audio_output_t *p_aout, AudioUnit au, audio_sample_format_t *fmt,
     if (err != noErr)
     {
         ca_LogErr("failed to set stream format");
+        free(inlayout_buf);
         return VLC_EGENERIC;
     }
 
@@ -960,21 +830,23 @@ au_Initialize(audio_output_t *p_aout, AudioUnit au, audio_sample_format_t *fmt,
     if (err != noErr)
     {
         ca_LogErr("failed to setup render callback");
+        free(inlayout_buf);
         return VLC_EGENERIC;
     }
 
-    /* Set the input_layout as the layout VLC will use to feed the AU unit.
-     * Yes, it must be the INPUT scope */
-    AudioChannelLayout inlayout = {
-        .mChannelLayoutTag = inlayout_tag,
-    };
-    err = AudioUnitSetProperty(au, kAudioUnitProperty_AudioChannelLayout,
-                               kAudioUnitScope_Input, 0, &inlayout,
-                               sizeof(inlayout));
-    if (err != noErr)
+    if (inlayout != NULL)
     {
-        ca_LogErr("failed to setup input layout");
-        return VLC_EGENERIC;
+        /* Set the input_layout as the layout VLC will use to feed the AU unit.
+         * Yes, it must be the INPUT scope */
+        err = AudioUnitSetProperty(au, kAudioUnitProperty_AudioChannelLayout,
+                                   kAudioUnitScope_Input, 0, inlayout,
+                                   inlayout_size);
+        free(inlayout_buf);
+        if (err != noErr)
+        {
+            ca_LogErr("failed to setup input layout");
+            return VLC_EGENERIC;
+        }
     }
 
     /* AU init */
@@ -986,11 +858,20 @@ au_Initialize(audio_output_t *p_aout, AudioUnit au, audio_sample_format_t *fmt,
         return VLC_EGENERIC;
     }
 
-    ret = ca_Initialize(p_aout, fmt, i_dev_latency_ticks);
+    ret = ca_Initialize(p_aout, fmt, i_dev_latency_ticks, get_latency);
     if (ret != VLC_SUCCESS)
     {
         AudioUnitUninitialize(au);
         return VLC_EGENERIC;
+    }
+
+    Float64 unit_s;
+    if (AudioUnitGetProperty(au, kAudioUnitProperty_Latency,
+                             kAudioUnitScope_Global, 0, &unit_s,
+                             &(UInt32) { sizeof(unit_s) }) == noErr)
+    {
+        p_sys->au_latency_ticks = vlc_tick_from_sec(unit_s);
+        msg_Dbg(p_aout, "AudioUnit latency: %" PRId64 "us", p_sys->au_latency_ticks);
     }
 
     return VLC_SUCCESS;

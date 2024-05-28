@@ -38,8 +38,41 @@
 #include <assert.h>
 
 #include <winstring.h>
-#include <windows.storage.h>
 #include <roapi.h>
+
+#define WIDL_using_Windows_Storage
+#include <windows.storage.h>
+
+#ifndef IStorageItem_get_Path
+typedef __x_ABI_CWindows_CStorage_CIStorageFolder IStorageFolder;
+typedef __x_ABI_CWindows_CStorage_CIStorageItem   IStorageItem;
+typedef __x_ABI_CWindows_CStorage_CIKnownFoldersStatics IKnownFoldersStatics;
+typedef __x_ABI_CWindows_CStorage_CIApplicationDataStatics IApplicationDataStatics;
+typedef __x_ABI_CWindows_CStorage_CIApplicationData IApplicationData;
+typedef __x_ABI_CWindows_CStorage_CIApplicationData2 IApplicationData2;
+
+#define IID_IStorageItem IID___x_ABI_CWindows_CStorage_CIStorageItem
+#define IID_IKnownFoldersStatics IID___x_ABI_CWindows_CStorage_CIKnownFoldersStatics
+#define IID_IApplicationDataStatics IID___x_ABI_CWindows_CStorage_CIApplicationDataStatics
+#define IID_IApplicationData2 IID___x_ABI_CWindows_CStorage_CIApplicationData2
+
+#define IKnownFoldersStatics_get_DocumentsLibrary(a,f) __x_ABI_CWindows_CStorage_CIKnownFoldersStatics_get_DocumentsLibrary(a,f)
+#define IKnownFoldersStatics_get_MusicLibrary(a,f) __x_ABI_CWindows_CStorage_CIKnownFoldersStatics_get_MusicLibrary(a,f)
+#define IKnownFoldersStatics_get_PicturesLibrary(a,f) __x_ABI_CWindows_CStorage_CIKnownFoldersStatics_get_PicturesLibrary(a,f)
+#define IKnownFoldersStatics_get_VideosLibrary(a,f) __x_ABI_CWindows_CStorage_CIKnownFoldersStatics_get_VideosLibrary(a,f)
+#define IStorageItem_get_Path(a,f) __x_ABI_CWindows_CStorage_CIStorageItem_get_Path(a,f)
+#define IStorageItem_Release(a) __x_ABI_CWindows_CStorage_CIStorageItem_Release(a)
+#define IStorageFolder_Release(a) __x_ABI_CWindows_CStorage_CIStorageFolder_Release(a)
+#define IStorageFolder_QueryInterface(a,i,v) __x_ABI_CWindows_CStorage_CIStorageFolder_QueryInterface(a,i,v)
+#define IKnownFoldersStatics_Release(a) __x_ABI_CWindows_CStorage_CIKnownFoldersStatics_Release(a)
+#define IApplicationDataStatics_get_Current(a,f) __x_ABI_CWindows_CStorage_CIApplicationDataStatics_get_Current(a,f)
+#define IApplicationData_get_LocalFolder(a,f) __x_ABI_CWindows_CStorage_CIApplicationData_get_LocalFolder(a,f)
+#define IApplicationDataStatics_Release(a) __x_ABI_CWindows_CStorage_CIApplicationDataStatics_Release(a)
+#define IApplicationData_Release(a) __x_ABI_CWindows_CStorage_CIApplicationData_Release(a)
+#define IApplicationData_QueryInterface(a,i,v) __x_ABI_CWindows_CStorage_CIApplicationData_QueryInterface(a,i,v)
+#define IApplicationData2_get_LocalCacheFolder(a,f) __x_ABI_CWindows_CStorage_CIApplicationData2_get_LocalCacheFolder(a,f)
+#define IApplicationData2_Release(a) __x_ABI_CWindows_CStorage_CIApplicationData2_Release(a)
+#endif
 
 static char * GetFolderName(IStorageFolder *folder)
 {
@@ -109,7 +142,6 @@ static char *config_GetShellDir(vlc_userdir_t csidl)
     }
 
 end_other:
-    WindowsDeleteString(hClassName);
     if (knownFoldersStatics)
         IKnownFoldersStatics_Release(knownFoldersStatics);
 
@@ -152,7 +184,7 @@ char *config_GetSysPath(vlc_sysdir_t type, const char *filename)
         return dir;
 
     char *path;
-    if (unlikely(asprintf(&path, "%s/%s", dir, filename) == -1))
+    if (unlikely(asprintf(&path, "%s\\%s", dir, filename) == -1))
         path = NULL;
     free(dir);
     return path;
@@ -210,7 +242,6 @@ static char *config_GetAppDir (void)
     }
 
 end_appdata:
-    WindowsDeleteString(hClassName);
     if (appDataStatics)
         IApplicationDataStatics_Release(appDataStatics);
     if (appData)
@@ -219,7 +250,7 @@ end_appdata:
     return psz_dir;
 }
 
-#ifdef HAVE_IAPPLICATIONDATA2
+#ifdef HAVE___X_ABI_CWINDOWS_CSTORAGE_CIAPPLICATIONDATA2
 static char *config_GetCacheDir (void)
 {
     HRESULT hr;
@@ -268,7 +299,6 @@ static char *config_GetCacheDir (void)
     hr = IApplicationData2_get_LocalCacheFolder(appData2, &folder);
 
 end_appdata:
-    WindowsDeleteString(hClassName);
     if (appDataStatics)
         IApplicationDataStatics_Release(appDataStatics);
     if (appData2)
@@ -281,7 +311,12 @@ end_appdata:
 
     return GetFolderName(folder);
 }
-#endif // HAVE_IAPPLICATIONDATA2
+#else
+static inline char *config_GetCacheDir(void)
+{
+    return config_GetAppDir();
+}
+#endif // HAVE___X_ABI_CWINDOWS_CSTORAGE_CIAPPLICATIONDATA2
 
 char *config_GetUserDir (vlc_userdir_t type)
 {
@@ -298,11 +333,7 @@ char *config_GetUserDir (vlc_userdir_t type)
         case VLC_USERDATA_DIR:
             return config_GetAppDir ();
         case VLC_CACHE_DIR:
-#ifdef HAVE_IAPPLICATIONDATA2
             return config_GetCacheDir ();
-#else // !HAVE_IAPPLICATIONDATA2
-            return config_GetAppDir();
-#endif // !HAVE_IAPPLICATIONDATA2
         case VLC_MUSIC_DIR:
             return config_GetShellDir (VLC_MUSIC_DIR);
         case VLC_PICTURES_DIR:

@@ -339,7 +339,7 @@ static int Open( vlc_object_t * p_this )
     if( b_matched )
     {
         p_demux->pf_demux = MimeDemux;
-        if( vlc_stream_Read( p_demux->s, NULL, i_size ) < i_size )
+        if( vlc_stream_Read( p_demux->s, NULL, i_size ) != i_size )
             return VLC_EGENERIC;
     }
     else if( i_size == 0 )
@@ -507,7 +507,7 @@ static int MimeDemux( demux_t *p_demux )
         /* Handle old and new style of separators */
         if (!strncmp(p_sys->psz_separator, (char *)(p_sys->p_peek + i + 2),
                      strlen( p_sys->psz_separator ))
-         || ((strlen(p_sys->psz_separator) > 4)
+         || ((strnlen(p_sys->psz_separator, 4+1) > 4)
           && !strncmp(p_sys->psz_separator, "--", 2)
           && !strncmp(p_sys->psz_separator, (char *)(p_sys->p_peek + i),
                       strlen( p_sys->psz_separator))))

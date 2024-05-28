@@ -208,10 +208,10 @@ static int Open( vlc_object_t *p_this )
          || shout_set_mount( p_shout, url.psz_path ) != SHOUTERR_SUCCESS
          || shout_set_user( p_shout, url.psz_username ) != SHOUTERR_SUCCESS
          || shout_set_agent( p_shout, "VLC media player " VERSION ) != SHOUTERR_SUCCESS
-         || shout_set_name( p_shout, psz_name ) != SHOUTERR_SUCCESS
-         || shout_set_description( p_shout, psz_description ) != SHOUTERR_SUCCESS
-         || shout_set_genre( p_shout, psz_genre ) != SHOUTERR_SUCCESS
-         || shout_set_url( p_shout, psz_url ) != SHOUTERR_SUCCESS
+         || shout_set_meta( p_shout, SHOUT_META_NAME, psz_name ) != SHOUTERR_SUCCESS
+         || shout_set_meta( p_shout, SHOUT_META_DESCRIPTION, psz_description ) != SHOUTERR_SUCCESS
+         || shout_set_meta( p_shout, SHOUT_META_GENRE, psz_genre ) != SHOUTERR_SUCCESS
+         || shout_set_meta( p_shout, SHOUT_META_URL, psz_url ) != SHOUTERR_SUCCESS
          /* || shout_set_nonblocking( p_shout, 1 ) != SHOUTERR_SUCCESS */
       )
     {
@@ -230,8 +230,10 @@ static int Open( vlc_object_t *p_this )
     free( psz_genre );
     free( psz_url );
 
-    i_ret = shout_set_format( p_shout, var_GetBool( p_access, SOUT_CFG_PREFIX "mp3" ) ?
-                                       SHOUT_FORMAT_MP3 : SHOUT_FORMAT_OGG );
+    unsigned format = var_GetBool( p_access, SOUT_CFG_PREFIX "mp3" ) ?
+        SHOUT_FORMAT_MP3 : SHOUT_FORMAT_OGG;
+
+    i_ret = shout_set_content_format( p_shout, format, SHOUT_USAGE_AUDIO, NULL );
 
     if( i_ret != SHOUTERR_SUCCESS )
     {

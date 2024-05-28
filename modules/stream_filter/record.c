@@ -66,7 +66,7 @@ static ssize_t Read( stream_t *, void *p_read, size_t i_read );
 static int  Seek   ( stream_t *, uint64_t );
 static int  Control( stream_t *, int i_query, va_list );
 
-static int  Start  ( stream_t *, const char *psz_extension );
+static int  Start  ( stream_t *, const char *dir_path, const char *psz_extension );
 static int  Stop   ( stream_t * );
 static void Write  ( stream_t *, const uint8_t *p_buffer, size_t i_buffer );
 
@@ -138,23 +138,38 @@ static int Control( stream_t *s, int i_query, va_list args )
 
     stream_sys_t *sys = s->p_sys;
     bool b_active = (bool)va_arg( args, int );
-    const char *psz_extension = NULL;
+    const char *psz_extension = NULL, *dir_path = NULL;
     if( b_active )
+    {
+        dir_path = va_arg( args, const char* );
         psz_extension = va_arg( args, const char* );
+    }
 
     if( !sys->f == !b_active )
         return VLC_SUCCESS;
 
     if( b_active )
-        return Start( s, psz_extension );
+        return Start( s, dir_path, psz_extension );
     else
         return Stop( s );
+}
+
+static void set_record_file_var(vlc_object_t *obj, const char *file)
+{
+    while ((obj = vlc_object_parent(obj)) != NULL)
+    {
+        if (var_Type(obj, "record-file") != 0)
+        {
+            var_SetString(obj, "record-file", file);
+            break;
+        }
+    }
 }
 
 /****************************************************************************
  * Helpers
  ****************************************************************************/
-static int Start( stream_t *s, const char *psz_extension )
+static int Start( stream_t *s, const char *dir_path, const char *psz_extension )
 {
     stream_sys_t *p_sys = s->p_sys;
 
@@ -166,16 +181,21 @@ static int Start( stream_t *s, const char *psz_extension )
         psz_extension = "dat";
 
     /* Retrieve path */
-    char *psz_path = var_CreateGetNonEmptyString( s, "input-record-path" );
-    if( !psz_path )
-        psz_path = config_GetUserDir( VLC_DOWNLOAD_DIR );
+    char *psz_path = NULL;
+    if( dir_path == NULL )
+    {
+        psz_path = var_CreateGetNonEmptyString( s, "input-record-path" );
+        if( psz_path == NULL )
+            psz_path = config_GetUserDir( VLC_DOWNLOAD_DIR );
+        dir_path = psz_path;
+    }
 
-    if( !psz_path )
+    if( dir_path == NULL )
         return VLC_ENOMEM;
 
     /* Create file name
      * TODO allow prefix configuration */
-    psz_file = input_item_CreateFilename( s->p_input_item, psz_path,
+    psz_file = input_item_CreateFilename( s->p_input_item, dir_path,
                                           INPUT_RECORD_PREFIX, psz_extension );
 
     free( psz_path );
@@ -191,7 +211,7 @@ static int Start( stream_t *s, const char *psz_extension )
     }
 
     /* signal new record file */
-    var_SetString( vlc_object_instance(s), "record-file", psz_file );
+    set_record_file_var(VLC_OBJECT(s), psz_file);
 
     msg_Dbg( s, "Recording into %s", psz_file );
     free( psz_file );

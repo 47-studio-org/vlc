@@ -13,6 +13,11 @@
 
 SUFFIXES += .ui .h .hpp .moc.cpp .qml
 
+vlc_qt_check_SOURCES = gui/qt/vlc-qt-check.cpp gui/qt/plugins.hpp
+vlc_qt_check_CXXFLAGS = $(AM_CXXFLAGS) $(QT_CFLAGS) -fPIC $(CXXFLAGS_qt)
+vlc_qt_check_CPPFLAGS = $(AM_CPPFLAGS)
+vlc_qt_check_LDADD = $(QT_LIBS) $(LIBS_qt) $(QT5_PLUGINS_LIBS) $(QT5_PLATFORM_PLUGINS_LIBS) $(QT5_XCB_PLUGINS_LIBS) $(QT5_WAYLAND_PLUGINS_LIBS)
+
 libqt_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) \
 	-I$(srcdir)/gui/qt -I$(builddir)/gui/qt/ \
 	-I$(builddir)/gui/qt/dialogs/extended \
@@ -24,17 +29,20 @@ libqt_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) \
 	-I$(builddir)/gui/qt/dialogs/podcast \
 	-I$(builddir)/gui/qt/dialogs/preferences \
 	-I$(builddir)/gui/qt/dialogs/sout \
-	-I$(builddir)/gui/qt/dialogs/vlm
+	-I$(builddir)/gui/qt/dialogs/vlm \
+	-DQPNI_HEADER=\<$(QT_VERSION)/QtGui/qpa/qplatformnativeinterface.h\>
 
 libqt_plugin_la_CXXFLAGS = $(AM_CXXFLAGS) $(QT_CFLAGS) $(CXXFLAGS_qt)
-libqt_plugin_la_LIBADD = $(QT_LIBS) $(LIBS_qt) $(LIBM)
-libqt_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(guidir)'
+libqt_plugin_la_LIBADD = $(QT_LIBS) $(LIBS_qt) $(LIBM) \
+                         $(QT5_PLUGINS_LIBS) $(QT5_PLATFORM_PLUGINS_LIBS)
+libqt_plugin_la_LDFLAGS = $(AM_LDFLAGS)
 if HAVE_DARWIN
 libqt_plugin_la_LDFLAGS += -Wl,-framework,Cocoa
 endif
 if HAVE_QT5_X11
 libqt_plugin_la_CXXFLAGS += $(QT5_X11_CFLAGS) -DQT5_HAS_X11
 libqt_plugin_la_LIBADD += $(QT5_X11_LIBS) $(X_LIBS) $(X_PRE_LIB) -lX11
+vlc_qt_check_CPPFLAGS += $(QT5_WAYLAND_CFLAGS) -DQT5_HAS_X11
 endif
 
 if HAVE_XCB
@@ -50,10 +58,15 @@ endif
 endif
 
 if HAVE_WAYLAND
-libqt_plugin_la_CPPFLAGS += -DQT5_HAS_WAYLAND \
-	-DQPNI_HEADER=\<$(QT_VERSION)/QtGui/qpa/qplatformnativeinterface.h\>
+libqt_plugin_la_CPPFLAGS += -DQT5_HAS_WAYLAND
 libqt_plugin_la_CXXFLAGS += $(WAYLAND_CLIENT_CFLAGS)
 libqt_plugin_la_LIBADD += $(WAYLAND_CLIENT_LIBS)
+endif
+if HAVE_QT5_WAYLAND
+libqt_plugin_la_CPPFLAGS += $(QT5_WAYLAND_CFLAGS)
+libqt_plugin_la_LIBADD += $(QT5_WAYLAND_LIBS)
+vlc_qt_check_CPPFLAGS += $(QT5_WAYLAND_CFLAGS) -DQT5_HAS_WAYLAND
+vlc_qt_check_LDADD += $(QT5_WAYLAND_LIBS)
 endif
 if HAVE_WIN32
 libqt_plugin_la_CXXFLAGS += $(LIBCOMCXXFLAGS)
@@ -65,9 +78,24 @@ endif
 if QT_QML_DEBUG
 libqt_plugin_la_CPPFLAGS += -DQT_QML_DEBUG
 endif
+if HAVE_QT5_GTK
+libqt_plugin_la_CPPFLAGS += -DQT5_HAS_GTK
+endif
+if HAVE_QT5_DECLARATIVE_PRIVATE
+libqt_plugin_la_CPPFLAGS += -DQT5_DECLARATIVE_PRIVATE \
+	-I$(QT_INCLUDE_DIRECTORY)/QtCore/$(QT_VERSION) \
+	-I$(QT_INCLUDE_DIRECTORY)/QtCore/$(QT_VERSION)/QtCore \
+	-I$(QT_INCLUDE_DIRECTORY)/QtGui/$(QT_VERSION) \
+	-I$(QT_INCLUDE_DIRECTORY)/QtGui/$(QT_VERSION)/QtGui \
+	-I$(QT_INCLUDE_DIRECTORY)/QtQml/$(QT_VERSION) \
+	-I$(QT_INCLUDE_DIRECTORY)/QtQml/$(QT_VERSION)/QtQml \
+	-I$(QT_INCLUDE_DIRECTORY)/QtQuick/$(QT_VERSION) \
+	-I$(QT_INCLUDE_DIRECTORY)/QtQuick/$(QT_VERSION)/QtQuick
+
+endif
 
 libqt_plugin_la_SOURCES = \
-	gui/qt/qt.cpp gui/qt/qt.hpp \
+	gui/qt/qt.cpp gui/qt/qt.hpp gui/qt/plugins.hpp \
 	gui/qt/dialogs/bookmarks/bookmarks.cpp gui/qt/dialogs/bookmarks/bookmarks.hpp \
 	gui/qt/dialogs/dialogs/dialogmodel.cpp \
 	gui/qt/dialogs/dialogs/dialogmodel.hpp \
@@ -136,6 +164,10 @@ libqt_plugin_la_SOURCES = \
 	gui/qt/dialogs/playlists/playlists.cpp gui/qt/dialogs/playlists/playlists.hpp \
 	gui/qt/maininterface/compositor.hpp \
 	gui/qt/maininterface/compositor.cpp \
+	gui/qt/maininterface/compositor_common.hpp \
+	gui/qt/maininterface/compositor_common.cpp \
+	gui/qt/maininterface/compositor_accessibility.cpp \
+	gui/qt/maininterface/compositor_accessibility.hpp \
 	gui/qt/maininterface/compositor_dummy.hpp \
 	gui/qt/maininterface/compositor_dummy.cpp \
 	gui/qt/maininterface/interface_window_handler.cpp \
@@ -217,16 +249,25 @@ libqt_plugin_la_SOURCES = \
 	gui/qt/menus/qml_menu_wrapper.cpp \
 	gui/qt/menus/qml_menu_wrapper.hpp \
 	gui/qt/menus/menus.cpp gui/qt/menus/menus.hpp \
+	gui/qt/network/mediatreelistener.cpp \
+	gui/qt/network/mediatreelistener.hpp \
 	gui/qt/network/networkdevicemodel.cpp \
 	gui/qt/network/networkdevicemodel.hpp \
 	gui/qt/network/networksourcesmodel.cpp \
 	gui/qt/network/networksourcesmodel.hpp \
 	gui/qt/network/networkmediamodel.cpp \
 	gui/qt/network/networkmediamodel.hpp \
-	gui/qt/network/networksourcelistener.cpp \
-	gui/qt/network/networksourcelistener.hpp \
 	gui/qt/network/servicesdiscoverymodel.cpp \
 	gui/qt/network/servicesdiscoverymodel.hpp \
+	gui/qt/network/standardpathmodel.cpp \
+	gui/qt/network/standardpathmodel.hpp \
+	gui/qt/style/qtthemeprovider.hpp \
+	gui/qt/style/colorcontext.cpp \
+	gui/qt/style/colorcontext.hpp \
+	gui/qt/style/systempalette.cpp \
+	gui/qt/style/systempalette.hpp \
+	gui/qt/style/defaultthemeproviders.hpp \
+	gui/qt/style/systempalettethemeprovider.cpp \
 	gui/qt/player/input_models.cpp gui/qt/player/input_models.hpp \
 	gui/qt/player/player_controller.cpp gui/qt/player/player_controller.hpp gui/qt/player/player_controller_p.hpp \
 	gui/qt/player/player_controlbar_model.cpp gui/qt/player/player_controlbar_model.hpp \
@@ -247,10 +288,14 @@ libqt_plugin_la_SOURCES = \
 	gui/qt/util/asynctask.hpp \
 	gui/qt/util/audio_device_model.cpp  \
 	gui/qt/util/audio_device_model.hpp \
+	gui/qt/util/cliplistmodel.cpp \
+	gui/qt/util/cliplistmodel.hpp \
 	gui/qt/util/color_scheme_model.cpp gui/qt/util/color_scheme_model.hpp \
+	gui/qt/util/color_svg_image_provider.cpp gui/qt/util/color_svg_image_provider.hpp \
 	gui/qt/util/covergenerator.cpp \
 	gui/qt/util/covergenerator.hpp \
 	gui/qt/util/imageluminanceextractor.cpp gui/qt/util/imageluminanceextractor.hpp \
+	gui/qt/util/csdbuttonmodel.cpp gui/qt/util/csdbuttonmodel.hpp \
 	gui/qt/util/imagehelper.cpp gui/qt/util/imagehelper.hpp \
 	gui/qt/util/i18n.cpp gui/qt/util/i18n.hpp \
 	gui/qt/util/keyhelper.cpp gui/qt/util/keyhelper.hpp \
@@ -260,6 +305,8 @@ libqt_plugin_la_SOURCES = \
 	gui/qt/util/item_key_event_filter.hpp \
 	gui/qt/util/flickable_scroll_handler.cpp \
 	gui/qt/util/flickable_scroll_handler.hpp \
+	gui/qt/util/hover_handler_rev11.cpp \
+	gui/qt/util/hover_handler_rev11.hpp \
 	gui/qt/util/qt_dirs.cpp gui/qt/util/qt_dirs.hpp \
 	gui/qt/util/qvlcapp.hpp \
 	gui/qt/util/proxycolumnmodel.hpp \
@@ -271,7 +318,6 @@ libqt_plugin_la_SOURCES = \
 	gui/qt/util/sortfilterproxymodel.cpp \
 	gui/qt/util/sortfilterproxymodel.hpp \
 	gui/qt/util/soutchain.cpp gui/qt/util/soutchain.hpp \
-	gui/qt/util/systempalette.cpp gui/qt/util/systempalette.hpp \
 	gui/qt/util/validators.cpp gui/qt/util/validators.hpp \
 	gui/qt/util/varcommon_p.hpp \
 	gui/qt/util/varchoicemodel.cpp  gui/qt/util/varchoicemodel.hpp \
@@ -283,9 +329,13 @@ libqt_plugin_la_SOURCES = \
 	gui/qt/util/mouse_event_filter.hpp \
 	gui/qt/util/effects_image_provider.cpp \
 	gui/qt/util/effects_image_provider.hpp \
+	gui/qt/util/qsgroundedrectangularimagenode.cpp \
+	gui/qt/util/qsgroundedrectangularimagenode.hpp \
 	gui/qt/widgets/native/animators.cpp \
 	gui/qt/widgets/native/animators.hpp \
 	gui/qt/widgets/native/customwidgets.cpp gui/qt/widgets/native/customwidgets.hpp \
+	gui/qt/widgets/native/csdthemeimage.cpp \
+	gui/qt/widgets/native/csdthemeimage.hpp \
 	gui/qt/widgets/native/interface_widgets.cpp \
 	gui/qt/widgets/native/interface_widgets.hpp \
 	gui/qt/widgets/native/navigation_attached.cpp \
@@ -302,7 +352,8 @@ libqt_plugin_la_SOURCES += \
 	gui/qt/maininterface/mainctx_win32.cpp \
 	gui/qt/maininterface/mainctx_win32.hpp \
 	gui/qt/maininterface/compositor_win7.cpp \
-	gui/qt/maininterface/compositor_win7.hpp
+	gui/qt/maininterface/compositor_win7.hpp \
+	gui/qt/style/windowsthemeprovider.cpp
 
 if HAVE_DCOMP
 libqt_plugin_la_SOURCES += \
@@ -393,6 +444,7 @@ nodist_libqt_plugin_la_SOURCES = \
 	gui/qt/dialogs/toolbar/controlbar_profile_model.moc.cpp \
 	gui/qt/dialogs/playlists/playlists.moc.cpp \
 	gui/qt/maininterface/compositor.moc.cpp \
+	gui/qt/maininterface/compositor_common.moc.cpp \
 	gui/qt/maininterface/compositor_dummy.moc.cpp \
 	gui/qt/maininterface/interface_window_handler.moc.cpp \
 	gui/qt/maininterface/mainctx.moc.cpp \
@@ -406,6 +458,7 @@ nodist_libqt_plugin_la_SOURCES = \
 	gui/qt/medialibrary/mlalbumtrackmodel.moc.cpp \
 	gui/qt/medialibrary/mlartist.moc.cpp \
 	gui/qt/medialibrary/mlartistmodel.moc.cpp \
+        gui/qt/medialibrary/mlbookmarkmodel.moc.cpp \
 	gui/qt/medialibrary/mlbasemodel.moc.cpp \
 	gui/qt/medialibrary/mlfoldersmodel.moc.cpp \
 	gui/qt/medialibrary/mlgenremodel.moc.cpp \
@@ -429,6 +482,9 @@ nodist_libqt_plugin_la_SOURCES = \
 	gui/qt/network/networksourcesmodel.moc.cpp \
 	gui/qt/network/networkmediamodel.moc.cpp \
 	gui/qt/network/servicesdiscoverymodel.moc.cpp \
+	gui/qt/network/standardpathmodel.moc.cpp \
+	gui/qt/style/colorcontext.moc.cpp \
+	gui/qt/style/systempalette.moc.cpp \
 	gui/qt/player/input_models.moc.cpp \
 	gui/qt/player/player_controller.moc.cpp \
 	gui/qt/player/player_controlbar_model.moc.cpp \
@@ -440,8 +496,11 @@ nodist_libqt_plugin_la_SOURCES = \
 	gui/qt/playlist/playlist_model.moc.cpp \
 	gui/qt/util/asynctask.moc.cpp \
 	gui/qt/util/audio_device_model.moc.cpp \
+	gui/qt/util/cliplistmodel.moc.cpp \
 	gui/qt/util/color_scheme_model.moc.cpp \
+	gui/qt/util/color_svg_image_provider.moc.cpp \
 	gui/qt/util/imageluminanceextractor.moc.cpp \
+	gui/qt/util/csdbuttonmodel.moc.cpp \
 	gui/qt/util/i18n.moc.cpp \
 	gui/qt/util/keyhelper.moc.cpp \
 	gui/qt/util/navigation_history.moc.cpp \
@@ -449,17 +508,19 @@ nodist_libqt_plugin_la_SOURCES = \
 	gui/qt/util/mouse_event_filter.moc.cpp \
 	gui/qt/util/effects_image_provider.moc.cpp \
 	gui/qt/util/flickable_scroll_handler.moc.cpp \
+	gui/qt/util/hover_handler_rev11.moc.cpp \
 	gui/qt/util/qvlcapp.moc.cpp \
 	gui/qt/util/renderer_manager.moc.cpp \
 	gui/qt/util/selectable_list_model.moc.cpp \
 	gui/qt/util/sortfilterproxymodel.moc.cpp \
-	gui/qt/util/systempalette.moc.cpp \
 	gui/qt/util/validators.moc.cpp \
 	gui/qt/util/varchoicemodel.moc.cpp \
 	gui/qt/util/variables.moc.cpp \
 	gui/qt/util/vlctick.moc.cpp \
 	gui/qt/util/qmlinputitem.moc.cpp \
+	gui/qt/util/qsgroundedrectangularimagenode.moc.cpp \
 	gui/qt/widgets/native/animators.moc.cpp \
+	gui/qt/widgets/native/csdthemeimage.moc.cpp \
 	gui/qt/widgets/native/customwidgets.moc.cpp \
 	gui/qt/widgets/native/interface_widgets.moc.cpp \
 	gui/qt/widgets/native/navigation_attached.moc.cpp \
@@ -527,6 +588,7 @@ uic_verbose__0 = $(uic_verbose_0)
 
 MOC_CPPFLAGS = $(DEFS) \
 	-I$(top_srcdir)/include -I$(top_builddir)/include -I$(top_builddir) \
+	$(QT_CFLAGS) \
 	$(libqt_plugin_la_CPPFLAGS)
 if HAVE_DARWIN
 MOC_CPPFLAGS += -DQ_OS_MAC
@@ -572,12 +634,7 @@ ui_%.h: %.ui
 
 libqt_plugin_la_RES = \
 	gui/qt/pixmaps/VLCIcons.ttf \
-	gui/qt/pixmaps/clear.svg \
-	gui/qt/pixmaps/eject.svg \
-	gui/qt/pixmaps/faster.svg \
-	gui/qt/pixmaps/faster2.svg \
-	gui/qt/pixmaps/go-next.svg \
-	gui/qt/pixmaps/addons/addon.svg \
+	gui/qt/pixmaps/addons/addon_default.svg \
 	gui/qt/pixmaps/addons/addon_broken.svg \
 	gui/qt/pixmaps/addons/addon_blue.svg \
 	gui/qt/pixmaps/addons/addon_cyan.svg \
@@ -585,57 +642,147 @@ libqt_plugin_la_RES = \
 	gui/qt/pixmaps/addons/addon_magenta.svg \
 	gui/qt/pixmaps/addons/addon_red.svg \
 	gui/qt/pixmaps/addons/addon_yellow.svg \
-	gui/qt/pixmaps/addons/score.svg \
-	gui/qt/pixmaps/menu.svg \
-	gui/qt/pixmaps/menus/exit_16px.svg \
-	gui/qt/pixmaps/menus/help_16px.svg \
-	gui/qt/pixmaps/menus/info_16px.svg \
-	gui/qt/pixmaps/menus/messages_16px.svg \
-	gui/qt/pixmaps/menus/playlist_16px.svg \
-	gui/qt/pixmaps/menus/preferences_16px.svg \
-	gui/qt/pixmaps/menus/settings_16px.svg \
-	gui/qt/pixmaps/menus/stream_16px.svg \
-	gui/qt/pixmaps/next.svg \
-	gui/qt/pixmaps/noart.png \
-	gui/qt/pixmaps/noart_album.svg \
-	gui/qt/pixmaps/noart_albumCover.svg \
-	gui/qt/pixmaps/noart_artist.svg \
-	gui/qt/pixmaps/noart_artist_small.svg \
-	gui/qt/pixmaps/noart_artistCover.svg \
-	gui/qt/pixmaps/noart_videoCover.svg \
-	gui/qt/pixmaps/pause.svg \
-	gui/qt/pixmaps/play.svg \
-	gui/qt/pixmaps/play_button.svg \
-	gui/qt/pixmaps/play_shadow.png \
-	gui/qt/pixmaps/new_indicator.svg \
-	gui/qt/pixmaps/playlist/add.svg \
-	gui/qt/pixmaps/playlist/playlist.svg \
-	gui/qt/pixmaps/playlist/remove.svg \
-	gui/qt/pixmaps/playlist/repeat_all.svg \
-	gui/qt/pixmaps/playlist/repeat_off.svg \
-	gui/qt/pixmaps/playlist/repeat_one.svg \
-	gui/qt/pixmaps/playlist/active_indicator.svg \
-	gui/qt/pixmaps/playlist/shuffle_on.svg \
-	gui/qt/pixmaps/playlist/dropzone.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/capture.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/pictures.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/disc.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/playlist.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/lan.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/podcast.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/library.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/screen.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/movie.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/mtp.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/music.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/network.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/sd/appletrailers.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/sd/icecast.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/sd/katsomo.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/sd/fmc.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/sd/frenchtv.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/sd/jamendo.svg \
-	gui/qt/pixmaps/playlist/sidebar-icons/sd/assembleenationale.svg \
+	gui/qt/pixmaps/addons/addon_score.svg \
+	gui/qt/pixmaps/icons/active_indicator.svg \
+	gui/qt/pixmaps/icons/add.svg \
+	gui/qt/pixmaps/icons/album_cover.svg \
+	gui/qt/pixmaps/icons/aspect_ratio.svg \
+	gui/qt/pixmaps/icons/atob.svg \
+	gui/qt/pixmaps/icons/audiosub.svg \
+	gui/qt/pixmaps/icons/back.svg \
+	gui/qt/pixmaps/icons/bookmark.svg \
+	gui/qt/pixmaps/icons/breadcrumb_prev.svg \
+	gui/qt/pixmaps/icons/breadcrumb_sep.svg \
+	gui/qt/pixmaps/icons/check.svg \
+	gui/qt/pixmaps/icons/clear.svg \
+	gui/qt/pixmaps/icons/close.svg \
+	gui/qt/pixmaps/icons/defullscreen.svg \
+	gui/qt/pixmaps/icons/del.svg \
+	gui/qt/pixmaps/icons/download.svg \
+	gui/qt/pixmaps/icons/dropzone.svg \
+	gui/qt/pixmaps/icons/dvd_menu.svg \
+	gui/qt/pixmaps/icons/dvd_next.svg \
+	gui/qt/pixmaps/icons/dvd_prev.svg \
+	gui/qt/pixmaps/icons/eject.svg \
+	gui/qt/pixmaps/icons/ellipsis.svg \
+	gui/qt/pixmaps/icons/enqueue.svg \
+	gui/qt/pixmaps/icons/expand.svg \
+	gui/qt/pixmaps/icons/extended.svg \
+	gui/qt/pixmaps/icons/faster.svg \
+	gui/qt/pixmaps/icons/frame-by-frame.svg \
+	gui/qt/pixmaps/icons/fullscreen.svg \
+	gui/qt/pixmaps/icons/grid.svg \
+	gui/qt/pixmaps/icons/history.svg \
+	gui/qt/pixmaps/icons/home.svg \
+	gui/qt/pixmaps/icons/info.svg \
+	gui/qt/pixmaps/icons/list.svg \
+	gui/qt/pixmaps/icons/menu.svg \
+	gui/qt/pixmaps/icons/multiselect.svg \
+	gui/qt/pixmaps/icons/next.svg \
+	gui/qt/pixmaps/icons/pause.svg \
+	gui/qt/pixmaps/icons/pip.svg \
+	gui/qt/pixmaps/icons/playlist_clear.svg \
+	gui/qt/pixmaps/icons/playlist.svg \
+	gui/qt/pixmaps/icons/play_outline.svg \
+	gui/qt/pixmaps/icons/play_reverse.svg \
+	gui/qt/pixmaps/icons/play.svg \
+	gui/qt/pixmaps/icons/podcast.svg \
+	gui/qt/pixmaps/icons/previous.svg \
+	gui/qt/pixmaps/icons/profile_new.svg \
+	gui/qt/pixmaps/icons/record.svg \
+	gui/qt/pixmaps/icons/remove.svg \
+	gui/qt/pixmaps/icons/renderer.svg \
+	gui/qt/pixmaps/icons/repeat_all.svg \
+	gui/qt/pixmaps/icons/repeat_one.svg \
+	gui/qt/pixmaps/icons/search.svg \
+	gui/qt/pixmaps/icons/shuffle_on.svg \
+	gui/qt/pixmaps/icons/skip_back.svg \
+	gui/qt/pixmaps/icons/skip_for.svg \
+	gui/qt/pixmaps/icons/slower.svg \
+	gui/qt/pixmaps/icons/snapshot.svg \
+	gui/qt/pixmaps/icons/space.svg \
+	gui/qt/pixmaps/icons/stop.svg \
+	gui/qt/pixmaps/icons/stream.svg \
+	gui/qt/pixmaps/icons/sync.svg \
+	gui/qt/pixmaps/icons/time.svg \
+	gui/qt/pixmaps/icons/topbar_discover.svg \
+	gui/qt/pixmaps/icons/topbar_filter.svg \
+	gui/qt/pixmaps/icons/topbar_music.svg \
+	gui/qt/pixmaps/icons/topbar_network.svg \
+	gui/qt/pixmaps/icons/topbar_sort.svg \
+	gui/qt/pixmaps/icons/topbar_video.svg \
+	gui/qt/pixmaps/icons/tv.svg \
+	gui/qt/pixmaps/icons/tvtelx.svg \
+	gui/qt/pixmaps/icons/visualization.svg \
+	gui/qt/pixmaps/icons/volume_high.svg \
+	gui/qt/pixmaps/icons/volume_low.svg \
+	gui/qt/pixmaps/icons/volume_medium.svg \
+	gui/qt/pixmaps/icons/volume_muted.svg \
+	gui/qt/pixmaps/icons/volume_zero.svg \
+	gui/qt/pixmaps/icons/window_close.svg \
+	gui/qt/pixmaps/icons/window_maximize.svg \
+	gui/qt/pixmaps/icons/window_minimize.svg \
+	gui/qt/pixmaps/icons/window_restore.svg \
+	gui/qt/pixmaps/menu/add.svg \
+	gui/qt/pixmaps/menu/capture-card.svg \
+	gui/qt/pixmaps/menu/clear.svg \
+	gui/qt/pixmaps/menu/disc.svg \
+	gui/qt/pixmaps/menu/download.svg \
+	gui/qt/pixmaps/menu/eject.svg \
+	gui/qt/pixmaps/menu/exit.svg \
+	gui/qt/pixmaps/menu/faster.svg \
+	gui/qt/pixmaps/menu/file.svg \
+	gui/qt/pixmaps/menu/folder.svg \
+	gui/qt/pixmaps/menu/help.svg \
+	gui/qt/pixmaps/menu/info.svg \
+	gui/qt/pixmaps/menu/messages.svg \
+	gui/qt/pixmaps/menu/movie.svg \
+	gui/qt/pixmaps/menu/music.svg \
+	gui/qt/pixmaps/menu/network.svg \
+	gui/qt/pixmaps/menu/next.svg \
+	gui/qt/pixmaps/menu/pause.svg \
+	gui/qt/pixmaps/menu/play.svg \
+	gui/qt/pixmaps/menu/playlist.svg \
+	gui/qt/pixmaps/menu/preferences.svg \
+	gui/qt/pixmaps/menu/previous.svg \
+	gui/qt/pixmaps/menu/profile_new.svg \
+	gui/qt/pixmaps/menu/record.svg \
+	gui/qt/pixmaps/menu/remove.svg \
+	gui/qt/pixmaps/menu/repeat_all.svg \
+	gui/qt/pixmaps/menu/repeat_off.svg \
+	gui/qt/pixmaps/menu/repeat_one.svg \
+	gui/qt/pixmaps/menu/search_clear.svg \
+	gui/qt/pixmaps/menu/settings.svg \
+	gui/qt/pixmaps/menu/skip_for.svg \
+	gui/qt/pixmaps/menu/skip_back.svg \
+	gui/qt/pixmaps/menu/shuffle_on.svg \
+	gui/qt/pixmaps/menu/slower.svg \
+	gui/qt/pixmaps/menu/stop.svg \
+	gui/qt/pixmaps/menu/stream.svg \
+	gui/qt/pixmaps/menu/sync.svg \
+	gui/qt/pixmaps/menu/update.svg \
+	gui/qt/pixmaps/menu/volume-high.svg \
+	gui/qt/pixmaps/menu/volume-low.svg \
+	gui/qt/pixmaps/menu/volume-muted.svg \
+	gui/qt/pixmaps/misc/cone.svg \
+	gui/qt/pixmaps/misc/new_indicator.svg \
+	gui/qt/pixmaps/misc/play_button.svg \
+	gui/qt/pixmaps/misc/play_shadow.png \
+	gui/qt/pixmaps/misc/theme_dark.svg \
+	gui/qt/pixmaps/misc/theme_daynight.svg \
+	gui/qt/pixmaps/misc/theme_light.svg \
+	gui/qt/pixmaps/misc/wait1.svg \
+	gui/qt/pixmaps/misc/wait2.svg \
+	gui/qt/pixmaps/misc/wait3.svg \
+	gui/qt/pixmaps/misc/wait4.svg \
+	gui/qt/pixmaps/placeholder/add_service.svg \
+	gui/qt/pixmaps/placeholder/noart.png \
+	gui/qt/pixmaps/placeholder/noart_album.svg \
+	gui/qt/pixmaps/placeholder/noart_albumCover.svg \
+	gui/qt/pixmaps/placeholder/noart_artist.svg \
+	gui/qt/pixmaps/placeholder/noart_artistCover.svg \
+	gui/qt/pixmaps/placeholder/noart_artist_small.svg \
+	gui/qt/pixmaps/placeholder/noart_videoCover.svg \
 	gui/qt/pixmaps/prefs/advprefs_audio.svg \
 	gui/qt/pixmaps/prefs/advprefs_codec.svg \
 	gui/qt/pixmaps/prefs/advprefs_extended.svg \
@@ -643,104 +790,47 @@ libqt_plugin_la_RES = \
 	gui/qt/pixmaps/prefs/advprefs_playlist.svg \
 	gui/qt/pixmaps/prefs/advprefs_sout.svg \
 	gui/qt/pixmaps/prefs/advprefs_video.svg \
-	gui/qt/pixmaps/prefs/spref_cone_Audio_64.png \
-	gui/qt/pixmaps/prefs/spref_cone_Hotkeys_64.png \
-	gui/qt/pixmaps/prefs/spref_cone_Input_64.png \
-	gui/qt/pixmaps/prefs/spref_cone_Interface_64.png \
-	gui/qt/pixmaps/prefs/spref_cone_Medialibrary_64.png \
-	gui/qt/pixmaps/prefs/spref_cone_Subtitles_64.png \
-	gui/qt/pixmaps/prefs/spref_cone_Video_64.png \
-	gui/qt/pixmaps/previous.svg \
-	gui/qt/pixmaps/profile_new.svg \
-	gui/qt/pixmaps/sample_complete.png \
-	gui/qt/pixmaps/sample_minimal.png \
-	gui/qt/pixmaps/sample_skins.png \
-	gui/qt/pixmaps/slower.svg \
-	gui/qt/pixmaps/slower2.svg \
-	gui/qt/pixmaps/space.svg \
-	gui/qt/pixmaps/stop.svg \
-	gui/qt/pixmaps/toolbar/audiosub.svg \
-	gui/qt/pixmaps/toolbar/arrows.svg \
-	gui/qt/pixmaps/toolbar/aspect-ratio.svg \
-	gui/qt/pixmaps/toolbar/atob.svg \
-	gui/qt/pixmaps/toolbar/atob_noa.svg \
-	gui/qt/pixmaps/toolbar/atob_nob.svg \
-	gui/qt/pixmaps/toolbar/atob_bg_a.svg \
-	gui/qt/pixmaps/toolbar/atob_bg_ab.svg \
-	gui/qt/pixmaps/toolbar/atob_bg_b.svg \
-	gui/qt/pixmaps/toolbar/atob_bg_none.svg \
-	gui/qt/pixmaps/toolbar/atob_fg_a.svg \
-	gui/qt/pixmaps/toolbar/atob_fg_ab.svg \
-	gui/qt/pixmaps/toolbar/atob_fg_b.svg \
-	gui/qt/pixmaps/toolbar/renderer.svg \
-	gui/qt/pixmaps/toolbar/defullscreen.svg \
-	gui/qt/pixmaps/toolbar/dvd_menu.svg \
-	gui/qt/pixmaps/toolbar/dvd_next.svg \
-	gui/qt/pixmaps/toolbar/dvd_prev.svg \
-	gui/qt/pixmaps/toolbar/extended_16px.svg \
-	gui/qt/pixmaps/toolbar/frame-by-frame.svg \
-	gui/qt/pixmaps/toolbar/fullscreen.svg \
-	gui/qt/pixmaps/toolbar/play_reverse.svg \
-	gui/qt/pixmaps/toolbar/record_16px.svg \
-	gui/qt/pixmaps/toolbar/snapshot.svg \
-	gui/qt/pixmaps/toolbar/skip_for.svg \
-	gui/qt/pixmaps/toolbar/skip_back.svg \
-	gui/qt/pixmaps/toolbar/tv.svg \
-	gui/qt/pixmaps/toolbar/tvtelx.svg \
-	gui/qt/pixmaps/toolbar/visu.svg \
-	gui/qt/pixmaps/toolbar/volume-high.svg \
-	gui/qt/pixmaps/toolbar/volume-low.svg \
-	gui/qt/pixmaps/toolbar/volume-medium.svg \
-	gui/qt/pixmaps/toolbar/volume-muted.svg \
-	gui/qt/pixmaps/toolbar/volume-slider-inside.svg \
-	gui/qt/pixmaps/toolbar/volume-slider-outside.svg \
-	gui/qt/pixmaps/toolbar/play_button.svg \
-	gui/qt/pixmaps/types/capture-card_16px.svg \
-	gui/qt/pixmaps/types/disc_16px.svg \
-	gui/qt/pixmaps/types/file-asym_16px.svg \
-	gui/qt/pixmaps/types/file-wide_16px.svg \
-	gui/qt/pixmaps/types/file_black.svg \
-	gui/qt/pixmaps/types/folder-blue_16px.svg \
-	gui/qt/pixmaps/types/folder-grey_16px.svg \
-	gui/qt/pixmaps/types/harddisk_16px.svg \
-	gui/qt/pixmaps/types/network_16px.svg \
-	gui/qt/pixmaps/types/tape_16px.svg \
-	gui/qt/pixmaps/types/type_directory.svg \
-	gui/qt/pixmaps/types/type_directory_black.svg \
-	gui/qt/pixmaps/types/type_file.svg \
-	gui/qt/pixmaps/types/type_stream.svg \
-	gui/qt/pixmaps/types/type_node.svg \
-	gui/qt/pixmaps/types/type_playlist.svg \
-	gui/qt/pixmaps/util/wait1.svg \
-	gui/qt/pixmaps/util/wait2.svg \
-	gui/qt/pixmaps/util/wait3.svg \
-	gui/qt/pixmaps/util/wait4.svg \
-	gui/qt/pixmaps/win7/win7thumbnail_pause.svg \
-	gui/qt/pixmaps/win7/win7thumbnail_prev.svg \
-	gui/qt/pixmaps/win7/win7thumbnail_next.svg \
-	gui/qt/pixmaps/win7/win7thumbnail_play.svg \
-	gui/qt/pixmaps/update.svg \
-	gui/qt/pixmaps/valid.svg \
-	gui/qt/pixmaps/search_clear.svg \
-	gui/qt/pixmaps/lock.svg \
-	gui/qt/pixmaps/close.svg \
-	gui/qt/pixmaps/rename.svg \
-	gui/qt/pixmaps/del.svg \
-	gui/qt/pixmaps/download.svg \
-	gui/qt/pixmaps/ellipsis.svg \
-	gui/qt/pixmaps/topbar/grid.svg \
-	gui/qt/pixmaps/topbar/list.svg \
-	gui/qt/pixmaps/cone.svg \
-	gui/qt/pixmaps/album_cover.svg \
-	gui/qt/pixmaps/back.svg \
-	gui/qt/pixmaps/sync.svg \
-	gui/qt/pixmaps/time.svg \
-	gui/qt/pixmaps/theme_dark.svg \
-	gui/qt/pixmaps/theme_daynight.svg \
-	gui/qt/pixmaps/theme_light.svg
+	gui/qt/pixmaps/prefs/sample_complete.png \
+	gui/qt/pixmaps/prefs/sample_minimal.png \
+	gui/qt/pixmaps/prefs/sample_skins.png \
+	gui/qt/pixmaps/prefs/spref_audio.png \
+	gui/qt/pixmaps/prefs/spref_hotkeys.png \
+	gui/qt/pixmaps/prefs/spref_input.png \
+	gui/qt/pixmaps/prefs/spref_interface.png \
+	gui/qt/pixmaps/prefs/spref_medialibrary.png \
+	gui/qt/pixmaps/prefs/spref_subtitles.png \
+	gui/qt/pixmaps/prefs/spref_video.png \
+	gui/qt/pixmaps/sd/appletrailers.svg \
+	gui/qt/pixmaps/sd/assembleenationale.svg \
+	gui/qt/pixmaps/sd/capture-card.svg \
+	gui/qt/pixmaps/sd/directory.svg \
+	gui/qt/pixmaps/sd/disc.svg \
+	gui/qt/pixmaps/sd/file.svg \
+	gui/qt/pixmaps/sd/fmc.svg \
+	gui/qt/pixmaps/sd/frenchtv.svg \
+	gui/qt/pixmaps/sd/harddisk.svg \
+	gui/qt/pixmaps/sd/icecast.svg \
+	gui/qt/pixmaps/sd/jamendo.svg \
+	gui/qt/pixmaps/sd/katsomo.svg \
+	gui/qt/pixmaps/sd/lan.svg \
+	gui/qt/pixmaps/sd/library.svg \
+	gui/qt/pixmaps/sd/metachannels.svg \
+	gui/qt/pixmaps/sd/mtp.svg \
+	gui/qt/pixmaps/sd/network.svg \
+	gui/qt/pixmaps/sd/node.svg \
+	gui/qt/pixmaps/sd/pictures.svg \
+	gui/qt/pixmaps/sd/playlist.svg \
+	gui/qt/pixmaps/sd/podcast.svg \
+	gui/qt/pixmaps/sd/screen.svg \
+	gui/qt/pixmaps/sd/stream.svg \
+	gui/qt/pixmaps/sd/unknown.svg
 
 if HAVE_WIN32
-libqt_plugin_la_RES += gui/qt/pixmaps/windows-theme.conf
+libqt_plugin_la_RES += gui/qt/pixmaps/windows-theme.conf \
+	gui/qt/pixmaps/win7/pause.svg \
+	gui/qt/pixmaps/win7/prev.svg \
+	gui/qt/pixmaps/win7/next.svg \
+	gui/qt/pixmaps/win7/play.svg
 endif
 
 #QML and JS resources
@@ -749,7 +839,6 @@ libqt_plugin_la_QML = \
 	gui/qt/dialogs/dialogs/qml/Dialogs.qml \
 	gui/qt/dialogs/dialogs/qml/ModalDialog.qml \
 	gui/qt/dialogs/dialogs/qml/WindowDialog.qml \
-	gui/qt/dialogs/help/qml/About.qml \
 	gui/qt/dialogs/toolbar/qml/EditorDNDDelegate.qml \
 	gui/qt/dialogs/toolbar/qml/EditorDNDView.qml\
 	gui/qt/dialogs/toolbar/qml/EditorDummyButton.qml \
@@ -759,6 +848,7 @@ libqt_plugin_la_QML = \
 	gui/qt/dialogs/toolbar/qml/ToolbarEditorButtonList.qml \
 	gui/qt/maininterface/qml/BannerSources.qml \
 	gui/qt/maininterface/qml/MainInterface.qml \
+	gui/qt/maininterface/qml/MainViewLoader.qml \
 	gui/qt/maininterface/qml/MainDisplay.qml \
 	gui/qt/maininterface/qml/MainGridView.qml \
 	gui/qt/maininterface/qml/MainTableView.qml \
@@ -801,19 +891,22 @@ libqt_plugin_la_QML = \
 	gui/qt/menus/qml/Menubar.qml \
 	gui/qt/menus/qml/ShortcutExt.qml \
 	gui/qt/network/qml/AddressbarButton.qml \
+	gui/qt/network/qml/BrowseDeviceHeader.qml \
+	gui/qt/network/qml/BrowseDeviceView.qml \
+	gui/qt/network/qml/BrowseDisplay.qml \
+	gui/qt/network/qml/BrowseHomeDisplay.qml \
+	gui/qt/network/qml/BrowseTreeDisplay.qml \
 	gui/qt/network/qml/DiscoverDisplay.qml \
 	gui/qt/network/qml/DiscoverUrlDisplay.qml \
 	gui/qt/network/qml/NetworkAddressbar.qml \
-	gui/qt/network/qml/NetworkBrowseDisplay.qml \
 	gui/qt/network/qml/NetworkCustomCover.qml \
-	gui/qt/network/qml/NetworkDisplay.qml \
 	gui/qt/network/qml/NetworkGridItem.qml \
-	gui/qt/network/qml/NetworkHomeDisplay.qml \
-	gui/qt/network/qml/NetworkHomeDeviceListView.qml \
-	gui/qt/network/qml/NetworkListItem.qml \
 	gui/qt/network/qml/NetworkThumbnailItem.qml \
 	gui/qt/network/qml/ServicesHomeDisplay.qml \
+	gui/qt/network/qml/ServicesManage.qml \
+	gui/qt/network/qml/ServicesSources.qml \
 	gui/qt/player/qml/qmldir \
+        gui/qt/player/qml/Bookmarks.qml \
 	gui/qt/player/qml/ControlBar.qml \
 	gui/qt/player/qml/ControlbarControls.qml \
 	gui/qt/player/qml/PlaybackSpeed.qml \
@@ -823,13 +916,10 @@ libqt_plugin_la_QML = \
 	gui/qt/player/qml/PlayerBlurredBackground.qml \
 	gui/qt/player/qml/PlayerBlurredBackground.frag \
 	gui/qt/player/qml/PlayerControlLayout.qml \
-	gui/qt/player/qml/PlayerMenu.qml \
-	gui/qt/player/qml/PlayerMenuItem.qml \
 	gui/qt/player/qml/PlayerPlaylistVisibilityFSM.qml \
 	gui/qt/player/qml/ResumeDialog.qml \
 	gui/qt/player/qml/SliderBar.qml \
 	gui/qt/player/qml/TopBar.qml \
-	gui/qt/player/qml/TrackInfo.qml \
 	gui/qt/player/qml/TracksMenu.qml \
 	gui/qt/player/qml/TracksPage.qml \
 	gui/qt/player/qml/TracksPageAudio.qml \
@@ -844,6 +934,7 @@ libqt_plugin_la_QML = \
 	gui/qt/player/qml/controlbarcontrols/BookmarkButton.qml \
 	gui/qt/player/qml/controlbarcontrols/ChapterNextButton.qml \
 	gui/qt/player/qml/controlbarcontrols/ChapterPreviousButton.qml \
+	gui/qt/player/qml/controlbarcontrols/ControlButtonPopup.qml \
 	gui/qt/player/qml/controlbarcontrols/DvdMenuButton.qml \
 	gui/qt/player/qml/controlbarcontrols/ExpandingSpacerWidget.qml \
 	gui/qt/player/qml/controlbarcontrols/ExtendedSettingsButton.qml \
@@ -862,6 +953,7 @@ libqt_plugin_la_QML = \
 	gui/qt/player/qml/controlbarcontrols/PlayerSwitchButton.qml \
 	gui/qt/player/qml/controlbarcontrols/PlaylistButton.qml \
 	gui/qt/player/qml/controlbarcontrols/PreviousButton.qml \
+	gui/qt/player/qml/controlbarcontrols/ProgramButton.qml \
 	gui/qt/player/qml/controlbarcontrols/QuitButton.qml \
 	gui/qt/player/qml/controlbarcontrols/RandomButton.qml \
 	gui/qt/player/qml/controlbarcontrols/RendererButton.qml \
@@ -873,6 +965,8 @@ libqt_plugin_la_QML = \
 	gui/qt/player/qml/controlbarcontrols/SnapshotButton.qml \
 	gui/qt/player/qml/controlbarcontrols/SpacerWidget.qml \
 	gui/qt/player/qml/controlbarcontrols/StopButton.qml \
+	gui/qt/player/qml/controlbarcontrols/TeletextButton.qml \
+	gui/qt/player/qml/controlbarcontrols/TeletextColorButton.qml \
 	gui/qt/player/qml/controlbarcontrols/TeletextWidget.qml \
 	gui/qt/player/qml/controlbarcontrols/VolumeWidget.qml \
 	gui/qt/player/qml/controlbarcontrols/Fallback.qml \
@@ -882,7 +976,6 @@ libqt_plugin_la_QML = \
 	gui/qt/playlist/qml/PlaylistToolbar.qml \
 	gui/qt/playlist/qml/PlaylistDetachedWindow.qml \
 	gui/qt/style/AcrylicController.qml \
-	gui/qt/style/VLCColors.qml \
 	gui/qt/style/VLCIcons.qml \
 	gui/qt/style/VLCStyle.qml \
 	gui/qt/style/qmldir \
@@ -894,19 +987,26 @@ libqt_plugin_la_QML = \
 	gui/qt/util/qml/ViewDragAutoScrollHandler.qml \
 	gui/qt/util/qml/BindingRev8.qml \
 	gui/qt/util/qml/BindingRev14.qml \
+	gui/qt/util/qml/MouseHoverHandlerRev12.qml \
+	gui/qt/util/qml/TouchScreenTapHandlerRev11.qml \
+	gui/qt/util/qml/TouchScreenTapHandlerRev12.qml \
 	gui/qt/util/qml/VanillaObject.qml \
 	gui/qt/util/qml/NativeMenu.qml \
 	gui/qt/util/qml/MLContextMenu.qml \
 	gui/qt/widgets/qml/ActionButtonOverlay.qml \
 	gui/qt/widgets/qml/ActionButtonPrimary.qml \
 	gui/qt/widgets/qml/BannerTabButton.qml \
+	gui/qt/widgets/qml/BannerCone.qml \
 	gui/qt/widgets/qml/BusyIndicatorExt.qml \
 	gui/qt/widgets/qml/CaptionLabel.qml \
+	gui/qt/widgets/qml/CheckButton.qml \
 	gui/qt/widgets/qml/CheckedDelegate.qml \
 	gui/qt/widgets/qml/ComboBoxExt.qml \
 	gui/qt/widgets/qml/AcrylicBackground.qml \
 	gui/qt/widgets/qml/AnimatedBackground.qml \
 	gui/qt/widgets/qml/CoverShadow.qml \
+	gui/qt/widgets/qml/CSDThemeButton.qml \
+	gui/qt/widgets/qml/CSDThemeButtonSet.qml \
 	gui/qt/widgets/qml/CSDWindowButton.qml \
 	gui/qt/widgets/qml/CSDWindowButtonSet.qml \
 	gui/qt/widgets/qml/CSDTitlebarTapNDrapHandler.qml \
@@ -923,20 +1023,17 @@ libqt_plugin_la_QML = \
 	gui/qt/widgets/qml/IconToolButton.qml \
 	gui/qt/widgets/qml/IconTrackButton.qml \
 	gui/qt/widgets/qml/ImageToolButton.qml \
-	gui/qt/widgets/qml/KeyNavigableGridView.qml \
 	gui/qt/widgets/qml/KeyNavigableListView.qml \
 	gui/qt/widgets/qml/KeyNavigableTableView.qml \
 	gui/qt/widgets/qml/TableViewDelegate.qml \
-	gui/qt/widgets/qml/LabelSeparator.qml \
 	gui/qt/widgets/qml/ListCoverShadow.qml \
 	gui/qt/widgets/qml/ListItem.qml \
 	gui/qt/widgets/qml/ListLabel.qml \
+	gui/qt/widgets/qml/LoaderFade.qml \
 	gui/qt/widgets/qml/LocalTabBar.qml \
 	gui/qt/widgets/qml/MediaCover.qml \
 	gui/qt/widgets/qml/SubtitleLabel.qml \
 	gui/qt/widgets/qml/MenuCaption.qml \
-	gui/qt/widgets/qml/MenuExt.qml \
-	gui/qt/widgets/qml/MenuItemExt.qml \
 	gui/qt/widgets/qml/MenuLabel.qml \
 	gui/qt/widgets/qml/MLDragItem.qml \
 	gui/qt/widgets/qml/NavigableCol.qml \
@@ -947,15 +1044,15 @@ libqt_plugin_la_QML = \
 	gui/qt/widgets/qml/ScanProgressBar.qml \
 	gui/qt/widgets/qml/ScrollingText.qml \
 	gui/qt/widgets/qml/SearchBox.qml \
+	gui/qt/widgets/qml/Slider.qml \
 	gui/qt/widgets/qml/SortControl.qml \
 	gui/qt/widgets/qml/SpinBoxExt.qml \
 	gui/qt/widgets/qml/StackViewExt.qml \
 	gui/qt/widgets/qml/PageLoader.qml \
-	gui/qt/widgets/qml/TabButtonExt.qml \
+	gui/qt/widgets/qml/ButtonExt.qml \
 	gui/qt/widgets/qml/TableColumns.qml \
-	gui/qt/widgets/qml/TransparentSpinBox.qml \
+	gui/qt/widgets/qml/TextFieldExt.qml \
 	gui/qt/widgets/qml/TextToolButton.qml \
-	gui/qt/widgets/qml/ToolTipArea.qml \
 	gui/qt/widgets/qml/VideoProgressBar.qml \
 	gui/qt/widgets/qml/VideoQualityLabels.qml \
 	gui/qt/widgets/qml/ListSubtitleLabel.qml \
@@ -964,7 +1061,8 @@ libqt_plugin_la_QML = \
 	gui/qt/widgets/qml/OverlayMenu.qml \
 	gui/qt/widgets/qml/ToolTipExt.qml \
 	gui/qt/widgets/qml/DropShadowImage.qml \
-	gui/qt/widgets/qml/DoubleShadow.qml
+	gui/qt/widgets/qml/DoubleShadow.qml \
+	gui/qt/widgets/qml/FadingEdgeListView.qml
 
 lib_qt_plugin_la_QRC = gui/qt/vlc.qrc
 
@@ -1016,9 +1114,24 @@ gui/qt/resources.cpp: $(lib_qt_plugin_la_QRC) $(libqt_plugin_la_RES) $(libqt_plu
 
 endif
 
-vlc_qt_check_SOURCES = gui/qt/vlc-qt-check.cpp
-vlc_qt_check_CXXFLAGS = $(AM_CXXFLAGS) $(QT_CFLAGS) -fPIC $(CXXFLAGS_qt)
-vlc_qt_check_LDADD = $(QT_LIBS)
+if HAVE_QT5_GTK
+libqt_gtktheme_plugin_la_CXXFLAGS = $(AM_CXXFLAGS) $(GTK3_CFLAGS)
+libqt_gtktheme_CPPFLAGS = $(AM_CPPFLAGS)
+libqt_gtktheme_plugin_la_LDFLAGS = $(AM_LDFLAGS)
+libqt_gtktheme_plugin_la_LIBADD = $(GTK3_LIBS)
+libqt_gtktheme_plugin_la_SOURCES = \
+	gui/qt/style/gtkthemeprovider/gtk_compat.cpp \
+	gui/qt/style/gtkthemeprovider/gtk_compat.h \
+	gui/qt/style/gtkthemeprovider/gtkthemeprovider.cpp \
+	gui/qt/style/gtkthemeprovider/gtk_util.cpp \
+	gui/qt/style/gtkthemeprovider/gtk_util.h \
+	gui/qt/style/gtkthemeprovider/nav_button_provider_gtk.cpp \
+	gui/qt/style/gtkthemeprovider/nav_button_provider_gtk.h \
+	gui/qt/style/gtkthemeprovider/scoped_gobject.h
+if ENABLE_QT
+gui_LTLIBRARIES += libqt_gtktheme_plugin.la
+endif
+endif
 
 if ENABLE_QT
 gui_LTLIBRARIES += libqt_plugin.la

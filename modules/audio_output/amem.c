@@ -35,7 +35,17 @@ static void Close (vlc_object_t *);
 #define AMEM_NB_FORMATS 3
 
 /* Forward declaration */
-static const char *const format_list[AMEM_NB_FORMATS];
+static const char* const format_list[AMEM_NB_FORMATS] = {
+    "S16N",
+    "S32N",
+    "FL32",
+};
+
+static const vlc_fourcc_t format_list_fourcc[AMEM_NB_FORMATS] = {
+    VLC_CODEC_S16N,
+    VLC_CODEC_S32N,
+    VLC_CODEC_FL32,
+};
 
 vlc_module_begin ()
     set_shortname (N_("Audio memory"))
@@ -58,18 +68,6 @@ vlc_module_begin ()
         change_private()
 
 vlc_module_end ()
-
-static const char *const format_list[AMEM_NB_FORMATS] = {
-    "S16N",
-    "S32N",
-    "FL32",
-};
-
-static const vlc_fourcc_t format_list_fourcc[AMEM_NB_FORMATS] = {
-    VLC_CODEC_S16N,
-    VLC_CODEC_S32N,
-    VLC_CODEC_FL32,
-};
 
 typedef struct
 {
@@ -105,7 +103,7 @@ static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
     aout_sys_t *sys = aout->sys;
 
     vlc_mutex_lock(&sys->lock);
-    sys->play(sys->opaque, block->p_buffer, block->i_nb_samples, date);
+    sys->play(sys->opaque, block->p_buffer, block->i_nb_samples, US_FROM_VLC_TICK(date));
     vlc_mutex_unlock(&sys->lock);
     block_Release (block);
 }
@@ -215,7 +213,7 @@ static void Stop (audio_output_t *aout)
     vlc_mutex_unlock(&sys->lock);
 }
 
-static int Start (audio_output_t *aout, audio_sample_format_t *fmt)
+static int Start (audio_output_t *aout, audio_sample_format_t * restrict fmt)
 {
     aout_sys_t *sys = aout->sys;
     char format[5] = "S16N";

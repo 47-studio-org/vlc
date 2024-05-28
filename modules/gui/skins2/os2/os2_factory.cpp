@@ -218,16 +218,22 @@ bool OS2Factory::init()
 
     // Initialize the resource path
     char *datadir = config_GetUserDir( VLC_USERDATA_DIR );
-    m_resourcePath.push_back( (std::string)datadir + "\\skins" );
-    free( datadir );
+    if (likely(datadir != nullptr))
+    {
+        m_resourcePath.push_back( (std::string)datadir + "\\skins" );
+        free( datadir );
+    }
     datadir = config_GetSysPath(VLC_PKG_DATA_DIR, NULL);
-    m_resourcePath.push_back( (std::string)datadir + "\\skins" );
-    m_resourcePath.push_back( (std::string)datadir + "\\skins2" );
-    m_resourcePath.push_back( (std::string)datadir + "\\share\\skins" );
-    m_resourcePath.push_back( (std::string)datadir + "\\share\\skins2" );
-    m_resourcePath.push_back( (std::string)datadir + "\\vlc\\skins" );
-    m_resourcePath.push_back( (std::string)datadir + "\\vlc\\skins2" );
-    free( datadir );
+    if (likely(datadir != nullptr))
+    {
+        m_resourcePath.push_back( (std::string)datadir + "\\skins" );
+        m_resourcePath.push_back( (std::string)datadir + "\\skins2" );
+        m_resourcePath.push_back( (std::string)datadir + "\\share\\skins" );
+        m_resourcePath.push_back( (std::string)datadir + "\\share\\skins2" );
+        m_resourcePath.push_back( (std::string)datadir + "\\vlc\\skins" );
+        m_resourcePath.push_back( (std::string)datadir + "\\vlc\\skins2" );
+        free( datadir );
+    }
 
     // All went well
     return true;
@@ -426,17 +432,17 @@ void OS2Factory::changeCursor( CursorType_t type ) const
 
 void OS2Factory::rmDir( const std::string &rPath )
 {
-    struct dirent *file;
-    DIR *dir;
+    const char *file;
+    vlc_DIR *dir;
 
-    dir = opendir( rPath.c_str() );
+    dir = vlc_opendir( rPath.c_str() );
     if( !dir ) return;
 
     // Parse the directory and remove everything it contains
-    while( (file = readdir( dir )) )
+    while( (file = vlc_readdir( dir )) )
     {
         struct stat statbuf;
-        std::string filename = file->d_name;
+        std::string filename = file;
 
         // Skip "." and ".."
         if( filename == "." || filename == ".." )
@@ -457,7 +463,7 @@ void OS2Factory::rmDir( const std::string &rPath )
     }
 
     // Close the directory
-    closedir( dir );
+    vlc_closedir( dir );
 
     // And delete it
     rmdir( rPath.c_str() );

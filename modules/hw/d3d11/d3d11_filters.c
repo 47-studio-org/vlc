@@ -317,7 +317,7 @@ static int AdjustCallback( vlc_object_t *p_this, char const *psz_var,
                            void *p_data )
 {
     VLC_UNUSED(p_this); VLC_UNUSED(oldval);
-    filter_sys_t *p_sys = (filter_sys_t *)p_data;
+    filter_sys_t *p_sys = p_data;
 
     if( !strcmp( psz_var, "contrast" ) )
         SetLevel( &p_sys->Contrast, newval.f_float );
@@ -592,10 +592,6 @@ vlc_module_begin()
     add_submodule()
     set_description(N_("Direct3D11"))
     set_callback_dec_device( D3D11OpenDecoderDeviceAny, 8 )
-#ifdef VLC_WINSTORE_APP
-    /* LEGACY, the d3dcontext and swapchain were given by the host app */
-    add_integer("winrt-d3dcontext", 0x0, N_("Context"), NULL) /* ID3D11DeviceContext* */
-#endif /* VLC_WINSTORE_APP */
     add_shortcut ("d3d11")
 
     add_submodule()

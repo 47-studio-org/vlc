@@ -28,14 +28,18 @@ check_PROGRAMS = \
 	test_src_input_stream \
 	test_src_input_stream_fifo \
 	test_src_input_thumbnail \
+	test_src_input_decoder \
 	test_src_player \
 	test_src_interface_dialog \
 	test_src_media_source \
 	test_src_misc_bits \
 	test_src_misc_epg \
 	test_src_misc_keystore \
+	test_src_misc_image \
 	test_src_video_output \
 	test_src_video_output_opengl \
+	test_modules_lua_extension \
+	test_modules_misc_medialibrary \
 	test_modules_packetizer_helpers \
 	test_modules_packetizer_hxxx \
 	test_modules_packetizer_h264 \
@@ -46,12 +50,17 @@ check_PROGRAMS = \
 	test_modules_demux_timestamps_filter \
 	test_modules_demux_ts_pes \
 	test_modules_playlist_m3u \
-	test_modules_stream_out_transcode \
-	test_modules_stream_out_pcr_sync \
 	$(NULL)
 
+if HAVE_DARWIN
+check_PROGRAMS += test_src_misc_image_cvpx
+endif
+
 if ENABLE_SOUT
-check_PROGRAMS += test_modules_tls
+check_PROGRAMS += test_modules_tls \
+	test_modules_stream_out_transcode \
+	test_modules_stream_out_pcr_sync
+
 endif
 if UPDATE_CHECK
 check_PROGRAMS += test_src_crypto_update
@@ -133,10 +142,20 @@ test_src_misc_epg_SOURCES = src/misc/epg.c
 test_src_misc_epg_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_misc_keystore_SOURCES = src/misc/keystore.c
 test_src_misc_keystore_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_src_misc_image_cvpx_SOURCES = src/misc/image_cvpx.c
+test_src_misc_image_cvpx_LDADD = $(LIBVLCCORE) $(LIBVLC) ../modules/libvlc_vtutils.la
+test_src_misc_image_cvpx_LDFLAGS = $(AM_LDFLAGS) -Wl,-framework,CoreVideo
 test_src_interface_dialog_SOURCES = src/interface/dialog.c
 test_src_interface_dialog_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_media_source_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_src_media_source_SOURCES = src/media_source/media_source.c
+
+test_modules_lua_extension_SOURCES = modules/lua/extension.c
+test_modules_lua_extension_LDADD = $(LIBVLCCORE) $(LIBVLC)
+test_modules_lua_extension_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DLUA_EXTENSION_DIR=\"$(srcdir)/modules/\"
+test_modules_misc_medialibrary_SOURCES = modules/misc/medialibrary.c
+test_modules_misc_medialibrary_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_modules_packetizer_helpers_SOURCES = modules/packetizer/helpers.c
 test_modules_packetizer_helpers_LDADD = $(LIBVLCCORE) $(LIBVLC)
 test_modules_packetizer_hxxx_SOURCES = modules/packetizer/hxxx.c
@@ -187,8 +206,19 @@ test_modules_stream_out_transcode_LDADD = $(LIBVLCCORE) $(LIBVLC)
 
 test_modules_stream_out_pcr_sync_SOURCES = modules/stream_out/pcr_sync.c \
 	../modules/stream_out/transcode/pcr_sync.c \
-	../modules/stream_out/transcode/pcr_sync.h
+	../modules/stream_out/transcode/pcr_sync.h \
+	../modules/stream_out/transcode/pcr_helper.h \
+	../modules/stream_out/transcode/pcr_helper.c
 test_modules_stream_out_pcr_sync_LDADD = $(LIBVLCCORE)
+
+test_src_input_decoder_SOURCES = \
+	src/input/decoder/input_decoder.c \
+	src/input/decoder/input_decoder.h \
+	src/input/decoder/input_decoder_scenarios.c
+test_src_input_decoder_LDADD = $(LIBVLCCORE) $(LIBVLC)
+
+test_src_misc_image_SOURCES = src/misc/image.c
+test_src_misc_image_LDADD = $(LIBVLCCORE) $(LIBVLC)
 
 checkall:
 	$(MAKE) check_PROGRAMS="$(check_PROGRAMS) $(EXTRA_PROGRAMS)" check

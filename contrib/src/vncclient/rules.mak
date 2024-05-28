@@ -1,7 +1,7 @@
 # vncclient
 
 VNCCLIENT_VERSION := 0.9.10
-VNCCLIENT_URL := https://github.com/LibVNC/libvncserver/archive/LibVNCServer-$(VNCCLIENT_VERSION).tar.gz
+VNCCLIENT_URL := $(GITHUB)/LibVNC/libvncserver/archive/LibVNCServer-$(VNCCLIENT_VERSION).tar.gz
 
 ifdef GPL
 ifdef BUILD_NETWORK
@@ -33,7 +33,7 @@ vncclient: LibVNCServer-$(VNCCLIENT_VERSION).tar.gz .sum-vncclient
 
 DEPS_vncclient = gcrypt $(DEPS_gcrypt) jpeg $(DEPS_jpeg) png $(DEPS_png) gnutls $(DEPS_gnutls)
 
-VNCCLIENT_CONF := $(HOSTCONF) --without-libva
+VNCCLIENT_CONF := --without-libva
 ifdef HAVE_WIN32
 VNCCLIENT_CONF += --without-pthread
 endif
@@ -41,8 +41,10 @@ endif
 .vncclient: vncclient
 	$(REQUIRE_GPL)
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(VNCCLIENT_CONF)
-	cd $< && $(MAKE) -C libvncclient install
-	cd $< && $(MAKE) install-data
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(VNCCLIENT_CONF)
+	+$(MAKEBUILD) -C libvncclient
+	+$(MAKEBUILD) -C libvncclient install
+	+$(MAKEBUILD) install-data
 	rm $(PREFIX)/lib/pkgconfig/libvncserver.pc
 	touch $@

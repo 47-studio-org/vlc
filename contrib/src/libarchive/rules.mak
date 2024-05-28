@@ -7,9 +7,9 @@ ifeq ($(call need_pkg,"libarchive >= 3.2.0"),)
 PKGS_FOUND += libarchive
 endif
 
-DEPS_libarchive = zlib
+DEPS_libarchive = zlib $(DEPS_zlib)
 
-LIBARCHIVE_CONF := $(HOSTCONF) \
+LIBARCHIVE_CONF := \
 		--disable-bsdcpio --disable-bsdtar --disable-bsdcat \
 		--without-nettle --without-cng \
 		--without-xml2 --without-lzma --without-iconv --without-expat
@@ -36,6 +36,8 @@ endif
 
 .libarchive: libarchive
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(LIBARCHIVE_CONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(LIBARCHIVE_CONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

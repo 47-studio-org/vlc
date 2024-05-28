@@ -43,6 +43,7 @@ pluginsinclude_HEADERS = \
 	../include/vlc_configuration.h \
 	../include/vlc_cpu.h \
 	../include/vlc_cxx_helpers.hpp \
+	../include/vlc_clock.h \
 	../include/vlc_decoder.h \
 	../include/vlc_demux.h \
 	../include/vlc_dialog.h \
@@ -168,11 +169,11 @@ vlc-plugin.pc: vlc-plugin.pc.in $(top_builddir)/config.status
 ##############################################################################
 
 if HAVE_WIN32
-noinst_DATA = libvlc_win32_rc.rc
+noinst_DATA = libvlccore_win32_rc.rc
 endif
-EXTRA_DIST += libvlc_win32_rc.rc.in
+EXTRA_DIST += libvlccore_win32_rc.rc.in
 
-libvlc_win32_rc.rc: libvlc_win32_rc.rc.in $(top_builddir)/config.status
+libvlccore_win32_rc.rc: libvlccore_win32_rc.rc.in $(top_builddir)/config.status
 	$(AM_V_GEN)cd "$(top_builddir)" && \
 	$(SHELL) ./config.status --file="src/$@"
 
@@ -194,6 +195,9 @@ AM_CPPFLAGS = $(INCICONV) $(IDN_CFLAGS) \
 AM_CFLAGS = $(CFLAGS_libvlccore)
 if HAVE_DYNAMIC_PLUGINS
 AM_CPPFLAGS += -DHAVE_DYNAMIC_PLUGINS
+if HAVE_WIN32
+AM_CPPFLAGS += -DVLC_DLL_EXPORT
+endif
 endif
 if HAVE_DBUS
 AM_CPPFLAGS += -DHAVE_DBUS
@@ -223,7 +227,6 @@ libvlccore_la_SOURCES = \
 	media_source/media_source.c \
 	media_source/media_source.h \
 	media_source/media_tree.c \
-	media_source/media_tree.h \
 	modules/modules.h \
 	modules/modules.c \
 	modules/bank.c \
@@ -431,7 +434,8 @@ libvlccore_la_SOURCES += \
 if HAVE_WINSTORE
 libvlccore_la_SOURCES += posix/timer.c win32/dirs-uap.c
 else
-libvlccore_la_SOURCES += win32/timer.c win32/dirs.c
+libvlccore_la_SOURCES += win32/timer.c win32/dirs.c win32/spawn.c
+libvlccore_la_LIBADD += -lwinmm -lole32 -luuid
 endif
 libvlccore_la_LIBADD += -lbcrypt
 endif
@@ -558,8 +562,8 @@ libvlccore_la_LDFLAGS = \
 	-version-info 9:0:0
 libvlccore_la_DEPENDENCIES = libvlccore.sym
 if HAVE_WIN32
-libvlccore_la_DEPENDENCIES += libvlc_win32_rc.$(OBJEXT)
-libvlccore_la_LDFLAGS += -Wl,libvlc_win32_rc.$(OBJEXT) -avoid-version -Wc,-static
+libvlccore_la_DEPENDENCIES += libvlccore_win32_rc.$(OBJEXT)
+libvlccore_la_LDFLAGS += -Wl,libvlccore_win32_rc.$(OBJEXT) -avoid-version -Wc,-static
 endif
 if HAVE_OS2
 libvlccore_la_LDFLAGS += -avoid-version
@@ -584,7 +588,7 @@ if HAVE_TVOS
 libvlccore_la_LDFLAGS += -avoid-version
 endif
 
-libvlc_win32_rc.$(OBJEXT): libvlc_win32_rc.rc $(top_srcdir)/extras/package/win32/libvlc.dll.manifest
+libvlccore_win32_rc.$(OBJEXT): libvlccore_win32_rc.rc $(top_srcdir)/extras/package/win32/libvlccore.dll.manifest
 	$(WINDRES) --include-dir $(top_srcdir)/share --include-dir $(top_srcdir)/extras/package/win32 -i $< -o $@
 
 # FourCC tables

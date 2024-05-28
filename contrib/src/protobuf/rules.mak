@@ -1,6 +1,8 @@
 # protobuf
-PROTOBUF_VERSION := 3.1.0
-PROTOBUF_URL := https://github.com/google/protobuf/releases/download/v$(PROTOBUF_VERSION)/protobuf-cpp-$(PROTOBUF_VERSION).tar.gz
+PROTOBUF_MAJVERSION := 3.4
+PROTOBUF_REVISION := 1
+PROTOBUF_VERSION := $(PROTOBUF_MAJVERSION).$(PROTOBUF_REVISION)
+PROTOBUF_URL := $(GITHUB)/google/protobuf/releases/download/v$(PROTOBUF_VERSION)/protobuf-cpp-$(PROTOBUF_VERSION).tar.gz
 
 ifndef HAVE_TVOS
 PKGS += protobuf protoc
@@ -14,10 +16,10 @@ PKGS_FOUND += protoc
 endif
 endif
 
-ifeq ($(shell $(HOST)-protoc --version 2>/dev/null | head -1 | sed s/'.* '//),$(PROTOBUF_VERSION))
+ifeq ($(shell $(HOST)-protoc --version 2>/dev/null | head -1 | sed s/'.* '// | cut -d '.' -f -2),$(PROTOBUF_MAJVERSION))
 PKGS_FOUND += protoc
 endif
-ifeq ($(shell protoc --version 2>/dev/null | head -1 | sed s/'.* '//),$(PROTOBUF_VERSION))
+ifeq ($(shell protoc --version 2>/dev/null | head -1 | sed s/'.* '// | cut -d '.' -f -2),$(PROTOBUF_MAJVERSION))
 PKGS_FOUND += protoc
 endif
 
@@ -42,31 +44,47 @@ PROTOCCONF += --enable-static --disable-shared
 
 protoc: protoc-$(PROTOBUF_VERSION)-cpp.tar.gz .sum-protoc
 	$(RM) -Rf $@ $(UNPACK_DIR) && mkdir -p $(UNPACK_DIR)
-	tar xvzfo "$<" -C $(UNPACK_DIR) --strip-components=1
-	$(APPLY) $(SRC)/protobuf/protobuf-disable-gmock.patch
-	$(APPLY) $(SRC)/protobuf/protobuf-fix-build.patch
-	$(APPLY) $(SRC)/protobuf/include-algorithm.patch
+	tar $(TAR_VERBOSE)xzfo "$<" -C $(UNPACK_DIR) --strip-components=1
+	# don't build benchmarks and conformance
+	sed -i.orig 's, conformance benchmarks,,' "$(UNPACK_DIR)/Makefile.am"
+	sed -i.orig 's, benchmarks/Makefile conformance/Makefile,,' "$(UNPACK_DIR)/configure.ac"
+	# don't use gmock or any sub project to configure
+	sed -i.orig 's,AC_CONFIG_SUBDIRS,dnl AC_CONFIG_SUBDIRS,' "$(UNPACK_DIR)/configure.ac"
+	# force include <algorithm>
+	sed -i.orig 's,#ifdef _MSC_VER,#if 1,' "$(UNPACK_DIR)/src/google/protobuf/repeated_field.h"
 	$(APPLY) $(SRC)/protobuf/protobuf-no-mingw-pthread.patch
 	$(MOVE)
 
 .protoc: protoc
 	$(RECONF)
-	cd $< && $(BUILDVARS) $(PROTOCVARS) ./configure $(BUILDTOOLCONF) $(PROTOCCONF)
-	cd $< && $(MAKE) && $(MAKE) install
+	$(MAKEBUILDDIR)
+	cd $(BUILD_DIR) && $(BUILDVARS) $(BUILD_SRC)/configure $(BUILDTOOLCONF) $(PROTOCVARS) $(PROTOCCONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@
 
 protobuf: protobuf-$(PROTOBUF_VERSION)-cpp.tar.gz .sum-protobuf
 	$(UNPACK)
+	$(RM) -Rf $(UNPACK_DIR)
 	mv protobuf-$(PROTOBUF_VERSION) protobuf-$(PROTOBUF_VERSION)-cpp
-	$(APPLY) $(SRC)/protobuf/protobuf-disable-gmock.patch
-	$(APPLY) $(SRC)/protobuf/dont-build-protoc.patch
-	$(APPLY) $(SRC)/protobuf/protobuf-fix-build.patch
-	$(APPLY) $(SRC)/protobuf/include-algorithm.patch
+	# don't build benchmarks and conformance
+	sed -i.orig 's, conformance benchmarks,,' "$(UNPACK_DIR)/Makefile.am"
+	sed -i.orig 's, benchmarks/Makefile conformance/Makefile,,' "$(UNPACK_DIR)/configure.ac"
+	# don't use gmock or any sub project to configure
+	sed -i.orig 's,AC_CONFIG_SUBDIRS,dnl AC_CONFIG_SUBDIRS,' "$(UNPACK_DIR)/configure.ac"
+	# don't build protoc
+	sed -i.orig 's,bin_PROGRAMS,#bin_PROGRAMS,' "$(UNPACK_DIR)/src/Makefile.am"
+	sed -i.orig 's,BUILT_SOURCES,#BUILT_SOURCES,' "$(UNPACK_DIR)/src/Makefile.am"
+	sed -i.orig 's,libprotobuf-lite.la libprotobuf.la libprotoc.la,libprotobuf-lite.la libprotobuf.la,' "$(UNPACK_DIR)/src/Makefile.am"
+	# force include <algorithm>
+	sed -i.orig 's,#ifdef _MSC_VER,#if 1,' "$(UNPACK_DIR)/src/google/protobuf/repeated_field.h"
 	$(APPLY) $(SRC)/protobuf/protobuf-no-mingw-pthread.patch
 	$(MOVE)
 
 .protobuf: protobuf
 	$(RECONF)
-	cd $< && $(HOSTVARS) $(PROTOBUFVARS) ./configure $(HOSTCONF)
-	cd $< && $(MAKE) && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(PROTOBUFVARS)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

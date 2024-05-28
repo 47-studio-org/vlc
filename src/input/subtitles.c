@@ -57,10 +57,10 @@ static void filename_strip_ext_inplace(char *str)
 
 /**
  * Trim special characters from a filename
- * 
+ *
  * Trims whitespaces and other non-alphanumeric
  * characters from filenames.
- * 
+ *
  * \warning This function operates on the passed string
  * without copying. It might return a pointer different to
  * the passed one, in case it trims characters at the beginning.
@@ -262,7 +262,7 @@ int subtitles_Detect( input_thread_t *p_this, char *psz_path, const char *psz_na
             continue;
 
         /* parse psz_src dir */
-        DIR *dir = vlc_opendir( psz_dir );
+        vlc_DIR *dir = vlc_opendir( psz_dir );
         if( dir == NULL )
             continue;
 
@@ -352,7 +352,7 @@ int subtitles_Detect( input_thread_t *p_this, char *psz_path, const char *psz_na
                 free( path );
             }
         }
-        closedir( dir );
+        vlc_closedir( dir );
     }
     if( subdirs )
     {

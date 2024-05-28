@@ -47,13 +47,9 @@
 #if defined( _WIN32 )
 #   include <io.h>
 #   include <ctype.h>
-#if !defined(VLC_WINSTORE_APP)
-#   include <shlwapi.h> // for PathIsNetworkPathW
-#endif
 #else
 #   include <unistd.h>
 #endif
-#include <dirent.h>
 
 #include <vlc_common.h>
 #include "fs.h"
@@ -75,7 +71,19 @@ typedef struct
 #if !defined (_WIN32) && !defined (__OS2__)
 static bool IsRemote (int fd)
 {
-#if defined (HAVE_FSTATVFS) && defined (MNT_LOCAL)
+#if defined(__APPLE__)
+    /* This has to preceed the general fstatvfs implmentation below,
+     * as even though Darwin has fstatvfs, it does not expose the
+     * MNT_LOCAL in the statvfs.f_flag field.
+     */
+    struct statfs sfs;
+
+    if (fstatfs (fd, &sfs))
+        return false;
+
+    return !((sfs.f_flags & MNT_LOCAL) == MNT_LOCAL);
+
+#elif defined (HAVE_FSTATVFS) && defined (MNT_LOCAL)
     struct statvfs stf;
 
     if (fstatvfs (fd, &stf))
@@ -109,17 +117,46 @@ static bool IsRemote (int fd)
 }
 # define IsRemote(fd,path) IsRemote(fd)
 
-#else /* _WIN32 || __OS2__ */
+#elif defined(_WIN32)
+
+static bool IsRemote(int fd, const char *path)
+{
+    VLC_UNUSED(fd);
+
+    size_t len = strlen(path);
+    if (len < 2)
+        return false;
+    if (path[0] == '\\' && path[1] == '\\')
+        return true;
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) ||  NTDDI_VERSION >= NTDDI_WIN10_RS3
+    if (path[1] == ':')
+    {
+        char drive[4];
+        drive[0] = path[0]; // can only be < 0x80 if second char is ':'
+        drive[1] = ':';
+        drive[2] = '\\';
+        drive[3] = '\0';
+        UINT driveType = GetDriveTypeA(drive);
+        switch (driveType)
+        {
+            case DRIVE_FIXED:
+            case DRIVE_REMOVABLE: // but a floppy drive is slower than network
+            case DRIVE_RAMDISK:
+            case DRIVE_CDROM:
+                return false;
+            default:
+                return true;
+        }
+    }
+#endif
+    return false;
+}
+
+#else /* __OS2__ */
+
 static bool IsRemote (const char *path)
 {
-# if !defined(__OS2__) && !defined(VLC_WINSTORE_APP)
-    wchar_t *wpath = ToWide (path);
-    bool is_remote = (wpath != NULL && PathIsNetworkPathW (wpath));
-    free (wpath);
-    return is_remote;
-# else
     return (! strncmp(path, "\\\\", 2));
-# endif
 }
 # define IsRemote(fd,path) IsRemote(path)
 #endif

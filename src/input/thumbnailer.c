@@ -32,9 +32,6 @@ struct vlc_thumbnailer_t
 {
     vlc_object_t* parent;
     vlc_executor_t *executor;
-
-    vlc_mutex_t lock;
-    struct vlc_list submitted_tasks; /**< list of struct thumbnailer_task */
 };
 
 struct seek_target
@@ -47,7 +44,7 @@ struct seek_target
     union
     {
         vlc_tick_t time;
-        float pos;
+        double pos;
     };
 };
 
@@ -57,6 +54,7 @@ typedef struct vlc_thumbnailer_request_t task_t;
 
 struct vlc_thumbnailer_request_t
 {
+    vlc_atomic_rc_t rc;
     vlc_thumbnailer_t *thumbnailer;
 
     struct seek_target seek_target;
@@ -72,12 +70,15 @@ struct vlc_thumbnailer_request_t
 
     vlc_mutex_t lock;
     vlc_cond_t cond_ended;
-    bool ended;
+    enum
+    {
+        RUNNING,
+        INTERRUPTED,
+        ENDED,
+    } status;
     picture_t *pic;
 
     struct vlc_runnable runnable; /**< to be passed to the executor */
-
-    struct vlc_list node; /**< node of vlc_thumbnailer_t.submitted_tasks */
 };
 
 static void RunnableRun(void *);
@@ -91,6 +92,7 @@ TaskNew(vlc_thumbnailer_t *thumbnailer, input_item_t *item,
     if (!task)
         return NULL;
 
+    vlc_atomic_rc_init(&task->rc);
     task->thumbnailer = thumbnailer;
     task->item = item;
     task->seek_target = seek_target;
@@ -101,7 +103,7 @@ TaskNew(vlc_thumbnailer_t *thumbnailer, input_item_t *item,
 
     vlc_mutex_init(&task->lock);
     vlc_cond_init(&task->cond_ended);
-    task->ended = false;
+    task->status = RUNNING;
     task->pic = NULL;
 
     task->runnable.run = RunnableRun;
@@ -113,34 +115,18 @@ TaskNew(vlc_thumbnailer_t *thumbnailer, input_item_t *item,
 }
 
 static void
-TaskDelete(task_t *task)
+TaskRelease(task_t *task)
 {
+    if (!vlc_atomic_rc_dec(&task->rc))
+        return;
     input_item_Release(task->item);
     free(task);
-}
-
-static void
-ThumbnailerAddTask(vlc_thumbnailer_t *thumbnailer, task_t *task)
-{
-    vlc_mutex_lock(&thumbnailer->lock);
-    vlc_list_append(&task->node, &thumbnailer->submitted_tasks);
-    vlc_mutex_unlock(&thumbnailer->lock);
-}
-
-static void
-ThumbnailerRemoveTask(vlc_thumbnailer_t *thumbnailer, task_t *task)
-{
-    vlc_mutex_lock(&thumbnailer->lock);
-    vlc_list_remove(&task->node);
-    vlc_mutex_unlock(&thumbnailer->lock);
 }
 
 static void NotifyThumbnail(task_t *task, picture_t *pic)
 {
     assert(task->cb);
     task->cb(task->userdata, pic);
-    if (pic)
-        picture_Release(pic);
 }
 
 static void
@@ -156,7 +142,7 @@ on_thumbnailer_input_event( input_thread_t *input,
     task_t *task = userdata;
 
     vlc_mutex_lock(&task->lock);
-    if (task->ended)
+    if (task->status != RUNNING)
     {
         /* We may receive a THUMBNAIL_READY event followed by an
          * INPUT_EVENT_STATE (end of stream), we must only consider the first
@@ -165,14 +151,13 @@ on_thumbnailer_input_event( input_thread_t *input,
         return;
     }
 
-    task->ended = true;
+    task->status = ENDED;
 
     if (event->type == INPUT_EVENT_THUMBNAIL_READY)
         task->pic = picture_Hold(event->thumbnail);
 
-    vlc_mutex_unlock(&task->lock);
-
     vlc_cond_signal(&task->cond_ended);
+    vlc_mutex_unlock(&task->lock);
 }
 
 static void
@@ -189,7 +174,7 @@ RunnableRun(void *userdata)
             input_Create( thumbnailer->parent, on_thumbnailer_input_event, task,
                           task->item, INPUT_TYPE_THUMBNAILING, NULL, NULL );
     if (!input)
-        goto end;
+        goto error;
 
     if (task->seek_target.type == VLC_THUMBNAILER_SEEK_TIME)
         input_SetTime(input, task->seek_target.time, task->fast_seek);
@@ -203,35 +188,40 @@ RunnableRun(void *userdata)
     if (ret != VLC_SUCCESS)
     {
         input_Close(input);
-        goto end;
+        goto error;
     }
 
     vlc_mutex_lock(&task->lock);
     if (task->timeout == VLC_TICK_INVALID)
     {
-        while (!task->ended)
+        while (task->status == RUNNING)
             vlc_cond_wait(&task->cond_ended, &task->lock);
     }
     else
     {
         vlc_tick_t deadline = now + task->timeout;
-        bool timeout = false;
-        while (!task->ended && !timeout)
+        int timeout = 0;
+        while (task->status == RUNNING && timeout == 0)
             timeout =
                 vlc_cond_timedwait(&task->cond_ended, &task->lock, deadline);
     }
     picture_t* pic = task->pic;
     task->pic = NULL;
+
+    bool notify = task->status != INTERRUPTED;
     vlc_mutex_unlock(&task->lock);
 
-    NotifyThumbnail(task, pic);
+    if (notify)
+        NotifyThumbnail(task, pic);
+
+    if (pic)
+        picture_Release(pic);
 
     input_Stop(input);
     input_Close(input);
 
-end:
-    ThumbnailerRemoveTask(thumbnailer, task);
-    TaskDelete(task);
+error:
+    TaskRelease(task);
 }
 
 static void
@@ -239,9 +229,9 @@ Interrupt(task_t *task)
 {
     /* Wake up RunnableRun() which will call input_Stop() */
     vlc_mutex_lock(&task->lock);
-    task->ended = true;
-    vlc_mutex_unlock(&task->lock);
+    task->status = INTERRUPTED;
     vlc_cond_signal(&task->cond_ended);
+    vlc_mutex_unlock(&task->lock);
 }
 
 static task_t *
@@ -255,14 +245,10 @@ RequestCommon(vlc_thumbnailer_t *thumbnailer, struct seek_target seek_target,
     if (!task)
         return NULL;
 
-    ThumbnailerAddTask(thumbnailer, task);
-
+    /* One ref for the executor */
+    vlc_atomic_rc_inc(&task->rc);
     vlc_executor_Submit(thumbnailer->executor, &task->runnable);
 
-    /* XXX In theory, "task" might already be invalid here (if it is already
-     * executed and deleted). This is consistent with the API documentation and
-     * the previous implementation, but it is not very convenient for the user.
-     */
     return task;
 }
 
@@ -283,7 +269,7 @@ vlc_thumbnailer_RequestByTime( vlc_thumbnailer_t *thumbnailer,
 
 task_t *
 vlc_thumbnailer_RequestByPos( vlc_thumbnailer_t *thumbnailer,
-                              float pos, enum vlc_thumbnailer_seek_speed speed,
+                              double pos, enum vlc_thumbnailer_seek_speed speed,
                               input_item_t *item, vlc_tick_t timeout,
                               vlc_thumbnailer_cb cb, void* userdata )
 {
@@ -295,11 +281,20 @@ vlc_thumbnailer_RequestByPos( vlc_thumbnailer_t *thumbnailer,
                          userdata);
 }
 
-void vlc_thumbnailer_Cancel( vlc_thumbnailer_t* thumbnailer, task_t* task )
+void vlc_thumbnailer_DestroyRequest( vlc_thumbnailer_t* thumbnailer, task_t* task )
 {
-    (void) thumbnailer;
-    /* The API documentation requires that task is valid */
-    Interrupt(task);
+    bool canceled = vlc_executor_Cancel(thumbnailer->executor, &task->runnable);
+    if (canceled)
+    {
+        /* Release the executor reference (since it won't run) */
+        bool ret = vlc_atomic_rc_dec(&task->rc);
+        /* Assert that only the caller got the reference */
+        assert(!ret); (void) ret;
+    }
+    else
+        Interrupt(task);
+
+    TaskRelease(task);
 }
 
 vlc_thumbnailer_t *vlc_thumbnailer_Create( vlc_object_t* parent)
@@ -316,38 +311,12 @@ vlc_thumbnailer_t *vlc_thumbnailer_Create( vlc_object_t* parent)
     }
 
     thumbnailer->parent = parent;
-    vlc_mutex_init(&thumbnailer->lock);
-    vlc_list_init(&thumbnailer->submitted_tasks);
 
     return thumbnailer;
 }
 
-static void
-CancelAllTasks(vlc_thumbnailer_t *thumbnailer)
-{
-    vlc_mutex_lock(&thumbnailer->lock);
-
-    task_t *task;
-    vlc_list_foreach(task, &thumbnailer->submitted_tasks, node)
-    {
-        bool canceled = vlc_executor_Cancel(thumbnailer->executor,
-                                            &task->runnable);
-        if (canceled)
-        {
-            NotifyThumbnail(task, NULL);
-            vlc_list_remove(&task->node);
-            TaskDelete(task);
-        }
-        /* Otherwise, the task will be finished and destroyed after run() */
-    }
-
-    vlc_mutex_unlock(&thumbnailer->lock);
-}
-
 void vlc_thumbnailer_Release( vlc_thumbnailer_t *thumbnailer )
 {
-    CancelAllTasks(thumbnailer);
-
     vlc_executor_Delete(thumbnailer->executor);
     free( thumbnailer );
 }

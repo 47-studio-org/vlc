@@ -325,9 +325,8 @@ static bool IsBmp(stream_t *s)
         return false;
     if (data_offset < header_size + 14)
         return false;
-    if (header_size != 12 && header_size < 40)
-        return false;
-    return true;
+    static const uint8_t header_sizes[] = { 12, 40, 56, 64, 108, 124 };
+    return memchr(header_sizes, header_size, ARRAY_SIZE(header_sizes)) != NULL;
 }
 
 static bool IsPcx(stream_t *s)
@@ -394,9 +393,9 @@ static bool IsPnm(stream_t *s)
     return true;
 }
 
-static uint8_t FindJpegMarker(int *position, const uint8_t *data, int size)
+static uint8_t FindJpegMarker(size_t *position, const uint8_t *data, size_t size)
 {
-    for (int i = *position; i + 1 < size; i++) {
+    for (size_t i = *position; i + 1 < size; i++) {
         if (data[i + 0] != 0xff || data[i + 1] == 0x00)
             return 0xff;
         if (data[i + 1] != 0xff) {
@@ -409,8 +408,11 @@ static uint8_t FindJpegMarker(int *position, const uint8_t *data, int size)
 static bool IsJfif(stream_t *s)
 {
     const uint8_t *header;
-    int size = vlc_stream_Peek(s, &header, 256);
-    int position = 0;
+    ssize_t peek = vlc_stream_Peek(s, &header, 256);
+    if(peek < 256)
+        return false;
+    size_t size = (size_t) peek;
+    size_t position = 0;
 
     if (FindJpegMarker(&position, header, size) != 0xd8)
         return false;
@@ -451,24 +453,29 @@ static bool IsSpiff(stream_t *s)
     return true;
 }
 
-static bool IsExif(stream_t *s)
+#define EXIF_STRING "Exif" /* includes \0 */
+#define EXIF_XMP_STRING "http://ns.adobe.com/xap/1.0/" /* includes \0 */
+static bool IsExifXMP(stream_t *s)
 {
     const uint8_t *header;
-    ssize_t size = vlc_stream_Peek(s, &header, 256);
-    if (size == -1)
+    ssize_t peek = vlc_stream_Peek(s, &header, 256);
+    if (peek < 256)
         return false;
-    int position = 0;
+    size_t size = (size_t) peek;
+    size_t position = 0;
 
     if (FindJpegMarker(&position, header, size) != 0xd8)
         return false;
     if (FindJpegMarker(&position, header, size) != 0xe1)
         return false;
     position += 2;  /* Skip size */
-    if (position + 5 > size)
-        return false;
-    if (memcmp(&header[position], "Exif\0", 5))
-        return false;
-    return true;
+    if (position + sizeof(EXIF_STRING) <= size &&
+        !memcmp(&header[position], EXIF_STRING, sizeof(EXIF_STRING)))
+        return true;
+    if (position + sizeof(EXIF_XMP_STRING) <= size &&
+        !memcmp(&header[position], EXIF_XMP_STRING, sizeof(EXIF_XMP_STRING)))
+        return true;
+    return false;
 }
 
 static bool FindSVGmarker(int *position, const uint8_t *data, const int size, const char *marker)
@@ -637,7 +644,7 @@ static const image_format_t formats[] = {
       .detect = IsSpiff,
     },
     { .codec = VLC_CODEC_JPEG,
-      .detect = IsExif,
+      .detect = IsExifXMP,
     },
     { .codec = VLC_CODEC_WEBP,
       .detect = IsWebP,

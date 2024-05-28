@@ -63,7 +63,9 @@ static const char *const enc_hq_list_text[] = {
 #endif
 
 #ifdef MERGE_FFMPEG
-# include "../../demux/avformat/avformat.h"
+# ifdef HAVE_LIBAVFORMAT_AVFORMAT_H
+#  include "../../demux/avformat/avformat.h"
+# endif
 # include "../../access/avio.h"
 # include "../../packetizer/avparser.h"
 #endif
@@ -200,7 +202,9 @@ vlc_module_begin ()
 
 #ifdef MERGE_FFMPEG
     add_submodule ()
+# ifdef HAVE_LIBAVFORMAT_AVFORMAT_H
 #   include "../../demux/avformat/avformat.c"
+# endif
     add_submodule ()
         AVIO_MODULE
     add_submodule ()
@@ -216,7 +220,7 @@ AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
     const AVCodec *p_codec = NULL;
 
     /* *** determine codec type *** */
-    if( !GetFfmpegCodec( p_dec->fmt_in.i_cat, p_dec->fmt_in.i_codec,
+    if( !GetFfmpegCodec( p_dec->fmt_in->i_cat, p_dec->fmt_in->i_codec,
                          &i_codec_id, &psz_namecodec ) ||
          i_codec_id == AV_CODEC_ID_RAWVIDEO )
          return NULL;
@@ -236,7 +240,7 @@ AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
         else if( p_codec->id != i_codec_id )
         {
             msg_Err( p_dec, "Decoder `%s' can't handle %4.4s",
-                    psz_decoder, (char*)&p_dec->fmt_in.i_codec );
+                    psz_decoder, (char*)&p_dec->fmt_in->i_codec );
             p_codec = NULL;
         }
         free( psz_decoder );

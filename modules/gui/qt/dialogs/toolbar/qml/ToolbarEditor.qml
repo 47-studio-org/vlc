@@ -26,9 +26,8 @@ import "qrc:///style/"
 import "qrc:///widgets/" as Widgets
 import "qrc:///util/" as Util
 
-Rectangle{
+Item {
     id: root
-    color: VLCStyle.colors.bg
 
     property bool dragActive: !!_viewThatContainsDrag || buttonDragItem.Drag.active
 
@@ -39,6 +38,11 @@ Rectangle{
     signal dragStarted(int controlId)
     signal dragStopped(int controlId)
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.View
+    }
+
     ColumnLayout{
         anchors.fill: parent
         spacing: 0
@@ -47,7 +51,9 @@ Rectangle{
             id: bar
             z: 1
 
-            background: null
+            background: Rectangle {
+                color: theme.bg.primary
+            }
 
             readonly property int currentIdentifier: currentItem.identifier
 
@@ -55,8 +61,25 @@ Rectangle{
                 model: PlayerListModel.model
 
                 delegate: EditorTabButton {
-                    text: modelData.name
                     readonly property int identifier: modelData.identifier
+
+                    selected: index === bar.currentIndex
+
+                    implicitWidth: VLCStyle.button_width_large
+
+                    text: {
+                        var text = modelData.name
+
+                        if (!!MainCtx.controlbarProfileModel.currentModel &&
+                                MainCtx.controlbarProfileModel.currentModel.getModel(identifier).dirty)
+                            return _markDirty(text)
+                        else
+                            return text
+                    }
+
+                    onDropEnterred: {
+                        bar.currentIndex = index
+                    }
                 }
             }
         }
@@ -67,10 +90,10 @@ Rectangle{
             Layout.preferredHeight: VLCStyle.maxControlbarControlHeight * 1.5
             Layout.fillWidth: true
 
-            color: "transparent"
+            color: theme.bg.primary
 
-            border.color: VLCStyle.colors.accent
-            border.width: VLCStyle.dp(1, VLCStyle.scale)
+            border.color: theme.border
+            border.width: VLCStyle.border
 
             TextMetrics {
                 id: leftMetric
@@ -175,9 +198,7 @@ Rectangle{
 
                             readonly property int count: !!item ? item.count : 0
 
-                            sourceComponent: Rectangle {
-                                color: VLCStyle.colors.bgAlt
-
+                            sourceComponent: Item {
                                 property alias count: dndView.count
 
                                 Connections {
@@ -222,7 +243,7 @@ Rectangle{
                                         text: repeater.getMetric(index).text
                                         verticalAlignment: Text.AlignVCenter
                                         font.pixelSize: VLCStyle.fontSize_xxlarge
-                                        color: VLCStyle.colors.menuCaption
+                                        color: theme.fg.secondary
                                         horizontalAlignment: Text.AlignHCenter
                                         visible: (count === 0)
                                     }
@@ -239,7 +260,9 @@ Rectangle{
             Layout.fillWidth: true
             Layout.topMargin: VLCStyle.margin_xxsmall
 
-            color: VLCStyle.colors.bgAlt
+            color: buttonList.colorContext.bg.primary
+            border.color: theme.border
+            border.width: VLCStyle.border
 
             ColumnLayout {
                 anchors.fill: parent
@@ -247,6 +270,7 @@ Rectangle{
                 Widgets.MenuCaption {
                     Layout.margins: VLCStyle.margin_xxsmall
                     text: I18n.qtr("Drag items below to add them above: ")
+                    color: buttonList.colorContext.fg.primary
                 }
 
                 ToolbarEditorButtonList {
@@ -255,6 +279,11 @@ Rectangle{
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.margins: VLCStyle.margin_xxsmall
+
+                    Component.onCompleted: {
+                        dragStarted.connect(root.dragStarted)
+                        dragStopped.connect(root.dragStopped)
+                    }
                 }
             }
         }
@@ -264,7 +293,7 @@ Rectangle{
         id: buttonDragItem
 
         visible: Drag.active
-        color: VLCStyle.colors.buttonText
+        color: theme.fg.primary
         opacity: 0.75
 
         x: -1

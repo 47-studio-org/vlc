@@ -42,6 +42,7 @@
 
 #include <atomic>
 
+class CSDButtonModel;
 class QSettings;
 class QCloseEvent;
 class QKeyEvent;
@@ -142,6 +143,7 @@ public:
 
 };
 
+
 class MainCtx : public QObject
 {
     Q_OBJECT
@@ -163,9 +165,10 @@ class MainCtx : public QObject
     Q_PROPERTY(bool clientSideDecoration READ useClientSideDecoration NOTIFY useClientSideDecorationChanged FINAL)
     Q_PROPERTY(bool hasFirstrun READ hasFirstrun CONSTANT FINAL)
     Q_PROPERTY(int  csdBorderSize READ CSDBorderSize NOTIFY useClientSideDecorationChanged FINAL)
-    Q_PROPERTY(bool hasToolbarMenu READ hasToolbarMenu NOTIFY hasToolbarMenuChanged FINAL)
+    Q_PROPERTY(bool hasToolbarMenu READ hasToolbarMenu WRITE setHasToolbarMenu NOTIFY hasToolbarMenuChanged FINAL)
     Q_PROPERTY(bool canShowVideoPIP READ canShowVideoPIP CONSTANT FINAL)
     Q_PROPERTY(bool pinVideoControls READ pinVideoControls WRITE setPinVideoControls NOTIFY pinVideoControlsChanged FINAL)
+    Q_PROPERTY(float pinOpacity READ pinOpacity WRITE setPinOpacity NOTIFY pinOpacityChanged FINAL)
     Q_PROPERTY(ControlbarProfileModel* controlbarProfileModel READ controlbarProfileModel CONSTANT FINAL)
     Q_PROPERTY(bool hasAcrylicSurface READ hasAcrylicSurface NOTIFY hasAcrylicSurfaceChanged FINAL)
     Q_PROPERTY(PlaylistPtr mainPlaylist READ getMainPlaylist CONSTANT FINAL)
@@ -175,6 +178,8 @@ class MainCtx : public QObject
     Q_PROPERTY(QScreen* screen READ screen NOTIFY screenChanged)
     Q_PROPERTY(bool useGlobalShortcuts READ getUseGlobalShortcuts WRITE setUseGlobalShortcuts NOTIFY useGlobalShortcutsChanged FINAL)
     Q_PROPERTY(int maxVolume READ maxVolume NOTIFY maxVolumeChanged FINAL)
+
+    Q_PROPERTY(CSDButtonModel *csdButtonModel READ csdButtonModel CONSTANT FINAL)
 
     // This Property only works if hasAcrylicSurface is set
     Q_PROPERTY(bool acrylicActive READ acrylicActive WRITE setAcrylicActive NOTIFY acrylicActiveChanged FINAL)
@@ -247,7 +252,10 @@ public:
     inline bool hasToolbarMenu() const { return m_hasToolbarMenu; }
     inline bool canShowVideoPIP() const { return m_canShowVideoPIP; }
     inline void setCanShowVideoPIP(bool canShowVideoPIP) { m_canShowVideoPIP = canShowVideoPIP; }
+
     inline bool pinVideoControls() const { return m_pinVideoControls; }
+    inline float pinOpacity() const { return m_pinOpacity; }
+
     inline ControlbarProfileModel* controlbarProfileModel() const { return m_controlbarProfileModel; }
     inline QUrl getDialogFilePath() const { return m_dialogFilepath; }
     inline void setDialogFilePath(const QUrl& filepath ){ m_dialogFilepath = filepath; }
@@ -271,7 +279,6 @@ public:
                                                                         unsigned char patch)
                                                                        { return QT_VERSION_CHECK(major, minor, patch); };
 
-    void dropEventPlay( QDropEvent* event, bool b_play );
     /**
      * @brief ask for the application to terminate
      * @return true if the application can be close right away, false if it will be delayed
@@ -290,6 +297,11 @@ public:
     Q_INVOKABLE void setSettingValue(const QString &key, const QVariant &value);
 
     Q_INVOKABLE static void setAttachedToolTip(QObject* toolTip);
+
+    CSDButtonModel *csdButtonModel() { return m_csdButtonModel.get(); }
+
+    Q_INVOKABLE static double dp(const double px, const double scale);
+    Q_INVOKABLE double dp(const double px) const;
 
 protected:
     /* Systray */
@@ -337,9 +349,14 @@ protected:
     Grouping             m_grouping = GROUPING_NONE;
     ColorSchemeModel*    m_colorScheme = nullptr;
     bool                 m_windowTitlebar = true;
+    // NOTE: Ideally this should be a QVLCBool.
     bool                 m_hasToolbarMenu = false;
     bool                 m_canShowVideoPIP = false;
+
+    /* Pinned */
     bool                 m_pinVideoControls = false;
+    float                m_pinOpacity       = 1.0f;
+
     bool                 m_useGlobalShortcuts = true;
     QUrl                 m_dialogFilepath; /* Last path used in dialogs */
 
@@ -360,10 +377,13 @@ protected:
 
     int m_maxVolume = 125;
 
+    std::unique_ptr<CSDButtonModel> m_csdButtonModel;
+
 public slots:
     void toggleUpdateSystrayMenu();
     void showUpdateSystrayMenu();
     void hideUpdateSystrayMenu();
+    void toggleToolbarMenu();
     void toggleInterfaceFullScreen();
     void setPlaylistDocked( bool );
     void setPlaylistVisible( bool );
@@ -374,7 +394,11 @@ public slots:
     void setGrouping( Grouping );
     void incrementIntfUserScaleFactor( bool increment);
     void setIntfUserScaleFactor( double );
+    void setHasToolbarMenu( bool );
+
     void setPinVideoControls( bool );
+    void setPinOpacity( float );
+
     void updateIntfScaleFactor();
     void onWindowVisibilityChanged(QWindow::Visibility);
     void setHasAcrylicSurface(bool);
@@ -427,7 +451,10 @@ signals:
     void requestInterfaceMinimized();
 
     void intfScaleFactorChanged();
+
     void pinVideoControlsChanged();
+    void pinOpacityChanged();
+
     void hasAcrylicSurfaceChanged();
 
     void acrylicActiveChanged();

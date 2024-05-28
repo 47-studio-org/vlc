@@ -30,6 +30,7 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_window.h>
+#include "../wasync_resize_compressor.h"
 
 #define HWND_TEXT N_("Window handle (HWND)")
 #define HWND_LONGTEXT N_( \
@@ -70,112 +71,39 @@ static const TCHAR *EMBED_HWND_CLASS = TEXT("VLC embedded HWND");
 
 struct drawable_sys
 {
-    vlc_sem_t hwnd_set;
-
-    vlc_window_t *wnd;
-    HWND hWnd;
     HWND embed_hwnd;
     RECT rect_parent;
+
+    WNDPROC prev_proc;
+
+    vlc_wasync_resize_compressor_t compressor;
 };
 
 static LRESULT CALLBACK WinVoutEventProc(HWND hwnd, UINT message,
                                          WPARAM wParam, LPARAM lParam )
 {
-    if( message == WM_CREATE /*WM_NCCREATE*/ )
-    {
-        /* Store our internal structure for future use */
-        CREATESTRUCT *c = (CREATESTRUCT *)lParam;
-        SetWindowLongPtr( hwnd, GWLP_USERDATA, (LONG_PTR)c->lpCreateParams );
-        return 0;
-    }
-
-    LONG_PTR p_user_data = GetWindowLongPtr( hwnd, GWLP_USERDATA );
-    if( unlikely(p_user_data == 0) )
-        return DefWindowProc(hwnd, message, wParam, lParam);
+    HANDLE p_user_data = GetProp(hwnd, EMBED_HWND_CLASS);
     struct drawable_sys *sys = (struct drawable_sys *)p_user_data;
-
-    vlc_window_t *wnd = sys->wnd;
-
-    RECT clientRect;
-    GetClientRect(sys->embed_hwnd, &clientRect);
-    if (RECTWidth(sys->rect_parent)  != RECTWidth(clientRect) ||
-        RECTHeight(sys->rect_parent) != RECTHeight(clientRect)) {
-        sys->rect_parent = clientRect;
-
-        SetWindowPos(hwnd, 0, 0, 0,
-                     RECTWidth(sys->rect_parent),
-                     RECTHeight(sys->rect_parent),
-                     SWP_NOZORDER|SWP_NOMOVE|SWP_NOACTIVATE);
-    }
-
-    switch( message )
+    LRESULT res = CallWindowProc(sys->prev_proc, hwnd, message, wParam, lParam);
+    switch(message)
     {
-    case WM_ERASEBKGND:
-        /* nothing to erase */
-        return 1;
+        case WM_SIZE:
+        {
+            RECT clientRect;
+            GetClientRect(hwnd, &clientRect);
+            if (RECTWidth(sys->rect_parent)  != RECTWidth(clientRect) ||
+                RECTHeight(sys->rect_parent) != RECTHeight(clientRect))
+            {
+                sys->rect_parent = clientRect;
 
-    case WM_PAINT:
-        /* nothing to repaint */
-        ValidateRect(hwnd, NULL);
-        break;
-
-    case WM_CLOSE:
-        vlc_window_ReportClose(wnd);
-        return 0;
-
-    /* the window has been closed so shut down everything now */
-    case WM_DESTROY:
-        /* just destroy the window */
-        PostQuitMessage( 0 );
-        return 0;
-
-    case WM_SIZE:
-        vlc_window_ReportSize(wnd, LOWORD(lParam), HIWORD(lParam));
-        return 0;
-
-    default:
+                vlc_wasync_resize_compressor_reportSize(&sys->compressor,
+                                                        RECTWidth(sys->rect_parent),
+                                                        RECTHeight(sys->rect_parent));
+            }
+        }
         break;
     }
-
-    /* Let windows handle the message */
-    return DefWindowProc(hwnd, message, wParam, lParam);
-}
-
-static DWORD WINAPI WindowLoopThread(LPVOID lpParameter)
-{
-    struct drawable_sys *sys = lpParameter;
-
-    /* Get this module's instance */
-    HMODULE hInstance = GetModuleHandle(NULL);
-
-    sys->hWnd =
-        CreateWindowEx( 0,
-                    EMBED_HWND_CLASS,              /* name of window class */
-                    TEXT("Embedded HWND"),                 /* window title */
-                    WS_CHILD|WS_VISIBLE|WS_DISABLED,       /* window style */
-                    0,                             /* default X coordinate */
-                    0,                             /* default Y coordinate */
-                    RECTWidth(sys->rect_parent),           /* window width */
-                    RECTHeight(sys->rect_parent),         /* window height */
-                    sys->embed_hwnd,                      /* parent window */
-                    NULL,                        /* no menu in this window */
-                    hInstance,          /* handle of this program instance */
-                    sys );                            /* send to WM_CREATE */
-
-    vlc_sem_post(&sys->hwnd_set);
-
-    if (sys->hWnd == NULL)
-        return 1;
-
-    /* Main loop */
-    /* GetMessage will sleep if there's no message in the queue */
-    MSG msg;
-    while( GetMessage( &msg, 0, 0, 0 ) )
-    {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
-    return 0;
+    return res;
 }
 
 static void RemoveDrawable(HWND val)
@@ -198,9 +126,6 @@ static void RemoveDrawable(HWND val)
     {
         free (used);
         used = NULL;
-
-        HINSTANCE hInstance = GetModuleHandle(NULL);
-        UnregisterClass( EMBED_HWND_CLASS, hInstance );
     }
     vlc_mutex_unlock (&serializer);
 }
@@ -219,7 +144,6 @@ static int Open(vlc_window_t *wnd)
     size_t n = 0;
 
     vlc_mutex_lock (&serializer);
-    bool first_hwnd = used == NULL;
     if (used != NULL)
         for (/*n = 0*/; used[n]; n++)
             if (used[n] == val)
@@ -246,52 +170,29 @@ static int Open(vlc_window_t *wnd)
         return VLC_ENOMEM;
     }
 
-    sys->embed_hwnd = (HWND)val;
-    sys->wnd = wnd;
-    GetClientRect(sys->embed_hwnd, &sys->rect_parent);
-    vlc_sem_init(&sys->hwnd_set, 0);
+    sys->embed_hwnd = val;
 
-    if (first_hwnd)
+    if (vlc_wasync_resize_compressor_init(&sys->compressor, wnd))
     {
-        /* Get this module's instance */
-        HMODULE hInstance = GetModuleHandle(NULL);
-
-        WNDCLASS wc = { 0 };                      /* window class components */
-        wc.lpfnWndProc   = WinVoutEventProc;                /* event handler */
-        wc.hInstance     = hInstance;                            /* instance */
-        wc.lpszClassName = EMBED_HWND_CLASS;
-        if( !RegisterClass(&wc) )
-        {
-            msg_Err( sys->wnd, "RegisterClass failed (err=%lu)", GetLastError() );
-            goto error;
-        }
+        msg_Err(wnd, "Failed to init async resize compressor");
+        RemoveDrawable(val);
+        return VLC_EGENERIC;
     }
 
-    // Create a Thread for the window event loop
-    if (CreateThread(NULL, 0, WindowLoopThread, sys, 0, NULL) == NULL)
-    {
-        msg_Err( sys->wnd, "CreateThread failed (err=%lu)", GetLastError() );
-        goto error;
-    }
+    GetClientRect(val, &sys->rect_parent);
+    vlc_wasync_resize_compressor_reportSize(&sys->compressor,
+                                            RECTWidth(sys->rect_parent),
+                                            RECTHeight(sys->rect_parent));
 
-    vlc_sem_wait(&sys->hwnd_set);
-
-    if (sys->hWnd == NULL)
-    {
-        msg_Err( sys->wnd, "Failed to create a window (err=%lu)", GetLastError() );
-        goto error;
-    }
+    sys->prev_proc = (WNDPROC)(uintptr_t) GetWindowLongPtr(val, GWLP_WNDPROC);
+    SetProp(val, EMBED_HWND_CLASS, sys);
+    SetWindowLongPtr(val, GWLP_WNDPROC, (LONG_PTR) WinVoutEventProc);
 
     wnd->type = VLC_WINDOW_TYPE_HWND;
-    wnd->handle.hwnd = (void *)sys->hWnd;
+    wnd->handle.hwnd = (void *)val;
     wnd->ops = &ops;
-    wnd->sys = (void *)sys;
+    wnd->sys = sys;
     return VLC_SUCCESS;
-
-error:
-    RemoveDrawable(sys->embed_hwnd);
-
-    return VLC_EGENERIC;
 }
 
 /**
@@ -300,6 +201,12 @@ error:
 static void Close (vlc_window_t *wnd)
 {
     struct drawable_sys *sys = wnd->sys;
+
+    // do not use our callback anymore
+    SetWindowLongPtr(sys->embed_hwnd, GWLP_WNDPROC, (LONG_PTR) sys->prev_proc);
+    RemoveProp(sys->embed_hwnd, EMBED_HWND_CLASS);
+
+    vlc_wasync_resize_compressor_destroy(&sys->compressor);
 
     RemoveDrawable(sys->embed_hwnd);
 }

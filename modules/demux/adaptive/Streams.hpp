@@ -27,7 +27,6 @@
 
 #include "plumbing/CommandsQueue.hpp"
 #include "plumbing/Demuxer.hpp"
-#include "plumbing/SourceStream.hpp"
 #include "plumbing/FakeESOut.hpp"
 
 #include "Time.hpp"
@@ -102,7 +101,7 @@ namespace adaptive
         virtual bool setPosition(const StreamPosition &, bool);
         bool getMediaPlaybackTimes(vlc_tick_t *, vlc_tick_t *, vlc_tick_t *) const;
         bool getMediaAdvanceAmount(vlc_tick_t *) const;
-        void runUpdates();
+        bool runUpdates(bool = false);
 
         /* Used by demuxers fake streams */
         virtual block_t *readNextBlock() override;
@@ -114,7 +113,7 @@ namespace adaptive
     protected:
         bool seekAble() const;
         void setDisabled(bool);
-        virtual block_t *checkBlock(block_t *, bool) = 0;
+        virtual block_t *checkBlock(block_t *, bool);
         AbstractDemuxer * createDemux(const StreamFormat &);
         virtual AbstractDemuxer * newDemux(vlc_object_t *, const StreamFormat &,
                                            es_out_t *, AbstractSourceStream *) const  override;

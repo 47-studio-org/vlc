@@ -33,22 +33,42 @@ import "qrc:///style/"
 FocusScope {
     id: root
 
-    property alias model: artistModel
+    // Properties
+
+    property int leftPadding: 0
+    property int rightPadding: 0
+
     property var sortModel: [
         { text: I18n.qtr("Alphabetic"),  criteria: "title" }
     ]
 
-    property alias currentIndex: artistList.currentIndex
-    property alias currentAlbumIndex: albumSubView.currentIndex
     property int initialIndex: 0
     property int initialAlbumIndex: 0
+
+    // Aliases
+
+    property alias model: artistModel
+
+    property alias currentIndex: artistList.currentIndex
+    property alias currentAlbumIndex: albumSubView.currentIndex
+
     property alias currentArtist: albumSubView.artist
+    property bool isScreenSmall: VLCStyle.isScreenSmall
 
     onInitialAlbumIndexChanged: resetFocus()
     onInitialIndexChanged: resetFocus()
     onCurrentIndexChanged: currentArtist = model.getDataAt(currentIndex)
+    onIsScreenSmallChanged: {
+        if (VLCStyle.isScreenSmall)
+            resetFocus()
+    }
 
     function resetFocus() {
+        if (VLCStyle.isScreenSmall) {
+            albumSubView.setCurrentItemFocus(Qt.OtherFocusReason)
+            return
+        }
+
         if (artistModel.count === 0) {
             return
         }
@@ -65,7 +85,11 @@ FocusScope {
     }
 
     function setCurrentItemFocus(reason) {
-        artistList.setCurrentItemFocus(reason);
+        if (VLCStyle.isScreenSmall) {
+            albumSubView.setCurrentItemFocus(reason);
+        } else {
+            artistList.setCurrentItemFocus(reason);
+        }
     }
 
     function _actionAtIndex(index) {
@@ -97,17 +121,22 @@ FocusScope {
     }
 
     Widgets.AcrylicBackground {
-      /* id: artistListBackground */
+      id: artistListBackground
 
       visible: artistModel.count > 0
       width: artistList.width
       height: artistList.height
-      alternativeColor: VLCStyle.colors.bgAlt
+
+      tintColor: artistList.colorContext.bg.secondary
+
       focus: false
     }
 
     Row {
         anchors.fill: parent
+
+        anchors.leftMargin: root.leftPadding
+
         visible: artistModel.count > 0
 
         Widgets.KeyNavigableListView {
@@ -118,13 +147,21 @@ FocusScope {
             currentIndex: -1
             z: 1
             height: parent.height
-            width: Helpers.clamp(root.width / resizeHandle.widthFactor,
-                                 VLCStyle.colWidth(1) + VLCStyle.column_margin_width,
-                                 root.width * .5)
+            width: VLCStyle.isScreenSmall
+                   ? 0
+                   : Math.round(Helpers.clamp(root.width / resizeHandle.widthFactor,
+                                              VLCStyle.colWidth(1) + VLCStyle.column_spacing,
+                                              root.width * .5))
 
-            visible: artistModel.count > 0
-            focus: artistModel.count > 0
-            displayMarginEnd: miniPlayer.height // to get blur effect while scrolling in mainview
+            visible: !VLCStyle.isScreenSmall && (artistModel.count > 0)
+            focus: !VLCStyle.isScreenSmall && (artistModel.count > 0)
+
+            backgroundColor: artistListBackground.usingAcrylic ? "transparent"
+                                                               : artistListBackground.alternativeColor
+
+            // To get blur effect while scrolling in mainview
+            displayMarginEnd: g_mainDisplay.displayMargin
+
             Navigation.parentItem: root
 
             Navigation.rightAction: function() {
@@ -141,6 +178,7 @@ FocusScope {
             header: Widgets.SubtitleLabel {
                 text: I18n.qtr("Artists")
                 font.pixelSize: VLCStyle.fontSize_large
+                color: artistList.colorContext.fg.primary
                 leftPadding: VLCStyle.margin_normal
                 bottomPadding: VLCStyle.margin_small
                 topPadding: VLCStyle.margin_xlarge
@@ -170,13 +208,6 @@ FocusScope {
                 }
             }
 
-            Behavior on width {
-                SmoothedAnimation {
-                    easing.type: Easing.InSine
-                    duration: VLCStyle.duration_veryShort
-                }
-            }
-
             Rectangle {
                 // id: musicArtistLeftBorder
 
@@ -185,7 +216,7 @@ FocusScope {
                 anchors.right: parent.right
 
                 width: VLCStyle.border
-                color: VLCStyle.colors.border
+                color: artistList.colorContext.separator
             }
 
 
@@ -206,19 +237,22 @@ FocusScope {
             id: albumSubView
 
             height: parent.height
-            width: root.width - artistList.width
+            width: root.width - root.leftPadding - artistList.width
+
+            rightPadding: root.rightPadding
+
             focus: true
             initialIndex: root.initialAlbumIndex
             Navigation.parentItem: root
-            Navigation.leftItem: artistList
+            Navigation.leftItem: VLCStyle.isScreenSmall ? null : artistList
         }
     }
 
     EmptyLabelButton {
         anchors.fill: parent
-        visible: artistModel.count === 0
+        visible: artistModel.isReady && (artistModel.count <= 0)
         focus: visible
-        text: I18n.qtr("No artists found\nPlease try adding sources, by going to the Network tab")
+        text: I18n.qtr("No artists found\nPlease try adding sources, by going to the Browse tab")
         Navigation.parentItem: root
     }
 }

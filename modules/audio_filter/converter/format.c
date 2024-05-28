@@ -284,12 +284,12 @@ static block_t *Fl32toS32(filter_t *filter, block_t *b)
     int32_t *dst = (int32_t *)src;
     for (size_t i = b->i_buffer / 4; i--;)
     {
-        float s = *(src++) * 2147483648.f;
-        if (s >= 2147483647.f)
-            *(dst++) = 2147483647;
+        float s = *(src++) * -((float)INT32_MIN);
+        if (s >= ((float)INT32_MAX))
+            *(dst++) = INT32_MAX;
         else
-        if (s <= -2147483648.f)
-            *(dst++) = -2147483648;
+        if (s <= ((float)INT32_MIN))
+            *(dst++) = INT32_MIN;
         else
             *(dst++) = lroundf(s);
     }
@@ -346,7 +346,7 @@ static block_t *S32toFl32(filter_t *filter, block_t *b)
     int32_t *src = (int32_t*)b->p_buffer;
     float   *dst = (float *)src;
     for (int i = b->i_buffer / 4; i--;)
-        *dst++ = (float)(*src++) / 2147483648.f;
+        *dst++ = (float)(*src++) / -((float)INT32_MIN);
     return b;
 }
 
@@ -360,7 +360,7 @@ static block_t *S32toFl64(filter_t *filter, block_t *bsrc)
     int32_t *src = (int32_t*)bsrc->p_buffer;
     double  *dst = (double *)bdst->p_buffer;
     for (size_t i = bsrc->i_buffer / 4; i--;)
-        *dst++ = (double)(*src++) / 2147483648.;
+        *dst++ = (double)(*src++) / -(double)INT32_MIN;
 out:
     VLC_UNUSED(filter);
     block_Release(bsrc);
@@ -426,12 +426,12 @@ static block_t *Fl64toS32(filter_t *filter, block_t *b)
     int32_t *dst = (int32_t *)src;
     for (size_t i = b->i_buffer / 8; i--;)
     {
-        float s = *(src++) * 2147483648.;
-        if (s >= 2147483647.f)
-            *(dst++) = 2147483647;
+        float s = *(src++) * -((double)INT32_MIN);
+        if (s >= ((float)INT32_MAX))
+            *(dst++) = INT32_MAX;
         else
-        if (s <= -2147483648.f)
-            *(dst++) = -2147483648;
+        if (s <= ((float)INT32_MIN))
+            *(dst++) = INT32_MIN;
         else
             *(dst++) = lround(s);
     }
@@ -448,32 +448,32 @@ static const struct {
     vlc_fourcc_t dst;
     struct vlc_filter_operations convert;
 } cvt_directs[] = {
-    { VLC_CODEC_U8,   VLC_CODEC_S16N, (struct vlc_filter_operations) { .filter_audio = U8toS16 }    },
-    { VLC_CODEC_U8,   VLC_CODEC_FL32, (struct vlc_filter_operations) { .filter_audio = U8toFl32 }   },
-    { VLC_CODEC_U8,   VLC_CODEC_S32N, (struct vlc_filter_operations) { .filter_audio = U8toS32 }    },
-    { VLC_CODEC_U8,   VLC_CODEC_FL64, (struct vlc_filter_operations) { .filter_audio = U8toFl64 }   },
+    { VLC_CODEC_U8,   VLC_CODEC_S16N, { .filter_audio = U8toS16 }    },
+    { VLC_CODEC_U8,   VLC_CODEC_FL32, { .filter_audio = U8toFl32 }   },
+    { VLC_CODEC_U8,   VLC_CODEC_S32N, { .filter_audio = U8toS32 }    },
+    { VLC_CODEC_U8,   VLC_CODEC_FL64, { .filter_audio = U8toFl64 }   },
 
-    { VLC_CODEC_S16N, VLC_CODEC_U8,   (struct vlc_filter_operations) { .filter_audio = S16toU8 }    },
-    { VLC_CODEC_S16N, VLC_CODEC_FL32, (struct vlc_filter_operations) { .filter_audio = S16toFl32 }  },
-    { VLC_CODEC_S16N, VLC_CODEC_S32N, (struct vlc_filter_operations) { .filter_audio = S16toS32 }   },
-    { VLC_CODEC_S16N, VLC_CODEC_FL64, (struct vlc_filter_operations) { .filter_audio = S16toFl64 }  },
+    { VLC_CODEC_S16N, VLC_CODEC_U8,   { .filter_audio = S16toU8 }    },
+    { VLC_CODEC_S16N, VLC_CODEC_FL32, { .filter_audio = S16toFl32 }  },
+    { VLC_CODEC_S16N, VLC_CODEC_S32N, { .filter_audio = S16toS32 }   },
+    { VLC_CODEC_S16N, VLC_CODEC_FL64, { .filter_audio = S16toFl64 }  },
 
-    { VLC_CODEC_FL32, VLC_CODEC_U8,   (struct vlc_filter_operations) { .filter_audio = Fl32toU8 }   },
-    { VLC_CODEC_FL32, VLC_CODEC_S16N, (struct vlc_filter_operations) { .filter_audio = Fl32toS16 }  },
-    { VLC_CODEC_FL32, VLC_CODEC_S32N, (struct vlc_filter_operations) { .filter_audio = Fl32toS32 }  },
-    { VLC_CODEC_FL32, VLC_CODEC_FL64, (struct vlc_filter_operations) { .filter_audio = Fl32toFl64 } },
+    { VLC_CODEC_FL32, VLC_CODEC_U8,   { .filter_audio = Fl32toU8 }   },
+    { VLC_CODEC_FL32, VLC_CODEC_S16N, { .filter_audio = Fl32toS16 }  },
+    { VLC_CODEC_FL32, VLC_CODEC_S32N, { .filter_audio = Fl32toS32 }  },
+    { VLC_CODEC_FL32, VLC_CODEC_FL64, { .filter_audio = Fl32toFl64 } },
 
-    { VLC_CODEC_S32N, VLC_CODEC_U8,   (struct vlc_filter_operations) { .filter_audio = S32toU8 }    },
-    { VLC_CODEC_S32N, VLC_CODEC_S16N, (struct vlc_filter_operations) { .filter_audio = S32toS16 }   },
-    { VLC_CODEC_S32N, VLC_CODEC_FL32, (struct vlc_filter_operations) { .filter_audio = S32toFl32 }  },
-    { VLC_CODEC_S32N, VLC_CODEC_FL64, (struct vlc_filter_operations) { .filter_audio = S32toFl64 }  },
+    { VLC_CODEC_S32N, VLC_CODEC_U8,   { .filter_audio = S32toU8 }    },
+    { VLC_CODEC_S32N, VLC_CODEC_S16N, { .filter_audio = S32toS16 }   },
+    { VLC_CODEC_S32N, VLC_CODEC_FL32, { .filter_audio = S32toFl32 }  },
+    { VLC_CODEC_S32N, VLC_CODEC_FL64, { .filter_audio = S32toFl64 }  },
 
-    { VLC_CODEC_FL64, VLC_CODEC_U8,   (struct vlc_filter_operations) { .filter_audio = Fl64toU8 }   },
-    { VLC_CODEC_FL64, VLC_CODEC_S16N, (struct vlc_filter_operations) { .filter_audio = Fl64toS16 }  },
-    { VLC_CODEC_FL64, VLC_CODEC_FL32, (struct vlc_filter_operations) { .filter_audio = Fl64toFl32 } },
-    { VLC_CODEC_FL64, VLC_CODEC_S32N, (struct vlc_filter_operations) { .filter_audio = Fl64toS32 }  },
+    { VLC_CODEC_FL64, VLC_CODEC_U8,   { .filter_audio = Fl64toU8 }   },
+    { VLC_CODEC_FL64, VLC_CODEC_S16N, { .filter_audio = Fl64toS16 }  },
+    { VLC_CODEC_FL64, VLC_CODEC_FL32, { .filter_audio = Fl64toFl32 } },
+    { VLC_CODEC_FL64, VLC_CODEC_S32N, { .filter_audio = Fl64toS32 }  },
 
-    { 0, 0, (struct vlc_filter_operations) { .filter_audio = NULL } }
+    { 0, 0, { .filter_audio = NULL } }
 };
 
 static const struct vlc_filter_operations *FindConversion(vlc_fourcc_t src, vlc_fourcc_t dst)

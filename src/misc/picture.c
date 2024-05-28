@@ -152,7 +152,7 @@ int picture_Setup( picture_t *p_picture, const video_format_t *restrict fmt )
 
     for( unsigned i = 0; i < p_dsc->plane_count; i++ )
     {
-        i_modulo_w = LCM( i_modulo_w, 16 * p_dsc->p[i].w.den );
+        i_modulo_w = LCM( i_modulo_w, 64 * p_dsc->p[i].w.den );
         i_modulo_h = LCM( i_modulo_h, 16 * p_dsc->p[i].h.den );
         if( i_ratio_h < p_dsc->p[i].h.den )
             i_ratio_h = p_dsc->p[i].h.den;
@@ -190,7 +190,7 @@ int picture_Setup( picture_t *p_picture, const video_format_t *restrict fmt )
                              * p_dsc->pixel_size;
         p->i_pixel_pitch = p_dsc->pixel_size;
 
-        assert( (p->i_pitch % 16) == 0 );
+        assert( (p->i_pitch % 64) == 0 );
     }
     p_picture->i_planes = p_dsc->plane_count;
 
@@ -465,6 +465,8 @@ picture_t *picture_InternalClone(picture_t *picture,
 picture_t *picture_Clone(picture_t *picture)
 {
     picture_t *clone = picture_InternalClone(picture, picture_DestroyClone, picture);
+    if (clone == NULL)
+        return NULL;
 
     const picture_priv_t *priv = container_of(picture, picture_priv_t, picture);
     picture_priv_t *clone_priv = container_of(clone, picture_priv_t, picture);
@@ -607,6 +609,7 @@ int picture_Export( vlc_object_t *p_obj,
     if( !p_image )
         return VLC_ENOMEM;
 
+    vlc_tick_t date = p_picture->date;
     block_t *p_block = image_Write( p_image, p_picture, &fmt_in, &fmt_out );
 
     image_HandlerDelete( p_image );
@@ -615,7 +618,7 @@ int picture_Export( vlc_object_t *p_obj,
         return VLC_EGENERIC;
 
     p_block->i_pts =
-    p_block->i_dts = p_picture->date;
+    p_block->i_dts = date;
 
     if( p_fmt )
         *p_fmt = fmt_out;

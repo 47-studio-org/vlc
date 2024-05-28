@@ -19,15 +19,15 @@ default:
         - amd64
 
 variables:
-    VLC_WIN32_IMAGE: registry.videolan.org/vlc-debian-win32:20220505170026
-    VLC_WIN64_IMAGE: registry.videolan.org/vlc-debian-win64:20220505172436
-    VLC_WIN_LLVM_IMAGE: registry.videolan.org/vlc-debian-llvm-mingw:20220705072259
-    VLC_UWP_LLVM_IMAGE: registry.videolan.org/vlc-debian-llvm-uwp:20211020111246
-    VLC_DEBIAN_IMAGE: registry.videolan.org/vlc-debian-unstable:20210803114245
-    VLC_ANDROID_IMAGE: registry.videolan.org/vlc-debian-android:20220505164734
-    VLC_SNAP_IMAGE: registry.videolan.org/vlc-ubuntu-focal:20220505174948
-    VLC_RASPBIAN_IMAGE: registry.videolan.org/vlc-ubuntu-raspberry:20220505175523
-    VLC_WASM_EMSCRIPTEN: registry.videolan.org/vlc-debian-wasm-emscripten:20210915101305
+    VLC_WIN32_IMAGE: registry.videolan.org/vlc-debian-win32:20221214121630
+    VLC_WIN64_IMAGE: registry.videolan.org/vlc-debian-win64:20221214115142
+    VLC_WIN_LLVM_MSVCRT_IMAGE: registry.videolan.org/vlc-debian-llvm-msvcrt:20221214101739
+    VLC_WIN_LLVM_UCRT_IMAGE: registry.videolan.org/vlc-debian-llvm-ucrt:20221214110439
+    VLC_DEBIAN_IMAGE: registry.videolan.org/vlc-debian-unstable:20221213103803
+    VLC_ANDROID_IMAGE: registry.videolan.org/vlc-debian-android:20221214124003
+    VLC_SNAP_IMAGE: registry.videolan.org/vlc-ubuntu-focal:20221023195550
+    VLC_RASPBIAN_IMAGE: registry.videolan.org/vlc-ubuntu-raspberry:20221023200157
+    VLC_WASM_EMSCRIPTEN: registry.videolan.org/vlc-debian-wasm-emscripten:20221213104631
 
 .variables-debian: &variables-debian
         HOST_ARCH: x86_64
@@ -43,16 +43,19 @@ variables:
 
 .variables-win32: &variables-win32
         SHORTARCH: win32
+        VLCARCH: win32
         HOST_ARCH: i686
         TRIPLET: $HOST_ARCH-w64-mingw32
 
 .variables-win64: &variables-win64
         SHORTARCH: win64
+        VLCARCH: win64
         HOST_ARCH: x86_64
         TRIPLET: $HOST_ARCH-w64-mingw32
 
 .variables-win64-arm: &variables-win64-arm
         SHORTARCH: arm64
+        VLCARCH: winarm64
         HOST_ARCH: aarch64
         TRIPLET: $HOST_ARCH-w64-mingw32
 
@@ -132,16 +135,18 @@ variables:
     extends: .base-template
     script: |
         if [ "${CI_JOB_NAME:0:8}" = "nightly-" ]; then
-            NIGHTLY_EXTRA_BUILD_FLAGS="-i n -l"
+            EXTRA_BUILD_FLAGS="-i n -l"
         fi
         if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
             echo "Building using prebuilt contribs at $VLC_PREBUILT_CONTRIBS_URL"
-            extras/package/win32/build.sh -p -a $HOST_ARCH $NIGHTLY_EXTRA_BUILD_FLAGS $LIBVLC_EXTRA_BUILD_FLAGS $UWP_EXTRA_BUILD_FLAGS
-        else
-            extras/package/win32/build.sh -c -a $HOST_ARCH $NIGHTLY_EXTRA_BUILD_FLAGS $LIBVLC_EXTRA_BUILD_FLAGS $UWP_EXTRA_BUILD_FLAGS
+            EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} -p"
         fi
+        if [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+            EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} -c"
+        fi
+        extras/package/win32/build.sh -a $HOST_ARCH $EXTRA_BUILD_FLAGS $LIBVLC_EXTRA_BUILD_FLAGS $UWP_EXTRA_BUILD_FLAGS
         if [ "${CI_JOB_NAME}" = "win64" ]; then
-          cmake -DLIBVLC_SDK_INC:STRING=${CI_PROJECT_DIR}/include -DLIBVLC_SDK_LIB:STRING=${CI_PROJECT_DIR}/${SHORTARCH}/lib/.libs -H${CI_PROJECT_DIR}/doc/libvlc -B${CI_PROJECT_DIR}/doc/libvlc/build \
+          cmake -DLIBVLC_SDK_INC:STRING="${CI_PROJECT_DIR}/include;${CI_PROJECT_DIR}/${VLCARCH}/include" -DLIBVLC_SDK_LIB:STRING=${CI_PROJECT_DIR}/${VLCARCH}/lib/.libs -H${CI_PROJECT_DIR}/doc/libvlc -B${CI_PROJECT_DIR}/doc/libvlc/build \
                 -G Ninja -DCMAKE_C_COMPILER=${TRIPLET}-gcc -DCMAKE_CXX_COMPILER=${TRIPLET}-g++ -DCMAKE_SYSTEM_NAME=Windows
           cmake --build ${CI_PROJECT_DIR}/doc/libvlc/build
         fi
@@ -150,35 +155,43 @@ win32:
     extends: .win-common
     image:
         name: $VLC_WIN32_IMAGE
-    variables: *variables-win32
+    variables:
+        <<: *variables-win32
+        LIBVLC_EXTRA_BUILD_FLAGS: -x
 
 win64:
     extends: .win-common
     image:
         name: $VLC_WIN64_IMAGE
-    variables: *variables-win64
+    variables:
+        <<: *variables-win64
+        LIBVLC_EXTRA_BUILD_FLAGS: -x
 
 win64-llvm:
     extends: .win-common
     image:
-        name: $VLC_WIN_LLVM_IMAGE
+        name: $VLC_WIN_LLVM_MSVCRT_IMAGE
     variables: *variables-win64
 
 win64-arm-llvm:
     extends: .win-common
     image:
-        name: $VLC_UWP_LLVM_IMAGE
+        name: $VLC_WIN_LLVM_UCRT_IMAGE
     variables:
         <<: *variables-win64-arm
-        LIBVLC_EXTRA_BUILD_FLAGS: -z
-        UWP_EXTRA_BUILD_FLAGS: -u -w -x -S 0x0A000006
+        VLCARCH: winarm64-ucrt
+        UWP_EXTRA_BUILD_FLAGS: -u -x -S 0x0A000006
+        # Clang <= 15 produces incorrect unwind info for code with
+        # branch protection enabled on Windows.
+        CONFIGFLAGS: --disable-branch-protection
 
 uwp64-libvlc-llvm:
     extends: .win-common
     image:
-        name: $VLC_UWP_LLVM_IMAGE
+        name: $VLC_WIN_LLVM_UCRT_IMAGE
     variables:
         <<: *variables-win64
+        VLCARCH: win64-uwp
         LIBVLC_EXTRA_BUILD_FLAGS: -z
         UWP_EXTRA_BUILD_FLAGS: -u -w -x -S 0x0A000006
 
@@ -188,8 +201,8 @@ uwp64-libvlc-llvm:
         - if: '$CI_PIPELINE_SOURCE == "schedule"'
     after_script:
         - mkdir nightlies
-        - for ext in 7z zip; do mv ${SHORTARCH}/vlc-*-dev-*-debug.${ext} nightlies/$(basename ${SHORTARCH}/vlc-*-dev-*-debug.${ext} | sed "s/\.${ext}/-${CI_COMMIT_SHORT_SHA}\.${ext}/"); done
-        - for ext in exe msi 7z zip; do mv ${SHORTARCH}/vlc-*-dev-*.${ext} nightlies/$(basename ${SHORTARCH}/vlc-*-dev-*.${ext} | sed "s/\.${ext}/-${CI_COMMIT_SHORT_SHA}\.${ext}/"); done
+        - for ext in 7z;  do mv ${VLCARCH}/vlc-*-dev-*-debug.${ext} nightlies/$(basename ${VLCARCH}/vlc-*-dev-*-debug.${ext} | sed "s/\.${ext}/-${CI_COMMIT_SHORT_SHA}\.${ext}/") || echo "vlc-*debug.${ext} not found!"; done
+        - for ext in exe msi 7z zip; do mv ${VLCARCH}/vlc-*-dev-*.${ext} nightlies/$(basename ${VLCARCH}/vlc-*-dev-*.${ext} | sed "s/\.${ext}/-${CI_COMMIT_SHORT_SHA}\.${ext}/") || echo "vlc-*.${ext} not found!"; done
         - cd nightlies && find . -maxdepth 1 -type f -not -name SHA512SUM | xargs shasum -a 512 | tee SHA512SUM
     artifacts:
         paths:
@@ -210,17 +223,31 @@ nightly-win64:
 nightly-win64-llvm:
     extends: .nightly-win-common
     image:
-        name: $VLC_WIN_LLVM_IMAGE
+        name: $VLC_WIN_LLVM_MSVCRT_IMAGE
     variables: *variables-win64
 
 nightly-win64-ucrt-llvm:
     extends: .nightly-win-common
     image:
-        name: $VLC_UWP_LLVM_IMAGE
+        name: $VLC_WIN_LLVM_UCRT_IMAGE
     variables:
         <<: *variables-win64
+        VLCARCH: win64-ucrt
         TRIPLET: $HOST_ARCH-ucrt-w64-mingw32
         UWP_EXTRA_BUILD_FLAGS: -u -x -S 0x0A000006
+
+nightly-win64-arm-llvm:
+    extends: .nightly-win-common
+    image:
+        name: $VLC_WIN_LLVM_UCRT_IMAGE
+    variables:
+        <<: *variables-win64-arm
+        VLCARCH: winarm64-ucrt
+        TRIPLET: $HOST_ARCH-ucrt-w64-mingw32
+        UWP_EXTRA_BUILD_FLAGS: -u -x -S 0x0A000006
+        # Clang <= 15 produces incorrect unwind info for code with
+        # branch protection enabled on Windows.
+        CONFIGFLAGS: --disable-branch-protection
 
 #
 # Debian
@@ -231,6 +258,7 @@ debian:
         name: $VLC_DEBIAN_IMAGE
     script: |
         export NCPU=$(getconf _NPROCESSORS_ONLN)
+        echo "Building branch '${CI_COMMIT_BRANCH}' (default: '${CI_DEFAULT_BRANCH}')"
 
         # Build tools
         ( cd extras/tools && ./bootstrap && make -j$NCPU --output-sync=recurse )
@@ -238,35 +266,38 @@ debian:
 
         # Build contribs
         mkdir -p contrib/contrib-$TRIPLET && cd contrib/contrib-$TRIPLET
-        ../bootstrap
+        ../bootstrap --enable-x262
         if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
             echo "Building using prebuilt contribs at $VLC_PREBUILT_CONTRIBS_URL"
-            make prebuilt PREBUILT_URL="${VLC_PREBUILT_CONTRIBS_URL}"
-            make -j$NCPU --output-sync=recurse tools
+            make prebuilt PREBUILT_URL="${VLC_PREBUILT_CONTRIBS_URL}" || PREBUILT_FAILED=yes
         else
+            PREBUILT_FAILED=yes
+        fi
+        if [ -n "$PREBUILT_FAILED" ]; then
             make list
             make -j$NCPU --output-sync=recurse fetch
             make -j$NCPU --output-sync=recurse
-            make package
+            if [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+                make package
+            fi
+        else
+            make -j$NCPU --output-sync=recurse tools
         fi
         cd ../../
 
-        # Build VLC
+        # Configure VLC
         ./bootstrap
-        ./configure
-        make -j$NCPU
+        ./configure CFLAGS="$LIBVLC_EXTRA_CFLAGS"
 
-        # Run tests
-        VLC_TEST_TIMEOUT=60 sh -x ./test/make_check_wrapper.sh -j4
-        if [ "${CI_JOB_NAME:0:8}" = "nightly-" ]; then
-            export XZ_OPT="-T 0"
-            make -j$NCPU distcheck
-        else
-          # Don't run distcheck but dist as it is already tested via
-          # make_check_wrapper.sh
-          make -j$NCPU dist
-        fi
-    variables: *variables-debian
+        # Allow core dumps for tracing test failures
+        ulimit -c unlimited
+
+        # Build, check and distcheck VLC
+        export XZ_OPT="-T 0"
+        VLC_TEST_TIMEOUT=60 make -j$NCPU distcheck || ./test/dump_stacktraces.sh
+    variables:
+        <<: *variables-debian
+        LIBVLC_EXTRA_CFLAGS: -Werror=restrict
 
 nightly-debian:
     extends: debian
@@ -274,6 +305,70 @@ nightly-debian:
         - if: '$CI_PIPELINE_SOURCE == "schedule"'
     after_script:
     artifacts:
+
+#
+# Linux Meson build
+#
+debian-meson:
+    extends: .base-template
+    image:
+        name: $VLC_DEBIAN_IMAGE
+    script:
+        - |
+            export NCPU=$(getconf _NPROCESSORS_ONLN)
+            echo "Building branch '${CI_COMMIT_BRANCH}' (default: '${CI_DEFAULT_BRANCH}')"
+        - |
+            echo -e "\e[0Ksection_start:$(date +%s):build_tools_section\r\e[0KTools build"
+            # Build tools
+            ( cd extras/tools && ./bootstrap && make -j$NCPU --output-sync=recurse )
+            # Build meson from extras/tool explicitly
+            ( cd extras/tools && make -j$NCPU .buildmeson )
+            export PATH="$(pwd)/extras/tools/build/bin:$PATH"
+            echo -e "\e[0Ksection_end:$(date +%s):build_tools_section\r\e[0K"
+
+        - |
+            echo -e "\e[0Ksection_start:$(date +%s):build_contribs_section\r\e[0KContribs build"
+            # Build contribs
+            mkdir -p contrib/contrib-$TRIPLET && cd contrib/contrib-$TRIPLET
+            ../bootstrap --enable-x262
+            if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
+                echo "Building using prebuilt contribs at $VLC_PREBUILT_CONTRIBS_URL"
+                make prebuilt PREBUILT_URL="${VLC_PREBUILT_CONTRIBS_URL}" || PREBUILT_FAILED=yes
+            else
+                PREBUILT_FAILED=yes
+            fi
+            if [ -n "$PREBUILT_FAILED" ]; then
+                make list
+                make -j$NCPU --output-sync=recurse fetch
+                make -j$NCPU --output-sync=recurse
+                if [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+                    make package
+                fi
+            else
+                make -j$NCPU --output-sync=recurse tools
+            fi
+            cd ../../
+            echo -e "\e[0Ksection_end:$(date +%s):build_contribs_section\r\e[0K"
+
+        - |
+            echo -e "\e[0Ksection_start:$(date +%s):setup_meson_section\r\e[0KMeson setup"
+            # Setup meson build dir
+            meson setup build-meson || (echo "ERROR: Meson setup failed!" >&2 ; cat build-meson/meson-logs/meson-log.txt >&2 ; exit 1)
+            echo -e "\e[0Ksection_end:$(date +%s):setup_meson_section\r\e[0K"
+
+        - |
+            echo -e "\e[0Ksection_start:$(date +%s):build_meson_section\r\e[0KVLC build"
+            # Build VLC
+            ninja -C build-meson || (echo "ERROR: Build failed!" >&2 ; exit 2)
+            echo -e "\e[0Ksection_end:$(date +%s):build_meson_section\r\e[0K"
+
+        - |
+            echo -e "\e[0Ksection_start:$(date +%s):tests_meson_section\r\e[0KVLC tests"
+            # Run tests
+            meson test -C build-meson || (echo "ERROR: Tests failed!" >&2 ; cat build-meson/meson-logs/testlog.txt >&2 ; exit 3)
+            echo -e "\e[0Ksection_end:$(date +%s):tests_meson_section\r\e[0K"
+    allow_failure: true
+    variables: *variables-debian
 
 #
 # Snap builds
@@ -319,10 +414,12 @@ raspbian-arm:
     script: |
         if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
             echo "Building using prebuilt contribs at $VLC_PREBUILT_CONTRIBS_URL"
-            extras/package/raspberry/build.sh -p -x -a $HOST_ARCH
-        else
-            extras/package/raspberry/build.sh -c -x -a $HOST_ARCH
+            EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} -p"
         fi
+        if [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+            EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} -c"
+        fi
+        extras/package/raspberry/build.sh $EXTRA_BUILD_FLAGS -x -a $HOST_ARCH
     variables: *variables-raspbian-arm
 
 #
@@ -371,7 +468,10 @@ raspbian-arm:
         if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
             echo "Building using prebuilt contribs at $VLC_PREBUILT_CONTRIBS_URL"
         else
-            EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} -c -p"
+            EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} -c"
+        fi
+        if [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+            EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} -p"
         fi
         export PATH="${VLC_PATH}:$PATH"
         mkdir build && cd build
@@ -417,7 +517,7 @@ nightly-macos-arm64:
         export PATH="${VLC_PATH}:$PATH"
         mkdir build && cd build
         if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
-            ../extras/package/apple/build.sh --sdk=$SDKNAME --arch=$HOST_ARCH \
+            ../extras/package/apple/build.sh --sdk=$SDKNAME --arch=$HOST_ARCH --package-contribs \
                 --with-prebuilt-contribs
         else
             ../extras/package/apple/build.sh --sdk=$SDKNAME --arch=$HOST_ARCH --package-contribs
@@ -447,11 +547,12 @@ tvos-arm64:
     image:
         name: $VLC_ANDROID_IMAGE
     script: |
-        wget https://code.videolan.org/videolan/vlc-android/raw/fd4d934ad31d37f3eeaa834214ca16eb0d4ecb6a/buildsystem/compile-libvlc.sh
+        git clone https://code.videolan.org/videolan/libvlcjni.git
+        (cd libvlcjni && git checkout 510543b6e0ae9a5223041b0049da720a6033d00c)
         if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
-            /bin/sh ./compile-libvlc.sh -a $ANDROID_ARCH --with-prebuilt-contribs
+            /bin/sh ./libvlcjni/buildsystem/compile-libvlc.sh --no-jni -a $ANDROID_ARCH --with-prebuilt-contribs
         else
-            /bin/sh ./compile-libvlc.sh -a $ANDROID_ARCH --package-contribs
+            /bin/sh ./libvlcjni/buildsystem/compile-libvlc.sh --no-jni -a $ANDROID_ARCH --package-contribs
         fi
 
 android-arm:
@@ -483,10 +584,13 @@ wasm32-emscripten-build :
         - source $EMSCRIPTEN_SDK/emsdk_env.sh
         - |
             if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
-                ./extras/package/wasm-emscripten/build.sh --with-prebuilt-contribs
-            else
-                ./extras/package/wasm-emscripten/build.sh --gen-contrib-archive
+                echo "Building using prebuilt contribs at $VLC_PREBUILT_CONTRIBS_URL"
+                EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} --with-prebuilt-contribs"
             fi
+            if [ "${CI_COMMIT_BRANCH}" = "${CI_DEFAULT_BRANCH}" ]; then
+                EXTRA_BUILD_FLAGS="${EXTRA_BUILD_FLAGS} --gen-contrib-archive"
+            fi
+            ./extras/package/wasm-emscripten/build.sh $EXTRA_BUILD_FLAGS
 
 #
 # VLC Documentation

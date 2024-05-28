@@ -42,8 +42,6 @@ extern "C" {
 
 #endif
 
-DEFINE_GUID(GUID_CONTEXT_MUTEX, 0x472e8835, 0x3f8e, 0x4f93, 0xa0, 0xcb, 0x25, 0x79, 0x77, 0x6c, 0xed, 0x86);
-
 /* see https://msdn.microsoft.com/windows/hardware/commercialize/design/compatibility/device-graphics
  *     https://docs.microsoft.com/en-us/windows-hardware/drivers/display/wddm-2-1-features#driver-versioning
  *     https://www.intel.com/content/www/us/en/support/articles/000005654/graphics-drivers.html
@@ -76,6 +74,7 @@ typedef struct
     ID3D11VideoProcessorOutputView *processorOutput; /* when used as processor output */
     ID3D11ShaderResourceView      *renderSrc[DXGI_MAX_SHADER_VIEW];
     HANDLE                        sharedHandle;
+    bool                          ownHandle;
 } picture_sys_d3d11_t;
 
 struct d3d11_pic_context
@@ -208,6 +207,8 @@ picture_context_t *d3d11_pic_context_copy(picture_context_t *);
 picture_t *D3D11_AllocPicture(vlc_object_t *,
                               const video_format_t *, vlc_video_context *,
                               bool, const d3d_format_t *);
+
+void D3D11_PictureAttach(picture_t *, ID3D11Texture2D *textures, const d3d_format_t *cfg);
 
 #ifdef __cplusplus
 }

@@ -70,7 +70,7 @@ static void parseAvailability(MPD *mpd, Node *node, T *s)
     if(node->hasAttribute("availabilityTimeOffset"))
     {
         double val = Integer<double>(node->getAttributeValue("availabilityTimeOffset"));
-        s->addAttribute(new AvailabilityTimeOffsetAttr(val * CLOCK_FREQ));
+        s->addAttribute(new AvailabilityTimeOffsetAttr(vlc_tick_from_sec(val)));
     }
     if(node->hasAttribute("availabilityTimeComplete"))
     {
@@ -517,6 +517,8 @@ void IsoffMainParser::parseTimeline(Node *node, AbstractMultipleSegmentBaseType 
         number = Integer<uint64_t>(node->getAttributeValue("startNumber"));
     else if(base->inheritStartNumber())
         number = base->inheritStartNumber();
+    if(number == std::numeric_limits<uint64_t>::max())
+        number = 1;
 
     SegmentTimeline *timeline = new (std::nothrow) SegmentTimeline(base);
     if(timeline)

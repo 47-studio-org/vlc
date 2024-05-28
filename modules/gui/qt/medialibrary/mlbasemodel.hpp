@@ -46,7 +46,7 @@ class MLBaseModel : public QAbstractListModel
     Q_PROPERTY(MLItemId parentId READ parentId WRITE setParentId NOTIFY parentIdChanged
                RESET unsetParentId FINAL)
 
-    Q_PROPERTY(MediaLib * ml READ ml WRITE setMl FINAL)
+    Q_PROPERTY(MediaLib * ml READ ml WRITE setMl NOTIFY mlChanged FINAL)
 
     Q_PROPERTY(QString searchPattern READ searchPattern WRITE setSearchPattern FINAL)
 
@@ -56,6 +56,9 @@ class MLBaseModel : public QAbstractListModel
                NOTIFY sortCriteriaChanged RESET unsetSortCriteria FINAL)
 
     Q_PROPERTY(unsigned int count READ getCount NOTIFY countChanged FINAL)
+
+    // isReady is true when ml is not null pointer and cache count is not uninitialized
+    Q_PROPERTY(bool isReady READ isReady NOTIFY isReadyChanged FINAL)
 
 public:
     explicit MLBaseModel(QObject *parent = nullptr);
@@ -81,10 +84,12 @@ public: // Interface
 
 signals:
     void parentIdChanged();
+    void mlChanged();
     void resetRequested();
     void sortOrderChanged();
     void sortCriteriaChanged();
     void countChanged(unsigned int) const;
+    void isReadyChanged() const;
 
 protected slots:
     void onResetRequested();
@@ -169,6 +174,8 @@ public:
 
     int rowCount(const QModelIndex &parent = {}) const override;
     virtual unsigned int getCount() const;
+
+    bool isReady() const;
 
 private:
     void onCacheDataChanged(int first, int last);

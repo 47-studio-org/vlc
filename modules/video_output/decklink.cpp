@@ -424,7 +424,7 @@ static int OpenDecklink(vout_display_t *vd, decklink_sys_t *sys, video_format_t 
     } wanted_mode;
     wanted_mode.id = bmdModeUnknown;
 
-    vlc_mutex_lock(&sys->lock);
+    vlc_mutex_locker locker(&sys->lock);
 
     /* wait until aout is ready */
     msg_Info(vd, "Waiting for DeckLink audio input module to start");
@@ -436,11 +436,10 @@ static int OpenDecklink(vout_display_t *vd, decklink_sys_t *sys, video_format_t 
 
     if(mode)
     {
-        size_t len = strlen(mode);
-        if (len > 4)
+        if (strnlen(mode, 5) > 4)
         {
-            free(mode);
             msg_Err(vd, "Invalid mode %s", mode);
+            free(mode);
             goto error;
         }
         strncpy(wanted_mode.str, mode, 4);
@@ -611,8 +610,6 @@ static int OpenDecklink(vout_display_t *vd, decklink_sys_t *sys, video_format_t 
     p_attributes->Release();
     decklink_iterator->Release();
 
-    vlc_mutex_unlock(&sys->lock);
-
     return VLC_SUCCESS;
 
 error:
@@ -631,8 +628,6 @@ error:
     if (p_display_mode)
         p_display_mode->Release();
     video_format_Clean(fmt);
-
-    vlc_mutex_unlock(&sys->lock);
 
     return VLC_EGENERIC;
 #undef CHECK

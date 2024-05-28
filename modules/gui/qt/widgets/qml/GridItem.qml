@@ -22,6 +22,7 @@ import QtQuick.Layouts 1.11
 import QtQml.Models 2.2
 
 import org.videolan.vlc 0.1
+import org.videolan.compat 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///util/Helpers.js" as Helpers
@@ -37,7 +38,7 @@ T.Control {
     property int titleMargin: VLCStyle.margin_xsmall
     property Item dragItem: null
 
-    readonly property bool highlighted: (mouseArea.containsMouse || visualFocus)
+    readonly property bool highlighted: (mouseHoverHandler.hovered || visualFocus)
 
     readonly property int selectedBorderWidth: VLCStyle.gridItemSelectedBorder
 
@@ -149,9 +150,15 @@ T.Control {
 
     // Childs
 
-    background: AnimatedBackground {
-        id: background
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Item
 
+        focused: root.activeFocus
+        hovered: root.hovered
+    }
+
+    background: AnimatedBackground {
         width: root.width + (selectedBorderWidth * 2)
         height: root.height + (selectedBorderWidth * 2)
 
@@ -159,23 +166,19 @@ T.Control {
         y: - selectedBorderWidth
 
         active: visualFocus
+        animate: theme.initialized
 
-        backgroundColor: root.selected
-                         ? VLCStyle.colors.gridSelect
-                         : VLCStyle.colors.setColorAlpha(VLCStyle.colors.gridSelect, 0)
-
-        visible: animationRunning || background.active || root.selected
+        //don't show the backgroud unless selected
+        backgroundColor: root.selected ?  theme.bg.highlight : theme.bg.primary
+        activeBorderColor: theme.visualFocus
+        visible: animationRunning || active || root.selected || root.hovered
     }
 
     contentItem: MouseArea {
-        id: mouseArea
-
         implicitWidth: layout.implicitWidth
         implicitHeight: layout.implicitHeight
 
         acceptedButtons: Qt.RightButton | Qt.LeftButton
-
-        hoverEnabled: true
 
         drag.target: root.dragItem
 
@@ -215,6 +218,21 @@ T.Control {
             root.dragItem.Drag.active = drag.active
         }
 
+        TouchScreenTapHandlerCompat {
+            onTapped: {
+                root.itemClicked(picture, Qt.LeftButton, Qt.NoModifier)
+                root.itemDoubleClicked(picture, Qt.LeftButton, Qt.NoModifier)
+            }
+
+            onLongPressed: {
+                contextMenuButtonClicked(picture, point.scenePosition);
+            }
+        }
+
+        MouseHoverHandlerCompat {
+            id: mouseHoverHandler
+        }
+
         ColumnLayout {
             id: layout
 
@@ -228,11 +246,17 @@ T.Control {
                 playCoverVisible: false
                 playCoverOpacity: 0
                 radius: VLCStyle.gridCover_radius
+                color: theme.bg.secondary
 
                 Layout.preferredWidth: pictureWidth
                 Layout.preferredHeight: pictureHeight
 
-                onPlayIconClicked: root.playClicked()
+                onPlayIconClicked: {
+                    // emulate a mouse click before delivering the play signal as to select the item
+                    // this helps in updating the selection and restore of initial index in the parent views
+                    root.itemClicked(picture, mouse.button, mouse.modifiers)
+                    root.playClicked()
+                }
 
                 DoubleShadow {
                     id: unselectedShadow
@@ -247,11 +271,9 @@ T.Control {
                     xRadius: parent.radius
                     yRadius: parent.radius
 
-                    primaryColor: Qt.rgba(0, 0, 0, .18)
                     primaryVerticalOffset: VLCStyle.dp(1, VLCStyle.scale)
                     primaryBlurRadius: VLCStyle.dp(3, VLCStyle.scale)
 
-                    secondaryColor: Qt.rgba(0, 0, 0, .22)
                     secondaryVerticalOffset: VLCStyle.dp(6, VLCStyle.scale)
                     secondaryBlurRadius: VLCStyle.dp(14, VLCStyle.scale)
                 }
@@ -260,7 +282,7 @@ T.Control {
                     id: selectedShadow
 
                     anchors.fill: parent
-                    anchors.margins: VLCStyle.dp()
+                    anchors.margins: VLCStyle.dp(1)
                     z: -1
 
                     visible: opacity > 0
@@ -269,11 +291,9 @@ T.Control {
                     xRadius: parent.radius
                     yRadius: parent.radius
 
-                    primaryColor: Qt.rgba(0, 0, 0, .18)
                     primaryVerticalOffset: VLCStyle.dp(6, VLCStyle.scale)
                     primaryBlurRadius: VLCStyle.dp(18, VLCStyle.scale)
 
-                    secondaryColor: Qt.rgba(0, 0, 0, .22)
                     secondaryVerticalOffset: VLCStyle.dp(32, VLCStyle.scale)
                     secondaryBlurRadius: VLCStyle.dp(72, VLCStyle.scale)
                 }
@@ -296,7 +316,9 @@ T.Control {
                     id: titleLabel
 
                     height: implicitHeight
-                    color: background.foregroundColor
+                    color: root.selected
+                        ? theme.fg.highlight
+                        : theme.fg.primary
                     textFormat: Text.PlainText
                 }
             }
@@ -307,27 +329,21 @@ T.Control {
                 visible: text !== ""
                 text: root.subtitle
                 elide: Text.ElideRight
-                color: background.foregroundColor
+                color: root.selected
+                    ? theme.fg.highlight
+                    : theme.fg.secondary
                 textFormat: Text.PlainText
 
                 Layout.preferredWidth: Math.min(pictureWidth, implicitWidth)
                 Layout.alignment: root.textAlignHCenter ? Qt.AlignCenter : Qt.AlignLeft
                 Layout.topMargin: VLCStyle.margin_xsmall
 
-                // this is based on that MenuCaption.color.a == .6, color of this component is animated (via binding with background.foregroundColor),
-                // to save operation during animation, directly set the opacity
-                opacity: .6
-
                 ToolTip.delay: VLCStyle.delayToolTipAppear
                 ToolTip.text: subtitleTxt.text
-                ToolTip.visible: subtitleTxtMouseArea.containsMouse
+                ToolTip.visible: subtitleTxtMouseHandler.hovered
 
-                MouseArea {
-                    id: subtitleTxtMouseArea
-
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.NoButton
+                MouseHoverHandlerCompat {
+                    id: subtitleTxtMouseHandler
                 }
             }
         }

@@ -491,7 +491,7 @@ static uint8_t* parse_afrt( vlc_object_t* p_this,
     return data_p;
 }
 
-static inline chunk_t* chunk_new()
+static inline chunk_t* chunk_new(void)
 {
     chunk_t* chunk = calloc(1, sizeof(chunk_t));
     return chunk;
@@ -761,7 +761,7 @@ static uint8_t* download_chunk( stream_t *s,
     const char* quality = "";
     char* server_base = sys->base_url;
     if( stream->server_entry_count > 0 &&
-        strlen(stream->server_entries[0]) > 0 )
+        stream->server_entries[0][0] != '\0' )
     {
         server_base = stream->server_entries[0];
     }

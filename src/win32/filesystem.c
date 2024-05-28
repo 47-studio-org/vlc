@@ -33,20 +33,19 @@
 #include <stdio.h>
 #include <errno.h>
 #include <sys/types.h>
-#include <dirent.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <winsock2.h>
 #include <direct.h>
+#include <unistd.h>
 
 #include <vlc_common.h>
 #include <vlc_charset.h>
 #include <vlc_fs.h>
 #include "libvlc.h" /* vlc_mkdir */
 
-#ifdef _MSC_VER
-# define __STDC__ 1
-# include <io.h> /* _pipe */
+#ifndef NTDDI_WIN10_RS3
+#define NTDDI_WIN10_RS3  0x0A000004
 #endif
 
 static wchar_t *widen_path (const char *path)
@@ -157,62 +156,142 @@ char *vlc_getcwd (void)
 #endif
 }
 
+struct vlc_DIR
+{
+    wchar_t *wildcard;
+    HANDLE fHandle;
+    WIN32_FIND_DATAW wdir;
+    bool eol;
+
+    char *entry;
+    union
+    {
+        DWORD drives;
+        bool insert_dot_dot;
+    } u;
+};
+
 /* Under Windows, these wrappers return the list of drive letters
  * when called with an empty argument or just '\'. */
-DIR *vlc_opendir (const char *dirname)
+vlc_DIR *vlc_opendir (const char *dirname)
 {
-    wchar_t *wpath = widen_path (dirname);
-    if (wpath == NULL)
-        return NULL;
-
     vlc_DIR *p_dir = malloc (sizeof (*p_dir));
     if (unlikely(p_dir == NULL))
-    {
-        free(wpath);
         return NULL;
-    }
+    p_dir->entry = NULL;
+    p_dir->eol = false;
+    p_dir->fHandle = INVALID_HANDLE_VALUE;
+    p_dir->wildcard = NULL;
 
-#ifndef VLC_WINSTORE_APP
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) || NTDDI_VERSION >= NTDDI_WIN10_RS3
     /* Special mode to list drive letters */
-    if (wpath[0] == L'\0' || (wcscmp (wpath, L"\\") == 0))
+    if (dirname[0] == '\0' || (strcmp (dirname, "\\") == 0))
     {
-        free (wpath);
-        p_dir->wdir = NULL;
         p_dir->u.drives = GetLogicalDrives ();
-        p_dir->entry = NULL;
-        return (void *)p_dir;
+        if (unlikely(p_dir->u.drives == 0))
+        {
+            free(p_dir);
+            return NULL;
+        }
+        p_dir->entry = strdup("C:\\");
+        if (unlikely(p_dir->entry == NULL))
+        {
+            free(p_dir);
+            return NULL;
+        }
+        return p_dir;
     }
 #endif
 
-    assert (wpath[0]); // wpath[1] is defined
-    p_dir->u.insert_dot_dot = !wcscmp (wpath + 1, L":\\");
+    assert (dirname[0]); // dirname[1] is defined
+    p_dir->u.insert_dot_dot = !strcmp (dirname + 1, ":\\");
 
-    _WDIR *wdir = _wopendir (wpath);
-    free (wpath);
-    if (wdir == NULL)
+    char *wildcard;
+    const size_t len = strlen(dirname);
+    if (p_dir->u.insert_dot_dot || strncmp(dirname + 1, ":\\", 2) != 0)
+    {
+        // Prepending the string "\\?\" does not allow access to the root directory.
+        // Don't use long path with relative pathes.
+        wildcard = malloc(len + 3);
+        if (unlikely(wildcard == NULL))
+        {
+            free (p_dir);
+            return NULL;
+        }
+        memcpy(wildcard, dirname, len);
+        size_t j = len;
+        wildcard[j++] = '\\';
+        wildcard[j++] = '*';
+        wildcard[j++] = '\0';
+    }
+    else
+    {
+        wildcard = malloc(4 + len + 3);
+        if (unlikely(wildcard == NULL))
+        {
+            free (p_dir);
+            return NULL;
+        }
+
+        // prepend "\\?\"
+        wildcard[0] = '\\';
+        wildcard[1] = '\\';
+        wildcard[2] = '?';
+        wildcard[3] = '\\';
+        size_t j = 4;
+        for (size_t i=0; i<len;i++)
+        {
+            // remove forward slashes from long pathes to please FindFirstFileExW
+            if (unlikely(dirname[i] == '/'))
+                wildcard[j++] = '\\';
+            else
+                wildcard[j++] = dirname[i];
+        }
+        // append "\*" or "*"
+        if (wildcard[j-1] != '\\')
+            wildcard[j++] = '\\';
+        wildcard[j++] = '*';
+        wildcard[j++] = '\0';
+    }
+    p_dir->wildcard = ToWide(wildcard);
+    free(wildcard);
+    if (unlikely(p_dir->wildcard == NULL))
     {
         free (p_dir);
         return NULL;
     }
-    p_dir->wdir = wdir;
-    p_dir->entry = NULL;
-    return (void *)p_dir;
+
+    p_dir->fHandle = FindFirstFileExW(p_dir->wildcard, FindExInfoBasic,
+                                      &p_dir->wdir, (FINDEX_SEARCH_OPS)0,
+                                      NULL, FIND_FIRST_EX_LARGE_FETCH);
+    if (p_dir->fHandle == INVALID_HANDLE_VALUE)
+    {
+        free(p_dir->wildcard);
+        free(p_dir);
+        return NULL;
+    }
+    return p_dir;
 }
 
-const char *vlc_readdir (DIR *dir)
+void vlc_closedir( vlc_DIR *vdir )
 {
-    vlc_DIR *p_dir = (vlc_DIR *)dir;
+    if (vdir->fHandle != INVALID_HANDLE_VALUE)
+        FindClose(vdir->fHandle);
 
-    free(p_dir->entry);
+    free( vdir->entry );
+    free( vdir->wildcard );
+    free( vdir );
+}
 
-#ifndef VLC_WINSTORE_APP
+const char *vlc_readdir (vlc_DIR *p_dir)
+{
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP) || NTDDI_VERSION >= NTDDI_WIN10_RS3
     /* Drive letters mode */
-    if (p_dir->wdir == NULL)
+    if (p_dir->fHandle ==  INVALID_HANDLE_VALUE)
     {
         DWORD drives = p_dir->u.drives;
         if (drives == 0)
         {
-            p_dir->entry = NULL;
             return NULL; /* end */
         }
 
@@ -222,23 +301,41 @@ const char *vlc_readdir (DIR *dir)
         p_dir->u.drives &= ~(1UL << i);
         assert (i < 26);
 
-        if (asprintf (&p_dir->entry, "%c:\\", 'A' + i) == -1)
-            p_dir->entry = NULL;
+        p_dir->entry[0] = 'A' + i;
+        return p_dir->entry;
     }
-    else
 #endif
+
+    free(p_dir->entry);
     if (p_dir->u.insert_dot_dot)
     {
         /* Adds "..", gruik! */
         p_dir->u.insert_dot_dot = false;
         p_dir->entry = strdup ("..");
     }
+    else if (p_dir->eol)
+        p_dir->entry = NULL;
     else
     {
-        struct _wdirent *ent = _wreaddir (p_dir->wdir);
-        p_dir->entry = (ent != NULL) ? FromWide (ent->d_name) : NULL;
+        p_dir->entry = FromWide(p_dir->wdir.cFileName);
+        p_dir->eol = !FindNextFileW(p_dir->fHandle, &p_dir->wdir);
     }
     return p_dir->entry;
+}
+
+void vlc_rewinddir( vlc_DIR *wdir )
+{
+    if (wdir->fHandle == INVALID_HANDLE_VALUE)
+    {
+        FindClose(wdir->fHandle);
+        wdir->fHandle = FindFirstFileExW(wdir->wildcard, FindExInfoBasic,
+                                         &wdir->wdir, (FINDEX_SEARCH_OPS)0,
+                                         NULL, FIND_FIRST_EX_LARGE_FETCH);
+    }
+    else
+    {
+        wdir->u.drives = GetLogicalDrives();
+    }
 }
 
 int vlc_stat (const char *filename, struct stat *buf)
@@ -314,11 +411,19 @@ int vlc_dup2(int oldfd, int newfd)
 
 int vlc_pipe (int fds[2])
 {
-#ifdef VLC_WINSTORE_APP
+#if (defined(__MINGW64_VERSION_MAJOR) && __MINGW64_VERSION_MAJOR < 8)
+    // old mingw doesn't know about _CRT_USE_WINAPI_FAMILY_DESKTOP_APP
+# if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+    return _pipe (fds, 32768, O_NOINHERIT | O_BINARY);
+# else
     _set_errno(EPERM);
     return -1;
-#else
+# endif
+#elif defined(_CRT_USE_WINAPI_FAMILY_DESKTOP_APP)
     return _pipe (fds, 32768, O_NOINHERIT | O_BINARY);
+#else
+    _set_errno(EPERM);
+    return -1;
 #endif
 }
 
@@ -357,6 +462,8 @@ int vlc_accept (int lfd, struct sockaddr *addr, socklen_t *alen, bool nonblock)
     int fd = accept (lfd, addr, alen);
     if (fd != -1 && nonblock)
         ioctlsocket (fd, FIONBIO, &(unsigned long){ 1 });
+    else if (fd < 0 && WSAGetLastError() == WSAEWOULDBLOCK)
+        errno = EAGAIN;
     return fd;
 }
 

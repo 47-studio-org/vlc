@@ -21,16 +21,33 @@
  *****************************************************************************/
 
 #import "VLCLibraryTableCellView.h"
+
 #import "extensions/NSFont+VLCAdditions.h"
-#import "views/VLCImageView.h"
-#import "views/VLCTrackingView.h"
-#import "main/VLCMain.h"
+#import "extensions/NSString+Helpers.h"
+#import "extensions/NSView+VLCAdditions.h"
+
+#import "library/VLCInputItem.h"
 #import "library/VLCLibraryController.h"
 #import "library/VLCLibraryDataTypes.h"
-#import "library/VLCInputItem.h"
+#import "library/VLCLibraryImageCache.h"
+
+#import "library/video-library/VLCLibraryVideoGroupDescriptor.h"
+
+#import "main/VLCMain.h"
+
 #import "playlist/VLCPlaylistController.h"
 
+#import "views/VLCImageView.h"
+#import "views/VLCTrackingView.h"
+
 @implementation VLCLibraryTableCellView
+
++ (instancetype)fromNibWithOwner:(id)owner
+{
+    return (VLCLibraryTableCellView*)[NSView fromNibNamed:@"VLCLibraryTableCellView"
+                                                withClass:[VLCLibraryTableCellView class]
+                                                withOwner:owner];
+}
 
 - (void)awakeFromNib
 {
@@ -51,13 +68,25 @@
     self.playInstantlyButton.hidden = YES;
 }
 
-- (void)setRepresentedMediaItem:(VLCMediaLibraryMediaItem *)representedMediaItem
+- (void)setRepresentedItem:(id<VLCMediaLibraryItemProtocol>)representedItem
 {
-    _representedMediaItem = representedMediaItem;
+    _representedItem = representedItem;
 
     self.trackingView.viewToHide = self.playInstantlyButton;
     self.playInstantlyButton.action = @selector(playMediaItemInstantly:);
     self.playInstantlyButton.target = self;
+
+    self.representedImageView.image = representedItem.smallArtworkImage;
+
+    if(representedItem.detailString.length > 0) {
+        self.primaryTitleTextField.hidden = NO;
+        self.primaryTitleTextField.stringValue = representedItem.displayString;
+        self.secondaryTitleTextField.hidden = NO;
+        self.secondaryTitleTextField.stringValue = representedItem.detailString;
+    } else {
+        self.singlePrimaryTitleTextField.hidden = NO;
+        self.singlePrimaryTitleTextField.stringValue = representedItem.displayString;
+    }
 }
 
 - (void)setRepresentedInputItem:(VLCInputItem *)representedInputItem
@@ -67,35 +96,52 @@
     self.singlePrimaryTitleTextField.hidden = NO;
     self.singlePrimaryTitleTextField.stringValue = _representedInputItem.name;
 
-    NSURL *artworkURL = _representedInputItem.artworkURL;
-    NSImage *placeholderImage = [self imageForInputItem];
-    if (artworkURL) {
-        [self.representedImageView setImageURL:artworkURL placeholderImage:placeholderImage];
-    } else {
-        self.representedImageView.image = placeholderImage;
-    }
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+        NSImage *image = [VLCLibraryImageCache thumbnailForInputItem:self->_representedInputItem];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self.representedImageView.image = image;
+        });
+    });
 
     self.trackingView.viewToHide = self.playInstantlyButton;
     self.playInstantlyButton.action = @selector(playInputItemInstantly:);
     self.playInstantlyButton.target = self;
 }
 
-- (NSImage *)imageForInputItem
+- (void)setRepresentedVideoLibrarySection:(NSUInteger)section
 {
-    NSImage *image;
-    if (_representedInputItem.inputType == ITEM_TYPE_DIRECTORY) {
-        image = [NSImage imageNamed:NSImageNameFolder];
+    NSString *sectionString = @"";
+    switch(section + 1) { // Group 0 is Invalid, so add one
+        case VLCLibraryVideoRecentsGroup:
+            sectionString = _NS("Recents");
+            break;
+        case VLCLibraryVideoLibraryGroup:
+            sectionString = _NS("Library");
+            break;
+        default:
+            NSAssert(1, @"Reached unreachable case for video library section");
+            break;
     }
-
-    if (!image) {
-        image = [NSImage imageNamed: @"noart.png"];
-    }
-    return image;
+    
+    self.singlePrimaryTitleTextField.hidden = NO;
+    self.singlePrimaryTitleTextField.stringValue = sectionString;
+    self.representedImageView.image = [NSImage imageNamed: @"noart.png"];
 }
 
 - (void)playMediaItemInstantly:(id)sender
 {
-    [[[VLCMain sharedInstance] libraryController] appendItemToPlaylist:_representedMediaItem playImmediately:YES];
+    VLCLibraryController *libraryController = VLCMain.sharedInstance.libraryController;
+
+    // We want to add all the tracks to the playlist but only play the first one immediately,
+    // otherwise we will skip straight to the last track of the last album from the artist
+    __block BOOL playImmediately = YES;
+    [_representedItem iterateMediaItemsWithBlock:^(VLCMediaLibraryMediaItem* mediaItem) {
+        [libraryController appendItemToPlaylist:mediaItem playImmediately:playImmediately];
+
+        if(playImmediately) {
+            playImmediately = NO;
+        }
+    }];
 }
 
 - (void)playInputItemInstantly:(id)sender

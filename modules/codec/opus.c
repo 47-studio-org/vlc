@@ -272,7 +272,7 @@ static int OpenDecoder( vlc_object_t *p_this )
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_OPUS )
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_OPUS )
         return VLC_EGENERIC;
 
     /* Allocate the memory needed to store the decoder's structure */
@@ -353,8 +353,8 @@ static int ProcessHeaders( decoder_t *p_dec )
     const void *pp_data[XIPH_MAX_HEADER_COUNT];
     unsigned i_count;
 
-    int i_extra = p_dec->fmt_in.i_extra;
-    const uint8_t *p_extra = p_dec->fmt_in.p_extra;
+    int i_extra = p_dec->fmt_in->i_extra;
+    const uint8_t *p_extra = p_dec->fmt_in->p_extra;
     uint8_t *p_alloc = NULL;
 
     /* Xiph headers as extradata */
@@ -376,8 +376,8 @@ static int ProcessHeaders( decoder_t *p_dec )
     {
         OpusHeader header;
         opus_header_init(&header);
-        opus_prepare_header( p_dec->fmt_in.audio.i_channels ? p_dec->fmt_in.audio.i_channels : 2,
-                             p_dec->fmt_in.audio.i_rate ? p_dec->fmt_in.audio.i_rate : 48000,
+        opus_prepare_header( p_dec->fmt_in->audio.i_channels ? p_dec->fmt_in->audio.i_channels : 2,
+                             p_dec->fmt_in->audio.i_rate ? p_dec->fmt_in->audio.i_rate : 48000,
                              &header );
         int ret = opus_write_header( &p_alloc, &i_extra, &header,
                                      opus_get_version_string() );
@@ -793,7 +793,6 @@ static int OpenEncoder(vlc_object_t *p_this)
 
     /* Buffer for incoming audio, since opus only accepts frame sizes that are
        multiples of 2.5ms */
-    enc->p_sys = sys;
     sys->buffer = vlc_alloc(header.channels, sizeof(float) * OPUS_FRAME_SIZE);
     if (!sys->buffer) {
         status = VLC_ENOMEM;
@@ -815,7 +814,6 @@ static int OpenEncoder(vlc_object_t *p_this)
     if (opus_write_header((uint8_t **) &enc->fmt_out.p_extra,
                           &enc->fmt_out.i_extra, &header, opus_get_version_string()))
     {
-        msg_Err(enc, "Failed to write header.");
         status = VLC_ENOMEM;
         goto error;
     }
@@ -841,7 +839,12 @@ static int OpenEncoder(vlc_object_t *p_this)
     opus_header_clean(&header);
 
     if (status != VLC_SUCCESS)
+    {
+        free(sys->buffer);
+        opus_multistream_encoder_destroy(sys->enc);
+        free(sys);
         return status;
+    }
 
     static const struct vlc_encoder_operations ops =
     {
@@ -849,6 +852,8 @@ static int OpenEncoder(vlc_object_t *p_this)
         .encode_audio = Encode,
     };
     enc->ops = &ops;
+    enc->p_sys = sys;
+
     return VLC_SUCCESS;
 
 error:

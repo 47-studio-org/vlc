@@ -39,6 +39,9 @@ MLBaseModel::MLBaseModel(QObject *parent)
         })
 {
     connect( this, &MLBaseModel::resetRequested, this, &MLBaseModel::onResetRequested );
+
+    connect( this, &MLBaseModel::mlChanged, this, &MLBaseModel::isReadyChanged );
+    connect( this, &MLBaseModel::countChanged, this, &MLBaseModel::isReadyChanged );
 }
 
 /* For std::unique_ptr, see Effective Modern C++, Item 22 */
@@ -276,9 +279,14 @@ MediaLib* MLBaseModel::ml() const
 void MLBaseModel::setMl(MediaLib* medialib)
 {
     assert(medialib);
+
+    if (m_mediaLib == medialib)
+        return;
+
     m_mediaLib = medialib;
     if ( m_ml_event_handle == nullptr )
         m_ml_event_handle.reset( m_mediaLib->registerEventListener(onVlcMlEvent, this ) );
+    mlChanged();
 }
 
 const QString& MLBaseModel::searchPattern() const
@@ -288,7 +296,7 @@ const QString& MLBaseModel::searchPattern() const
 
 void MLBaseModel::setSearchPattern( const QString& pattern )
 {
-    QString patternToApply = pattern.length() < 3 ? nullptr : pattern;
+    QString patternToApply = pattern.length() == 0 ? QString{} : pattern;
     if (patternToApply == m_search_pattern)
         /* No changes */
         return;
@@ -460,6 +468,8 @@ void MLBaseModel::validateCache() const
             this, &MLBaseModel::onCacheBeginMoveRows);
 
     m_cache->initCount();
+
+    emit isReadyChanged();
 }
 
 
@@ -474,7 +484,10 @@ void MLBaseModel::resetCache()
 void MLBaseModel::invalidateCache()
 {
     if (m_cache)
+    {
         m_cache->invalidate();
+        emit isReadyChanged();
+    }
     else
         validateCache();
 }
@@ -614,4 +627,9 @@ MLBaseModel::BaseLoader::BaseLoader(const MLBaseModel &model)
 MLQueryParams MLBaseModel::BaseLoader::getParams(size_t index, size_t count) const
 {
     return { m_searchPattern.toUtf8(), m_sort, m_sort_desc, index, count };
+}
+
+bool MLBaseModel::isReady() const
+{
+    return (m_mediaLib && m_cache && (m_cache->count() != COUNT_UNINITIALIZED));
 }

@@ -19,6 +19,8 @@ orc: orc-$(ORC_VERSION).tar.gz .sum-orc
 	$(MOVE)
 
 .orc: orc
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

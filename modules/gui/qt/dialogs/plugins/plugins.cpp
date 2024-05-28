@@ -252,10 +252,13 @@ ExtensionTab::ExtensionTab( qt_intf_t *p_intf_ )
 
     // Reload button
     ExtensionsManager *EM = ExtensionsManager::getInstance( p_intf );
-    QPushButton *reload = new QPushButton( QIcon( ":/update.svg" ),
+    QPushButton *reload = new QPushButton( QIcon( ":/menu/update.svg" ),
                                            qtr( "Reload extensions" ),
                                            this );
-    connect( reload, &QPushButton::clicked, EM, &ExtensionsManager::reloadExtensions );
+    connect( reload, &QPushButton::clicked, [this, EM](){
+        extList->clearSelection();
+        EM->reloadExtensions();
+    });
     connect( reload, &QPushButton::clicked, this, &ExtensionTab::updateButtons );
     connect( extList->selectionModel(), &QItemSelectionModel::selectionChanged,
              this, &ExtensionTab::updateButtons );
@@ -343,7 +346,7 @@ AddonsTab::AddonsTab( qt_intf_t *p_intf_ ) : QVLCFrame( p_intf_ )
     QVBoxLayout *layout = new QVBoxLayout( rightPane );
 
     // Left Pane
-    leftPane->layout()->setMargin(0);
+    leftPane->layout()->setContentsMargins(0, 0, 0, 0);
     leftPane->layout()->setSpacing(0);
 
     SearchLineEdit *searchInput = new SearchLineEdit();
@@ -395,7 +398,7 @@ AddonsTab::AddonsTab( qt_intf_t *p_intf_ ) : QVLCFrame( p_intf_ )
                   ADDON_EXTENSION );
 
     // Right Pane
-    rightPane->layout()->setMargin(0);
+    rightPane->layout()->setContentsMargins(0, 0, 0, 0);
     rightPane->layout()->setSpacing(0);
 
     // Splitter sizes init
@@ -416,7 +419,7 @@ AddonsTab::AddonsTab( qt_intf_t *p_intf_ ) : QVLCFrame( p_intf_ )
     switchStack->insertWidget( WITHONLINEADDONS, installedOnlyBox );
     connect( installedOnlyBox, &QCheckBox::stateChanged, this, &AddonsTab::installChecked );
 
-    QPushButton *reposyncButton = new QPushButton( QIcon( ":/update.svg" ),
+    QPushButton *reposyncButton = new QPushButton( QIcon( ":/menu/update.svg" ),
                                               qtr("Find more addons online") );
     reposyncButton->setSizePolicy( QSizePolicy::Ignored, QSizePolicy::Preferred );
     switchStack->insertWidget( ONLYLOCALADDONS, reposyncButton );
@@ -475,10 +478,10 @@ AddonsTab::AddonsTab( qt_intf_t *p_intf_ ) : QVLCFrame( p_intf_ )
              model, SLOT(addonChanged( const addon_entry_t * )) );
 
     QList<QString> frames;
-    frames << ":/util/wait1.svg";
-    frames << ":/util/wait2.svg";
-    frames << ":/util/wait3.svg";
-    frames << ":/util/wait4.svg";
+    frames << ":/misc/wait1.svg";
+    frames << ":/misc/wait2.svg";
+    frames << ":/misc/wait3.svg";
+    frames << ":/misc/wait4.svg";
     spinnerAnimation = new PixmapAnimator( this, frames, SPINNER_SIZE, SPINNER_SIZE );
     connect( spinnerAnimation, &PixmapAnimator::pixmapReady,
              addonsView->viewport(), QOverload<>::of(&QWidget::update) );
@@ -799,9 +802,9 @@ QVariant AddonsListModel::Addon::data( int role ) const
             returnval = pixmap;
         }
         else if ( p_entry->e_flags & ADDON_BROKEN )
-            returnval = QPixmap( ":/addons/broken.svg" );
+            returnval = QPixmap( ":/addons/addon_broken.svg" );
         else
-            returnval = QPixmap( ":/addons/default.svg" );
+            returnval = QPixmap( ":/addons/addon_default.svg" );
         break;
     case Qt::ToolTipRole:
     {
@@ -1201,7 +1204,7 @@ void AddonItemDelegate::paint( QPainter *painter,
     {
         int i_scoreicon_height = newopt.fontMetrics.height();
         int i_scoreicon_width = i_scoreicon_height * SCORE_ICON_WIDTH_SCALE;
-        scoreicon = ImageHelper::loadSvgToPixmap( ":/addons/score.svg",
+        scoreicon = ImageHelper::loadSvgToPixmap( ":/addons/addon_score.svg",
                     i_scoreicon_width, i_scoreicon_height );
         int i_width = ( (float) i_score / ADDON_MAX_SCORE ) * i_scoreicon_width;
         /* Erase the end (value) of our pixmap with a shadow */
@@ -1275,7 +1278,7 @@ QWidget *AddonItemDelegate::createEditor( QWidget *parent,
     QPushButton *infoButton;
 
     editorWidget->setLayout( new QHBoxLayout() );
-    editorWidget->layout()->setMargin( 0 );
+    editorWidget->layout()->setContentsMargins(0, 0, 0, 0);
 
     infoButton = new QPushButton( QIcon( ":/menu/info.svg" ),
                                   qtr( "More information..." ) );
@@ -1286,10 +1289,10 @@ QWidget *AddonItemDelegate::createEditor( QWidget *parent,
          index.data( AddonsListModel::FlagsRole ).toInt() )
     {
         if ( index.data( AddonsListModel::StateRole ).toInt() == ADDON_INSTALLED )
-            installButton = new QPushButton( QIcon( ":/buttons/playlist/playlist_remove.svg" ),
+            installButton = new QPushButton( QIcon( ":/menu/remove.svg" ),
                                              qtr("&Uninstall"), parent );
         else
-            installButton = new QPushButton( QIcon( ":/buttons/playlist/playlist_add.svg" ),
+            installButton = new QPushButton( QIcon( ":/menu/add.svg" ),
                                              qtr("&Install"), parent );
         connect( installButton, &QPushButton::clicked, this, &AddonItemDelegate::editButtonClicked );
         editorWidget->layout()->addWidget( installButton );

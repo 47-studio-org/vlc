@@ -31,7 +31,7 @@
 #include <vlc_opengl.h>
 #include <vlc_filter.h>
 
-#include <libplacebo/context.h>
+#include <libplacebo/log.h>
 #include <libplacebo/gpu.h>
 #include <libplacebo/opengl.h>
 #include <libplacebo/renderer.h>
@@ -68,6 +68,10 @@ struct sys
     struct pl_frame frame_in;
     struct pl_frame frame_out;
     struct pl_render_params render_params;
+
+#if PL_API_VER >= 185
+    struct pl_dovi_metadata dovi_metadata;
+#endif
 
     unsigned out_width;
     unsigned out_height;
@@ -173,6 +177,18 @@ Draw(struct vlc_gl_filter *filter, const struct vlc_gl_picture *pic,
         r->y1 = coords[3] * h;
     }
 
+#if PL_API_VER >= 185
+    if (frame_in->repr.dovi && meta->dovi_rpu) {
+        vlc_placebo_DoviMetadata(meta->dovi_rpu, &sys->dovi_metadata);
+        struct pl_hdr_metadata *hdr = &frame_in->color.hdr;
+        const float scale = 1.0f / ((1 << 12) - 1);
+        hdr->min_luma = pl_hdr_rescale(PL_HDR_PQ, PL_HDR_NITS,
+                                       scale * meta->dovi_rpu->source_min_pq);
+        hdr->max_luma = pl_hdr_rescale(PL_HDR_PQ, PL_HDR_NITS,
+                                       scale * meta->dovi_rpu->source_max_pq);
+    }
+#endif
+
     GLint value;
     vt->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &value);
     GLuint final_draw_framebuffer = value; /* as GLuint */
@@ -268,13 +284,11 @@ Open(struct vlc_gl_filter *filter, const config_chain_t *config,
         return VLC_EGENERIC;
     }
 
-    struct sys *sys = filter->sys = malloc(sizeof(*sys));
+    struct sys *sys = filter->sys = calloc(1, sizeof(*sys));
     if (!sys)
         return VLC_EGENERIC;
 
-    sys->pl_log = vlc_placebo_CreateContext(VLC_OBJECT(filter));
-    if (!sys->pl_log)
-        goto error_free_sys;
+    sys->pl_log = vlc_placebo_CreateLog(VLC_OBJECT(filter));
 
     struct pl_opengl_params opengl_params = {
         .debug = true,
@@ -282,12 +296,12 @@ Open(struct vlc_gl_filter *filter, const config_chain_t *config,
     sys->pl_opengl = pl_opengl_create(sys->pl_log, &opengl_params);
 
     if (!sys->pl_opengl)
-        goto error_destroy_pl_log;
+        goto error;
 
     pl_gpu gpu = sys->pl_opengl->gpu;
     sys->pl_renderer = pl_renderer_create(sys->pl_log, gpu);
     if (!sys->pl_renderer)
-        goto error_destroy_pl_opengl;
+        goto error;
 
     sys->frame_in = (struct pl_frame) {
         .num_planes = glfmt->tex_count,
@@ -295,13 +309,22 @@ Open(struct vlc_gl_filter *filter, const config_chain_t *config,
         .color = vlc_placebo_ColorSpace(&glfmt->fmt),
     };
 
+#if PL_API_VER >= 185
+    if (glfmt->fmt.dovi.rpu_present && !glfmt->fmt.dovi.el_present) {
+        sys->frame_in.color.primaries = PL_COLOR_PRIM_BT_2020;
+        sys->frame_in.color.transfer = PL_COLOR_TRC_PQ;
+        sys->frame_in.repr.sys = PL_COLOR_SYSTEM_DOLBYVISION;
+        sys->frame_in.repr.dovi = &sys->dovi_metadata; /* to be filled later */
+    }
+#endif
+
     /* Initialize frame_in.planes */
     int plane_count =
         vlc_placebo_PlaneComponents(&glfmt->fmt, sys->frame_in.planes);
     if ((unsigned) plane_count != glfmt->tex_count) {
         msg_Err(filter, "Unexpected plane count (%d) != tex count (%u)",
                         plane_count, glfmt->tex_count);
-        goto error_destroy_pl_opengl;
+        goto error;
     }
 
     sys->frame_out = (struct pl_frame) {
@@ -339,11 +362,10 @@ Open(struct vlc_gl_filter *filter, const config_chain_t *config,
 
     return VLC_SUCCESS;
 
-error_destroy_pl_opengl:
+error:
+    pl_renderer_destroy(&sys->pl_renderer);
     pl_opengl_destroy(&sys->pl_opengl);
-error_destroy_pl_log:
     pl_log_destroy(&sys->pl_log);
-error_free_sys:
     free(sys);
 
     return VLC_EGENERIC;

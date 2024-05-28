@@ -24,9 +24,18 @@
 
 @implementation NSColor (VLCAdditions)
 
-+ (instancetype)VLClibraryHighlightColor
++ (instancetype)VLCAccentColor
 {
-    return [NSColor colorWithRed:1. green:136./255. blue:.0 alpha:1.];
+    if (@available(macOS 10.14, *)) {
+        return [NSColor controlAccentColor];
+    }
+
+    return [NSColor VLCOrangeElementColor];
+}
+
++ (instancetype)VLCOrangeElementColor
+{
+    return [NSColor colorWithRed:1. green:.38 blue:.04 alpha:1.];
 }
 
 + (instancetype)VLClibraryLightTitleColor
@@ -96,7 +105,18 @@
 
 + (instancetype)VLCSliderFillColor
 {
-    return [NSColor colorWithRed:1. green:0.38039 blue:0.03921 alpha:1.];
+    return [NSColor VLCAccentColor];
+}
+
+
++ (instancetype)VLCSliderLightBackgroundColor
+{
+    return [NSColor colorWithCalibratedWhite:0.5 alpha:0.5];
+}
+
++ (instancetype)VLCSliderDarkBackgroundColor
+{
+    return [NSColor colorWithCalibratedWhite:1 alpha:0.2];
 }
 
 @end

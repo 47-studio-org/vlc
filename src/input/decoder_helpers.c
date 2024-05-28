@@ -34,7 +34,7 @@
 #include <vlc_picture.h>
 #include "libvlc.h"
 
-void decoder_Init( decoder_t *p_dec, const es_format_t *restrict p_fmt )
+void decoder_Init( decoder_t *p_dec, es_format_t *restrict fmt_in, const es_format_t *restrict p_fmt )
 {
     p_dec->i_extra_picture_buffers = 0;
     p_dec->b_frame_drop_allowed = false;
@@ -45,7 +45,9 @@ void decoder_Init( decoder_t *p_dec, const es_format_t *restrict p_fmt )
     p_dec->pf_flush = NULL;
     p_dec->p_module = NULL;
 
-    es_format_Copy( &p_dec->fmt_in, p_fmt );
+    assert(fmt_in != NULL);
+    es_format_Copy( fmt_in, p_fmt );
+    p_dec->fmt_in = fmt_in;
     es_format_Init( &p_dec->fmt_out, p_fmt->i_cat, 0 );
 }
 
@@ -57,7 +59,6 @@ void decoder_Clean( decoder_t *p_dec )
         p_dec->p_module = NULL;
     }
 
-    es_format_Clean( &p_dec->fmt_in );
     es_format_Clean( &p_dec->fmt_out );
 
     if ( p_dec->p_description )
@@ -83,8 +84,8 @@ int decoder_UpdateVideoFormat( decoder_t *dec )
 
 int decoder_UpdateVideoOutput( decoder_t *dec, vlc_video_context *vctx_out )
 {
-    vlc_assert( dec->fmt_in.i_cat == VIDEO_ES && dec->cbs != NULL );
-    if ( unlikely(dec->fmt_in.i_cat != VIDEO_ES || dec->cbs == NULL) )
+    vlc_assert( dec->fmt_in->i_cat == VIDEO_ES && dec->cbs != NULL );
+    if ( unlikely(dec->fmt_in->i_cat != VIDEO_ES || dec->cbs == NULL) )
         return -1;
 
     /* */
@@ -126,13 +127,13 @@ int decoder_UpdateVideoOutput( decoder_t *dec, vlc_video_context *vctx_out )
     if( !dec->fmt_out.video.i_visible_width ||
         !dec->fmt_out.video.i_visible_height )
     {
-        if( dec->fmt_in.video.i_visible_width &&
-            dec->fmt_in.video.i_visible_height )
+        if( dec->fmt_in->video.i_visible_width &&
+            dec->fmt_in->video.i_visible_height )
         {
-            dec->fmt_out.video.i_visible_width  = dec->fmt_in.video.i_visible_width;
-            dec->fmt_out.video.i_visible_height = dec->fmt_in.video.i_visible_height;
-            dec->fmt_out.video.i_x_offset       = dec->fmt_in.video.i_x_offset;
-            dec->fmt_out.video.i_y_offset       = dec->fmt_in.video.i_y_offset;
+            dec->fmt_out.video.i_visible_width  = dec->fmt_in->video.i_visible_width;
+            dec->fmt_out.video.i_visible_height = dec->fmt_in->video.i_visible_height;
+            dec->fmt_out.video.i_x_offset       = dec->fmt_in->video.i_x_offset;
+            dec->fmt_out.video.i_y_offset       = dec->fmt_in->video.i_y_offset;
         }
         else
         {
@@ -153,7 +154,7 @@ int decoder_UpdateVideoOutput( decoder_t *dec, vlc_video_context *vctx_out )
 
 picture_t *decoder_NewPicture( decoder_t *dec )
 {
-    vlc_assert( dec->fmt_in.i_cat == VIDEO_ES && dec->cbs != NULL );
+    vlc_assert( dec->fmt_in->i_cat == VIDEO_ES && dec->cbs != NULL );
     if (dec->cbs->video.buffer_new == NULL)
         return picture_NewFromFormat( &dec->fmt_out.video );
     return dec->cbs->video.buffer_new( dec );

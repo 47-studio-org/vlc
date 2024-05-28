@@ -16,10 +16,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-import QtQuick.Controls 2.4
 import QtQuick 2.11
-import QtQml.Models 2.2
-import QtQuick.Layouts 1.3
 
 import org.videolan.medialib 0.1
 import org.videolan.vlc 0.1
@@ -27,63 +24,26 @@ import org.videolan.vlc 0.1
 import "qrc:///util/" as Util
 import "qrc:///widgets/" as Widgets
 import "qrc:///main/" as MainInterface
+import "qrc:///util/Helpers.js" as Helpers
 import "qrc:///style/"
 
-FocusScope {
+MainInterface.MainViewLoader {
     id: root
 
-    readonly property int currentIndex: _currentView.currentIndex
-    property int initialIndex: 0
-    property alias model: artistModel
+    // Properties
 
-    property alias _currentView: view.currentItem
-
-    onInitialIndexChanged: resetFocus()
+    readonly property int currentIndex: Helpers.get(currentItem, "currentIndex", - 1)
 
     signal requestArtistAlbumView(int reason)
 
-    function resetFocus() {
-        if (artistModel.count === 0)
-            return
-
-        var initialIndex = root.initialIndex
-        if (initialIndex >= artistModel.count)
-            initialIndex = 0
-        selectionModel.select(artistModel.index(initialIndex, 0), ItemSelectionModel.ClearAndSelect)
-        if (_currentView) {
-            _currentView.currentIndex = initialIndex
-            _currentView.positionViewAtIndex(initialIndex, ItemView.Contain)
-        }
-    }
-
-    function setCurrentItemFocus(reason) {
-        _currentView.setCurrentItemFocus(reason);
-    }
-
-    function _onNavigationCancel() {
-        if (_currentView.currentIndex <= 0) {
-            root.Navigation.defaultNavigationCancel()
-        } else {
-            _currentView.currentIndex = 0;
-            _currentView.positionViewAtIndex(0, ItemView.Contain);
-        }
-    }
-
-    MLArtistModel {
+    model: MLArtistModel {
         id: artistModel
         ml: MediaLib
-
-        onCountChanged: {
-            if (artistModel.count > 0 && !selectionModel.hasSelection) {
-                root.resetFocus()
-            }
-        }
     }
 
-    Util.SelectableDelegateModel {
-        id: selectionModel
-        model: artistModel
-    }
+    grid: gridComponent
+    list: tableComponent
+    emptyLabel: emptyLabelComponent
 
     Util.MLContextMenu {
         id: contextMenu
@@ -106,7 +66,6 @@ FocusScope {
         MainInterface.MainGridView {
             id: artistGrid
 
-            anchors.fill: parent
             topMargin: VLCStyle.margin_large
             selectionDelegateModel: selectionModel
             model: artistModel
@@ -115,13 +74,12 @@ FocusScope {
             cellHeight: VLCStyle.gridItem_music_height
 
             Navigation.parentItem: root
-            Navigation.cancelAction: root._onNavigationCancel
 
             onActionAtIndex: {
                 if (selectionModel.selectedIndexes.length > 1) {
                     MediaLib.addAndPlay( artistModel.getIdsForIndexes( selectionModel.selectedIndexes ) )
                 } else {
-                    _currentView.currentIndex = index
+                    currentIndex = index
                     requestArtistAlbumView(Qt.TabFocusReason)
                 }
             }
@@ -166,31 +124,67 @@ FocusScope {
 
             readonly property int _nbCols: VLCStyle.gridColumnsForWidth(artistTable.availableRowWidth)
 
-            anchors.fill: parent
+            property var _modelSmall: [{
+                size: Math.max(2, artistTable._nbCols),
+
+                model: ({
+                    criteria: "name",
+
+                    subCriterias: [ "nb_tracks" ],
+
+                    text: I18n.qtr("Name"),
+
+                    headerDelegate: tableColumns.titleHeaderDelegate,
+                    colDelegate: tableColumns.titleDelegate,
+
+                    placeHolder: VLCStyle.noArtArtistSmall
+                })
+            }]
+
+            property var _modelMedium: [{
+                size: Math.max(1, artistTable._nbCols - 1),
+
+                model: {
+                    criteria: "name",
+
+                    text: I18n.qtr("Name"),
+
+                    headerDelegate: tableColumns.titleHeaderDelegate,
+                    colDelegate: tableColumns.titleDelegate,
+
+                    placeHolder: VLCStyle.noArtArtistSmall
+                }
+            }, {
+                size: 1,
+
+                model: {
+                    criteria: "nb_tracks",
+
+                    text: I18n.qtr("Tracks")
+                }
+            }]
+
             selectionDelegateModel: selectionModel
             model: artistModel
             focus: true
-            headerColor: VLCStyle.colors.bg
             dragItem: artistsDragItem
             rowHeight: VLCStyle.tableCoverRow_height
             headerTopPadding: VLCStyle.margin_normal
 
             Navigation.parentItem: root
-            Navigation.cancelAction: root._onNavigationCancel
 
             onActionForSelection: {
                 if (selection.length > 1) {
                     MediaLib.addAndPlay( artistModel.getIdsForIndexes( selection ) )
                 } else if ( selection.length === 1) {
                     requestArtistAlbumView(Qt.TabFocusReason)
+                    // FIX ME - requestArtistAlbumView will destroy this view
                     MediaLib.addAndPlay( artistModel.getIdForIndex( selection[0] ) )
                 }
             }
 
-            sortModel:  [
-                { isPrimary: true, criteria: "name", width: VLCStyle.colWidth(Math.max(artistTable._nbCols - 1, 1)), text: I18n.qtr("Name"), headerDelegate: tableColumns.titleHeaderDelegate, colDelegate: tableColumns.titleDelegate, placeHolder: VLCStyle.noArtArtistSmall },
-                { criteria: "nb_tracks", width: VLCStyle.colWidth(1), text: I18n.qtr("Tracks") }
-            ]
+            sortModel: (availableRowWidth < VLCStyle.colWidth(4)) ? _modelSmall
+                                                                  : _modelMedium
 
             onItemDoubleClicked: root.requestArtistAlbumView(Qt.MouseFocusReason)
 
@@ -199,36 +193,19 @@ FocusScope {
 
             Widgets.TableColumns {
                 id: tableColumns
+
+                showCriterias: (artistTable.sortModel === artistTable._modelSmall)
             }
         }
     }
 
-    Widgets.StackViewExt {
-        id: view
+    Component {
+        id: emptyLabelComponent
 
-        anchors.fill: parent
-        visible: artistModel.count > 0
-        focus: artistModel.count > 0
-        initialItem: MainCtx.gridView ? gridComponent : tableComponent
-    }
-
-    Connections {
-        target: MainCtx
-        onGridViewChanged: {
-            if (MainCtx.gridView) {
-                view.replace(gridComponent)
-            } else {
-                view.replace(tableComponent)
-            }
+        EmptyLabelButton {
+            text: I18n.qtr("No artists found\nPlease try adding sources, by going to the Browse tab")
+            Navigation.parentItem: root
+            cover: VLCStyle.noArtArtistCover
         }
-    }
-
-    EmptyLabelButton {
-        anchors.fill: parent
-        visible: artistModel.count === 0
-        focus: artistModel.count === 0
-        text: I18n.qtr("No artists found\nPlease try adding sources, by going to the Network tab")
-        Navigation.parentItem: root
-        cover: VLCStyle.noArtArtistCover
     }
 }

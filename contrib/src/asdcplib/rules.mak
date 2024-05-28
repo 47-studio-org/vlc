@@ -16,6 +16,8 @@ ifeq ($(call need_pkg,"asdcplib >= 1.12"),)
 PKGS_FOUND += asdcplib
 endif
 
+ASDCPLIB_CXXFLAGS := $(CXXFLAGS) -std=gnu++98
+
 $(TARBALLS)/asdcplib-$(ASDCPLIB_VERSION).tar.gz:
 	$(call download_pkg,$(ASDCPLIB_URL),asdcplib)
 
@@ -32,8 +34,14 @@ asdcplib: asdcplib-$(ASDCPLIB_VERSION).tar.gz .sum-asdcplib
 
 DEPS_asdcplib = nettle $(DEPS_nettle)
 
+ASDCPLIB_CONF := --enable-freedist --enable-dev-headers --with-nettle=$(PREFIX)
+
+ASDCPLIB_CONF += CXXFLAGS="$(ASDCPLIB_CXXFLAGS)"
+
 .asdcplib: asdcplib
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) --enable-freedist --enable-dev-headers --with-nettle=$(PREFIX)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(ASDCPLIB_CONF)
+	+$(MAKEBUILD) bin_PROGRAMS=
+	+$(MAKEBUILD) bin_PROGRAMS= install
 	touch $@

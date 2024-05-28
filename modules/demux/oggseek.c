@@ -197,6 +197,8 @@ static int64_t get_data( demux_t *p_demux, int64_t i_bytes_to_read )
     seek_byte ( p_demux, p_sys->i_input_position );
 
     buf = ogg_sync_buffer( &p_sys->oy, i_bytes_to_read );
+    if( !buf )
+        return 0;
 
     i_result = vlc_stream_Read( p_demux->s, buf, i_bytes_to_read );
 
@@ -268,23 +270,32 @@ void Oggseek_ProbeEnd( demux_t *p_demux )
                     {
                         /* We found at least a page with valid granule */
                         p_sys->i_length = __MAX( p_sys->i_length, i_length - VLC_TICK_0 );
-                        goto clean;
                     }
                     break;
                 }
             }
         }
 
+        if( i_startpos == i_lowerbound ||
+            p_sys->i_length != VLC_TICK_INVALID )
+            goto clean;
+
+        int64_t i_next_upperbound = __MIN(i_startpos + MIN_PAGE_SIZE, i_upperbound);
+
         /* Otherwise increase read size, starting earlier */
-        if ( i_backoffset <= ( UINT_MAX >> 1 ) )
+        if ( i_backoffset <= MAX_PAGE_SIZE )
         {
             i_backoffset <<= 1;
             i_startpos = i_upperbound - i_backoffset;
         }
         else
         {
-            i_startpos -= i_backoffset;
+            i_startpos = i_upperbound - MAX_PAGE_SIZE;
         }
+
+        i_upperbound = i_next_upperbound;
+
+        i_startpos = __MAX( i_startpos, i_lowerbound );
         i_pos = i_startpos;
 
         if ( vlc_stream_Seek( p_demux->s, i_pos ) )
@@ -315,9 +326,6 @@ static int64_t find_first_page_granule( demux_t *p_demux,
     ogg_packet op;
 
     seek_byte( p_demux, i_pos1 );
-
-    if ( i_pos1 == p_stream->i_data_start )
-        return p_sys->i_input_position;
 
     if ( i_bytes_to_read > OGGSEEK_BYTES_TO_READ ) i_bytes_to_read = OGGSEEK_BYTES_TO_READ;
 
@@ -410,12 +418,11 @@ static int64_t find_first_page_granule( demux_t *p_demux,
         if ( i_packets_checked )
         {
             *i_granulepos = ogg_page_granulepos( &p_sys->current_page );
-            return i_pos1;
+            return p_sys->i_input_position;
         }
 
         /*  -> start of next page */
         p_sys->i_input_position += i_result;
-        i_pos1 = p_sys->i_input_position;
     }
 }
 
@@ -457,7 +464,6 @@ static bool OggSeekToPacket( demux_t *p_demux, logical_stream_t *p_stream,
                 msg_Dbg(p_demux, "** KEYFRAME PACKET START pageno %"PRId64" OFFSET %"PRId64" skip %"PRId64" **", p_lastpacketcoords->i_pageno, p_lastpacketcoords->i_pos, p_lastpacketcoords->i_skip );
                 msg_Dbg(p_demux, "KEYFRAME PACKET IS at pageno %"PRId64" OFFSET %"PRId64" with skip %d packet (%d / %d) ",
                     ogg_page_pageno( &p_sys->current_page ), p_sys->i_input_position, i, i+1, ogg_page_packets( &p_sys->current_page ) );
-                DemuxDebug( p_sys->b_seeked = true; )
             );
 
             if ( i != 0 ) /* Not continued packet */
@@ -794,15 +800,7 @@ int Oggseek_BlindSeektoAbsoluteTime( demux_t *p_demux, logical_stream_t *p_strea
         b_found = true;
     }
 
-    /* Or try to be smart with audio fixed bitrate streams */
-    if ( !b_found && p_stream->fmt.i_cat == AUDIO_ES && p_sys->i_streams == 1
-         && p_sys->i_bitrate && Ogg_GetKeyframeGranule( p_stream, 0xFF00FF00 ) == 0xFF00FF00 )
-    {
-        /* But only if there's no keyframe/preload requirements */
-        /* FIXME: add function to get preload time by codec, ex: opus */
-        i_lowerpos = VLC_TICK_0 + (i_time - VLC_TICK_0) * p_sys->i_bitrate / (CLOCK_FREQ * 8);
-        b_found = true;
-    }
+    /* FIXME: add function to get preload time by codec, ex: opus */
 
     /* or search */
     if ( !b_found && b_fastseek )
@@ -981,6 +979,8 @@ int64_t oggseek_read_page( demux_t *p_demux )
     ogg_sync_reset( &p_ogg->oy );
 
     buf = ogg_sync_buffer( &p_ogg->oy, i_page_size );
+    if( !buf )
+        return 0;
 
     memcpy( buf, header, PAGE_HEADER_BYTES + i_nsegs );
 

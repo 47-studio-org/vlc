@@ -31,6 +31,7 @@
 #include "maininterface/mainctx.hpp"
 #include "compositor.hpp"
 #include "util/renderer_manager.hpp"
+#include "util/csdbuttonmodel.hpp"
 
 #include "widgets/native/customwidgets.hpp"               // qtEventToVLCKey, QVLCStackedWidget
 #include "util/qt_dirs.hpp"                     // toNativeSeparators
@@ -46,6 +47,7 @@
 #include "menus/menus.hpp"                            // Menu creation
 
 #include "dialogs/toolbar/controlbar_profile_model.hpp"
+
 
 #include <QKeyEvent>
 
@@ -95,6 +97,12 @@ int loadVLCOption<int>(vlc_object_t *obj, const char *name)
 }
 
 template <>
+float loadVLCOption<float>(vlc_object_t *obj, const char *name)
+{
+    return var_InheritFloat(obj, name);
+}
+
+template <>
 bool loadVLCOption<bool>(vlc_object_t *obj, const char *name)
 {
     return var_InheritBool(obj, name);
@@ -104,6 +112,7 @@ bool loadVLCOption<bool>(vlc_object_t *obj, const char *name)
 
 MainCtx::MainCtx(qt_intf_t *_p_intf)
     : p_intf(_p_intf)
+    , m_csdButtonModel {std::make_unique<CSDButtonModel>(this, this)}
 {
     /**
      *  Configuration and settings
@@ -184,7 +193,7 @@ MainCtx::MainCtx(qt_intf_t *_p_intf)
     if( config_GetInt("qt-privacy-ask") )
     {
         //postpone dialog call, as composition might not be ready yet
-        QMetaObject::invokeMethod(this, [this](){
+        QMetaObject::invokeMethod(this, [](){
             THEDP->firstRunDialog();
         }, Qt::QueuedConnection);
     }
@@ -300,6 +309,7 @@ void MainCtx::loadPrefs(const bool callSignals)
 
     loadFromVLCOption(m_pinVideoControls, "qt-pin-controls", &MainCtx::pinVideoControlsChanged);
 
+    loadFromVLCOption(m_pinOpacity, "qt-fs-opacity", &MainCtx::pinOpacityChanged);
 }
 
 void MainCtx::loadFromSettingsImpl(const bool callSignals)
@@ -419,6 +429,18 @@ void MainCtx::setIntfUserScaleFactor(double newValue)
     updateIntfScaleFactor();
 }
 
+void MainCtx::setHasToolbarMenu( bool hasToolbarMenu )
+{
+    if (m_hasToolbarMenu == hasToolbarMenu)
+        return;
+
+    m_hasToolbarMenu = hasToolbarMenu;
+
+    config_PutInt("qt-menubar", (int) hasToolbarMenu);
+
+    emit hasToolbarMenuChanged();
+}
+
 void MainCtx::setPinVideoControls(bool pinVideoControls)
 {
     if (m_pinVideoControls == pinVideoControls)
@@ -426,6 +448,16 @@ void MainCtx::setPinVideoControls(bool pinVideoControls)
 
     m_pinVideoControls = pinVideoControls;
     emit pinVideoControlsChanged();
+}
+
+void MainCtx::setPinOpacity(float pinOpacity)
+{
+    if (m_pinOpacity == pinOpacity)
+        return;
+
+    m_pinOpacity = pinOpacity;
+
+    emit pinOpacityChanged();
 }
 
 inline void MainCtx::initSystray()
@@ -536,7 +568,7 @@ void MainCtx::createSystray()
     sysTray = new QSystemTrayIcon( iconVLC, this );
     sysTray->setToolTip( qtr( "VLC media player" ));
 
-    systrayMenu.reset(new QMenu( qtr( "VLC media player") ));
+    systrayMenu = std::make_unique<QMenu>( qtr( "VLC media player") );
     systrayMenu->setIcon( iconVLC );
 
     VLCMenuBar::updateSystrayMenu( this, p_intf, true );
@@ -634,80 +666,6 @@ void MainCtx::updateSystrayTooltipStatus( PlayerController::PlayingState )
     VLCMenuBar::updateSystrayMenu( this, p_intf );
 }
 
-
-/************************************************************************
- * D&D Events
- ************************************************************************/
-
-/**
- * dropEventPlay
- *
- * Event called if something is dropped onto a VLC window
- * \param event the event in question
- * \param b_play whether to play the file immediately
- * \return nothing
- */
-void MainCtx::dropEventPlay( QDropEvent *event, bool b_play )
-{
-    if( event->possibleActions() & ( Qt::CopyAction | Qt::MoveAction | Qt::LinkAction ) )
-       event->setDropAction( Qt::CopyAction );
-    else
-        return;
-
-    const QMimeData *mimeData = event->mimeData();
-
-    /* D&D of a subtitles file, add it on the fly */
-    if( mimeData->urls().count() == 1 && THEMIM->hasInput() )
-    {
-        if( !THEMIM->AddAssociatedMedia(SPU_ES, mimeData->urls()[0].toString(), true, true, true) )
-        {
-            event->accept();
-            return;
-        }
-    }
-
-    QVector<vlc::playlist::Media> medias;
-    for( const QUrl &url: mimeData->urls() )
-    {
-        if( url.isValid() )
-        {
-            QString mrl = toURI( url.toEncoded().constData() );
-#ifdef _WIN32
-            QFileInfo info( url.toLocalFile() );
-            if( info.exists() && info.isSymLink() )
-            {
-                QString target = info.symLinkTarget();
-                QUrl url;
-                if( QFile::exists( target ) )
-                {
-                    url = QUrl::fromLocalFile( target );
-                }
-                else
-                {
-                    url.setUrl( target );
-                }
-                mrl = toURI( url.toEncoded().constData() );
-            }
-#endif
-            if( mrl.length() > 0 )
-                medias.push_back( vlc::playlist::Media{ mrl, QString {} });
-        }
-    }
-
-    /* Browsers give content as text if you dnd the addressbar,
-       so check if mimedata has valid url in text and use it
-       if we didn't get any normal Urls()*/
-    if( !mimeData->hasUrls() && mimeData->hasText() &&
-        QUrl(mimeData->text()).isValid() )
-    {
-        QString mrl = toURI( mimeData->text() );
-        medias.push_back( vlc::playlist::Media{ mrl, QString {} });
-    }
-    if (!medias.empty())
-        THEMPL->append(medias, b_play);
-    event->accept();
-}
-
 /************************************************************************
  * Events stuff
  ************************************************************************/
@@ -737,6 +695,11 @@ bool MainCtx::onWindowClose( QWindow* )
         emit askToQuit(); /* ask THEDP to quit, so we have a unique method */
         return true;
     }
+}
+
+void MainCtx::toggleToolbarMenu()
+{
+    setHasToolbarMenu(!m_hasToolbarMenu);
 }
 
 void MainCtx::toggleInterfaceFullScreen()
@@ -903,4 +866,14 @@ void MainCtx::setAttachedToolTip(QObject *toolTip)
     assert(QQmlProperty::read(obj, QStringLiteral("ToolTip.toolTip"), qmlContext(obj)).value<QObject*>() == toolTip);
     obj->deleteLater();
 #endif
+}
+
+double MainCtx::dp(const double px, const double scale)
+{
+    return std::round(px * scale);
+}
+
+double MainCtx::dp(const double px) const
+{
+    return dp(px, m_intfScaleFactor);
 }

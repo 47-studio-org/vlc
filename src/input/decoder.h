@@ -83,11 +83,6 @@ void vlc_input_decoder_ChangePause( vlc_input_decoder_t *, bool b_paused, vlc_ti
 void vlc_input_decoder_ChangeRate( vlc_input_decoder_t *dec, float rate );
 
 /**
- * This function changes the delay.
- */
-void vlc_input_decoder_ChangeDelay( vlc_input_decoder_t *, vlc_tick_t i_delay );
-
-/**
  * This function makes the decoder start waiting for a valid data block from its fifo.
  */
 void vlc_input_decoder_StartWait( vlc_input_decoder_t * );
@@ -124,10 +119,9 @@ int vlc_input_decoder_GetCcState( vlc_input_decoder_t *, vlc_fourcc_t, int i_cha
 void vlc_input_decoder_GetCcDesc( vlc_input_decoder_t *, decoder_cc_desc_t * );
 
 /**
- * This function force the display of the next picture and fills the stream
- * time consumed.
+ * This function forces the display of the next picture
  */
-void vlc_input_decoder_FrameNext( vlc_input_decoder_t *p_dec, vlc_tick_t *pi_duration );
+void vlc_input_decoder_FrameNext( vlc_input_decoder_t *p_dec );
 
 struct vlc_input_decoder_status
 {

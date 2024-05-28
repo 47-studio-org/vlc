@@ -26,7 +26,6 @@ import "qrc:///player/" as Player
 
 Widgets.IconControlButton {
     id: langBtn
-    size: VLCStyle.icon_medium
     iconText: VLCIcons.audiosub
 
     enabled: menuLoader.status === Loader.Ready
@@ -50,17 +49,19 @@ Widgets.IconControlButton {
             y: (rootPlayer.positionSliderY - height)
             z: 1
 
+            colorContext.palette: langBtn.colorContext.palette
+
             onOpened: {
                 langBtn.requestLockUnlockAutoHide(true)
                 if (!!rootPlayer)
-                    rootPlayer.menu = menu
+                    rootPlayer.applyMenu(menu)
             }
 
             onClosed: {
                 langBtn.requestLockUnlockAutoHide(false)
                 langBtn.forceActiveFocus()
                 if (!!rootPlayer)
-                    rootPlayer.menu = undefined
+                    rootPlayer.applyMenu(null)
             }
         }
     }

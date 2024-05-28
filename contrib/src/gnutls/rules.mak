@@ -1,6 +1,6 @@
 # GnuTLS
 
-GNUTLS_VERSION := 3.6.15
+GNUTLS_VERSION := 3.6.16
 GNUTLS_URL := https://www.gnupg.org/ftp/gcrypt/gnutls/v3.6/gnutls-$(GNUTLS_VERSION).tar.xz
 
 ifdef BUILD_NETWORK
@@ -32,7 +32,7 @@ gnutls: gnutls-$(GNUTLS_VERSION).tar.xz .sum-gnutls
 	$(APPLY) $(SRC)/gnutls/0001-explicit_bzero-Do-not-call-SecureZeroMemory-on-UWP-b.patch
 
 	# disable the dllimport in static linking (pkg-config --static doesn't handle Cflags.private)
-	cd $(UNPACK_DIR) && sed -i.orig -e s/"_SYM_EXPORT __declspec(dllimport)"/"_SYM_EXPORT"/g lib/includes/gnutls/gnutls.h.in
+	sed -i.orig -e s/"_SYM_EXPORT __declspec(dllimport)"/"_SYM_EXPORT"/g $(UNPACK_DIR)/lib/includes/gnutls/gnutls.h.in
 
 	# fix i686 UWP builds as they were using CertEnumCRLsInStore via invalid LoadLibrary
 	$(APPLY) $(SRC)/gnutls/0001-fix-mingw64-detection.patch
@@ -41,6 +41,11 @@ gnutls: gnutls-$(GNUTLS_VERSION).tar.xz .sum-gnutls
 ifdef HAVE_DARWIN_OS
 	$(APPLY) $(SRC)/gnutls/gnutls-fix-aarch64-compilation-appleos.patch
 endif
+ifdef HAVE_ANDROID
+	$(APPLY) $(SRC)/gnutls/gnutls-fix-aarch64-compilation-appleos.patch
+endif
+
+	$(APPLY) $(SRC)/gnutls/0001-windows-Avoid-Wint-conversion-errors.patch
 
 	$(UPDATE_AUTOCONFIG)
 	$(MOVE)
@@ -59,15 +64,12 @@ GNUTLS_CONF := \
 	--disable-tools \
 	--disable-tests \
 	--with-included-libtasn1 \
-	--with-included-unistring \
-	$(HOSTCONF)
-
-GNUTLS_ENV := $(HOSTVARS)
+	--with-included-unistring
 
 DEPS_gnutls = nettle $(DEPS_nettle)
 
 ifdef HAVE_ANDROID
-GNUTLS_ENV += gl_cv_header_working_stdint_h=yes
+GNUTLS_ENV := gl_cv_header_working_stdint_h=yes
 endif
 ifdef HAVE_WINSTORE
 ifeq ($(ARCH),x86_64)
@@ -83,8 +85,15 @@ endif
 endif
 
 .gnutls: gnutls
-	cd $< && $(GNUTLS_ENV) ./configure $(GNUTLS_CONF)
-	$(call pkg_static,"lib/gnutls.pc")
-	cd $< && $(MAKE) -C gl install
-	cd $< && $(MAKE) -C lib install
+	$(MAKEBUILDDIR)
+	$(GNUTLS_ENV) $(MAKECONFIGURE) $(GNUTLS_CONF)
+ifdef HAVE_DARWIN_OS
+	# Add missing frameworks to Libs.private for Darwin
+	cd $< && sed -i.orig -e s/"Libs.private:"/"Libs.private: -framework Security -framework CoreFoundation"/g $(BUILD_DIRUNPACK)/lib/gnutls.pc
+endif
+	$(call pkg_static,"$(BUILD_DIRUNPACK)/lib/gnutls.pc")
+	+$(MAKEBUILD) -C gl
+	+$(MAKEBUILD) -C lib
+	+$(MAKEBUILD) -C gl install
+	+$(MAKEBUILD) -C lib install
 	touch $@

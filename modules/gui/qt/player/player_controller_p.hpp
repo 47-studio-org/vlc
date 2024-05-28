@@ -25,6 +25,7 @@
 #include "util/varchoicemodel.hpp"
 
 #include <QTimer>
+#include <QUrl>
 
 class PlayerControllerPrivate {
     Q_DISABLE_COPY(PlayerControllerPrivate)
@@ -83,7 +84,7 @@ public:
 
     VLCTick      m_time = 0;
     VLCTick      m_remainingTime = 0;
-    float           m_position = 0.f;
+    double       m_position = 0.f;
     VLCTick      m_length= 0;
 
     QString m_highResolutionTime { "00:00:00:00" };
@@ -128,6 +129,7 @@ public:
 
     //programs
     ProgramListModel m_programList;
+    bool m_hasPrograms = false;
     bool m_encrypted = false;
 
     //teletext
@@ -165,6 +167,11 @@ public:
     QString         m_artUrl;
     struct input_stats_t m_stats;
 
+    // meta
+    QString m_title;
+    QString m_artist;
+    QString m_album;
+    QUrl m_artwork;
 };
 
 #endif /* QVLC_INPUT_MANAGER_P_H_ */

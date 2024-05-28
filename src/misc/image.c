@@ -51,6 +51,7 @@
 struct decoder_owner
 {
     decoder_t dec;
+    es_format_t fmt_in;
     image_handler_t *p_image;
 };
 
@@ -116,7 +117,12 @@ void image_HandlerDelete( image_handler_t *p_image )
 {
     if( !p_image ) return;
 
-    decoder_Destroy( p_image->p_dec );
+    if( p_image->p_dec != NULL )
+    {
+        struct decoder_owner *p_owner = dec_get_owner( p_image->p_dec );
+        es_format_Clean( &p_owner->fmt_in );
+        decoder_Destroy( p_image->p_dec );
+    }
     if( p_image->p_enc )
         vlc_encoder_Destroy( p_image->p_enc );
     if( p_image->p_converter ) DeleteConverter( p_image->p_converter );
@@ -152,8 +158,10 @@ static picture_t *ImageRead( image_handler_t *p_image, block_t *p_block,
 
     /* Check if we can reuse the current decoder */
     if( p_image->p_dec &&
-        p_image->p_dec->fmt_in.i_codec != p_es_in->video.i_chroma )
+        p_image->p_dec->fmt_in->i_codec != p_es_in->video.i_chroma )
     {
+        struct decoder_owner *p_owner = dec_get_owner( p_image->p_dec );
+        es_format_Clean( &p_owner->fmt_in );
         decoder_Destroy( p_image->p_dec );
         p_image->p_dec = NULL;
     }
@@ -169,6 +177,8 @@ static picture_t *ImageRead( image_handler_t *p_image, block_t *p_block,
         }
         if( p_image->p_dec->fmt_out.i_cat != VIDEO_ES )
         {
+            struct decoder_owner *p_owner = dec_get_owner( p_image->p_dec );
+            es_format_Clean( &p_owner->fmt_in );
             decoder_Destroy( p_image->p_dec );
             p_image->p_dec = NULL;
             block_Release(p_block);
@@ -368,8 +378,6 @@ static block_t *ImageWrite( image_handler_t *p_image, picture_t *p_pic,
                             const video_format_t *p_fmt_in,
                             const video_format_t *p_fmt_out )
 {
-    block_t *p_block;
-
     /* Check if we can reuse the current encoder */
     if( p_image->p_enc &&
         ( p_image->p_enc->fmt_out.i_codec != p_fmt_out->i_chroma ||
@@ -388,13 +396,15 @@ static block_t *ImageWrite( image_handler_t *p_image, picture_t *p_pic,
         if( !p_image->p_enc ) return NULL;
     }
 
+    /* We'll release the picture at the end or during conversion. */
+    picture_Hold(p_pic);
+
     /* Check if we need chroma conversion or resizing */
     if( p_image->p_enc->fmt_in.video.i_chroma != p_fmt_in->i_chroma ||
         p_image->p_enc->fmt_in.video.i_width != p_fmt_in->i_width ||
         p_image->p_enc->fmt_in.video.i_height != p_fmt_in->i_height ||
        !BitMapFormatIsSimilar( &p_image->p_enc->fmt_in.video, p_fmt_in ) )
     {
-        picture_t *p_tmp_pic;
 
         if( p_image->p_converter &&
             ( p_image->p_converter->fmt_in.video.i_chroma != p_fmt_in->i_chroma ||
@@ -420,6 +430,7 @@ static block_t *ImageWrite( image_handler_t *p_image, picture_t *p_pic,
 
             if( !p_image->p_converter )
             {
+                picture_Release(p_pic);
                 return NULL;
             }
         }
@@ -432,23 +443,17 @@ static block_t *ImageWrite( image_handler_t *p_image, picture_t *p_pic,
             es_format_Copy( &p_image->p_converter->fmt_out, &p_image->p_enc->fmt_in );
         }
 
-        picture_Hold( p_pic );
-
-        p_tmp_pic =
-            p_image->p_converter->ops->filter_video( p_image->p_converter, p_pic );
-
-        if( likely(p_tmp_pic != NULL) )
-        {
-            assert(!picture_HasChainedPics(p_tmp_pic)); // no chaining
-            p_block = vlc_encoder_EncodeVideo(p_image->p_enc, p_tmp_pic );
-            picture_Release( p_tmp_pic );
-        }
-        else
-            p_block = NULL;
+        /* Hold the picture there to let the caller release its own picture,
+         * since filters will consume the picture. */
+        p_pic = p_image->p_converter->ops->filter_video( p_image->p_converter, p_pic );
+        assert(p_pic == NULL || !picture_HasChainedPics(p_pic)); // no chaining
     }
-    else
+
+    block_t *p_block = NULL;
+    if (p_pic != NULL)
     {
-        p_block = vlc_encoder_EncodeVideo( p_image->p_enc, p_pic );
+        p_block = vlc_encoder_EncodeVideo(p_image->p_enc, p_pic);
+        picture_Release(p_pic);
     }
 
     if( !p_block )
@@ -605,6 +610,7 @@ static const struct
     { VLC_CODEC_SVG,               "svg" },
     { VLC_CODEC_TIFF,              "tif" },
     { VLC_CODEC_TIFF,              "tiff" },
+    { VLC_CODEC_WEBP,              "webp" },
     { VLC_FOURCC('l','b','m',' '), "lbm" },
     { VLC_CODEC_PPM,               "ppm" },
 };
@@ -649,6 +655,7 @@ static const struct
     { VLC_CODEC_SVG,               "image/svg+xml" },
     { VLC_CODEC_TIFF,              "image/tiff" },
     { VLC_CODEC_TARGA,             "image/x-tga" },
+    { VLC_CODEC_WEBP,              "image/webp" },
     { VLC_FOURCC('x','p','m',' '), "image/x-xpixmap" },
     { 0, NULL }
 };
@@ -678,7 +685,7 @@ static decoder_t *CreateDecoder( image_handler_t *p_image, const es_format_t *fm
     p_dec = &p_owner->dec;
     p_owner->p_image = p_image;
 
-    decoder_Init( p_dec, fmt );
+    decoder_Init( p_dec, &p_owner->fmt_in, fmt );
 
     static const struct decoder_owner_callbacks dec_cbs =
     {
@@ -695,8 +702,9 @@ static decoder_t *CreateDecoder( image_handler_t *p_image, const es_format_t *fm
     {
         msg_Err( p_dec, "no suitable decoder module for fourcc `%4.4s'. "
                  "VLC probably does not support this image format.",
-                 (char*)&p_dec->fmt_in.i_codec );
+                 (char*)&p_dec->fmt_in->i_codec );
 
+        es_format_Clean( &p_owner->fmt_in );
         decoder_Destroy( p_dec );
         p_dec = NULL;
     }

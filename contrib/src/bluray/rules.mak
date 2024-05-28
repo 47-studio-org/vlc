@@ -1,6 +1,6 @@
 # LIBBLURAY
 
-BLURAY_VERSION := 1.3.1
+BLURAY_VERSION := 1.3.2
 BLURAY_URL := $(VIDEOLAN)/libbluray/$(BLURAY_VERSION)/libbluray-$(BLURAY_VERSION).tar.bz2
 
 ifdef BUILD_DISCS
@@ -49,13 +49,14 @@ $(TARBALLS)/libbluray-$(BLURAY_VERSION).tar.bz2:
 bluray: libbluray-$(BLURAY_VERSION).tar.bz2 .sum-bluray
 	$(UNPACK)
 	$(APPLY) $(SRC)/bluray/0001-install-bdjo_data-header.patch
-	$(APPLY) $(SRC)/bluray/0001-Fix-build-failure-after-Oracle-Java-CPU-for-April-20.patch
 	$(call pkg_static,"src/libbluray.pc.in")
 	$(MOVE)
 
 .bluray: bluray
 	rm -rf $(PREFIX)/share/java/libbluray*.jar
 	cd $< && ./bootstrap
-	cd $< && $(HOSTVARS) ./configure $(BLURAY_CONF) $(HOSTCONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(BLURAY_CONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

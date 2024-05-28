@@ -37,30 +37,18 @@
 #include <jni.h>
 
 #include "utils.h"
+#include "../wasync_resize_compressor.h"
 
-static int Open(vlc_window_t *);
-static void Close(vlc_window_t *);
-static int OpenDecDevice(vlc_decoder_device *device, vlc_window_t *window);
-
-/*
- * Module descriptor
- */
-vlc_module_begin()
-    set_shortname(N_("Android Window"))
-    set_description(N_("Android native window"))
-    set_subcategory(SUBCAT_VIDEO_VOUT)
-    set_capability("vout window", 10)
-    set_callback(Open)
-    add_submodule ()
-        set_callback_dec_device(OpenDecDevice, 1)
-        add_shortcut("android")
-vlc_module_end()
-
+typedef struct
+{
+    vlc_wasync_resize_compressor_t compressor;
+} vout_window_sys_t;
 
 static void OnNewWindowSize(vlc_window_t *wnd,
                             unsigned i_width, unsigned i_height)
 {
-    vlc_window_ReportSize(wnd, i_width, i_height);
+    vout_window_sys_t *sys = (vout_window_sys_t *) wnd->sys;
+    vlc_wasync_resize_compressor_reportSize(&sys->compressor, i_width, i_height);
 }
 
 static void OnNewMouseCoords(vlc_window_t *wnd,
@@ -80,19 +68,32 @@ static void OnNewMouseCoords(vlc_window_t *wnd,
     }
 }
 
-static const struct vlc_window_operations ops = {
-    .destroy = Close,
-};
+static void Close(vlc_window_t *wnd)
+{
+    vout_window_sys_t *sys = (vout_window_sys_t *) wnd->sys;
+    vlc_wasync_resize_compressor_destroy(&sys->compressor);
+    AWindowHandler_destroy(wnd->display.anativewindow);
+}
 
-/**
- * Create an Android native window.
- */
 static int Open(vlc_window_t *wnd)
 {
+    static const struct vlc_window_operations ops = {
+        .destroy = Close,
+    };
+
     /* We cannot create a window without the associated AWindow instance. */
     jobject jobj = var_InheritAddress(wnd, "drawable-androidwindow");
     if (jobj == NULL)
         return VLC_EGENERIC;
+
+    vout_window_sys_t *sys = vlc_obj_malloc(VLC_OBJECT(wnd), sizeof (*sys));
+    if (sys == NULL)
+        return VLC_ENOMEM;
+
+    if (vlc_wasync_resize_compressor_init(&sys->compressor, wnd))
+        return VLC_EGENERIC;
+
+    wnd->sys = sys;
 
     AWindowHandler *p_awh = AWindowHandler_new(VLC_OBJECT(wnd), wnd,
         &(awh_events_t) { OnNewWindowSize, OnNewMouseCoords });
@@ -100,19 +101,11 @@ static int Open(vlc_window_t *wnd)
         return VLC_EGENERIC;
 
     wnd->type = VLC_WINDOW_TYPE_ANDROID_NATIVE;
-    wnd->handle.anativewindow = p_awh;
+    wnd->display.anativewindow = p_awh;
+    wnd->handle.android_id = AWindow_Video;
     wnd->ops = &ops;
 
     return VLC_SUCCESS;
-}
-
-
-/**
- * Destroys the Android native window.
- */
-static void Close(vlc_window_t *wnd)
-{
-    AWindowHandler_destroy(wnd->handle.anativewindow);
 }
 
 static int
@@ -120,7 +113,7 @@ OpenDecDevice(vlc_decoder_device *device, vlc_window_t *window)
 {
     AWindowHandler *awh;
     if (window && window->type == VLC_WINDOW_TYPE_ANDROID_NATIVE)
-        awh = window->handle.anativewindow;
+        awh = window->display.anativewindow;
     else
         awh = AWindowHandler_new(VLC_OBJECT(device), NULL, NULL);
 
@@ -134,3 +127,14 @@ OpenDecDevice(vlc_decoder_device *device, vlc_window_t *window)
 
     return VLC_SUCCESS;
 }
+
+vlc_module_begin()
+    set_shortname(N_("Android Window"))
+    set_description(N_("Android native window"))
+    set_subcategory(SUBCAT_VIDEO_VOUT)
+    set_capability("vout window", 10)
+    set_callback(Open)
+    add_submodule ()
+        set_callback_dec_device(OpenDecDevice, 1)
+        add_shortcut("android")
+vlc_module_end()

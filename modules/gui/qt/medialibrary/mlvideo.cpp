@@ -21,6 +21,7 @@
 #include <cassert>
 
 #include <vlc_thumbnailer.h>
+#include "mlhelper.hpp"
 
 VideoDescription::VideoDescription(const QString &codec, const QString &language, const unsigned int fps)
     : m_codec(codec)
@@ -85,6 +86,8 @@ MLVideo::MLVideo(const vlc_ml_media_t* data)
 
     m_isNew = (m_playCount == 0 && m_progress <= 0);
 
+    m_isFavorite = data->b_is_favorite;
+
     for( const vlc_ml_file_t& file: ml_range_iterate<vlc_ml_file_t>( data->p_files ) )
         if( file.i_type == VLC_ML_FILE_TYPE_MAIN )
         {
@@ -145,6 +148,16 @@ void MLVideo::setIsNew(bool isNew)
     m_isNew = isNew;
 }
 
+bool MLVideo::isFavorite() const
+{
+    return m_isFavorite;
+}
+
+void MLVideo::setIsFavorite(bool isFavorite)
+{
+    m_isFavorite = isFavorite;
+}
+
 QString MLVideo::getFileName() const
 {
     return m_fileName;
@@ -168,9 +181,9 @@ void MLVideo::setThumbnail(vlc_ml_thumbnail_status_t status, QString mrl)
     m_thumbnail = mrl;
 }
 
-int64_t MLVideo::getDuration() const
+VLCTick MLVideo::getDuration() const
 {
-    return m_duration;
+    return VLCTick::fromMS(m_duration);
 }
 
 QString MLVideo::getMRL() const
@@ -202,9 +215,9 @@ unsigned int MLVideo::getPlayCount() const
     return m_playCount;
 }
 
-QString MLVideo::getProgressTime() const
+VLCTick MLVideo::getProgressTime() const
 {
-    return MsToString(m_duration * m_progress);
+    return VLCTick::fromMS(m_duration * m_progress);
 }
 
 QList<VideoDescription> MLVideo::getVideoDesc() const

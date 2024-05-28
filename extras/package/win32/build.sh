@@ -25,6 +25,7 @@ OPTIONS:
    -c            Create a Prebuilt contrib package (rarely used)
    -l            Enable translations (can be slow)
    -i <n|r|u|m>  Create an Installer (n: nightly, r: release, u: unsigned release archive, m: msi only)
+   -W <wix_path> Set the path to the WIX binaries
    -s            Interactive shell (get correct environment variables for build)
    -b <url>      Enable breakpad support and send crash reports to this URL
    -d            Create PDB files during the build
@@ -36,11 +37,12 @@ OPTIONS:
    -w            Restrict to Windows Store APIs
    -z            Build without GUI (libvlc only)
    -o <path>     Install the built binaries in the absolute path
+   -m            Build with Meson rather than autotools
 EOF
 }
 
 ARCH="x86_64"
-while getopts "hra:pcli:sb:dD:xS:uwzo:" OPTION
+while getopts "hra:pcli:W:sb:dD:xS:uwzo:m" OPTION
 do
      case $OPTION in
          h)
@@ -65,6 +67,9 @@ do
          ;;
          i)
              INSTALLER=$OPTARG
+         ;;
+         W)
+             WIXPATH=--with-wix="$OPTARG"
          ;;
          s)
              INTERACTIVE="yes"
@@ -96,6 +101,9 @@ do
          ;;
          o)
              INSTALL_PATH=$OPTARG
+         ;;
+         m)
+             BUILD_MESON="yes"
          ;;
      esac
 done
@@ -134,10 +142,17 @@ TRIPLET=$ARCH-w64-mingw32
 
 # Check if compiling with clang
 CC=${CC:-$TRIPLET-gcc}
-if ! printf "#ifdef __clang__\n#error CLANG\n#endif" | $CC -E -; then
+if ! printf "#ifdef __clang__\n#error CLANG\n#endif" | $CC -E - 1>/dev/null 2>/dev/null; then
     COMPILING_WITH_CLANG=1
 else
     COMPILING_WITH_CLANG=0
+fi
+
+# Check if this is a UCRT toolchain
+if printf "#include <crtdefs.h>\n#if defined(_UCRT) || (__MSVCRT_VERSION__ >= 0x1400) || (__MSVCRT_VERSION__ >= 0xE00 && __MSVCRT_VERSION__ < 0x1000)\n# error This is a UCRT build\n#endif" | $CC -E - 1>/dev/null 2>/dev/null; then
+    COMPILING_WITH_UCRT=0
+else
+    COMPILING_WITH_UCRT=1
 fi
 
 info "Building extra tools"
@@ -175,6 +190,12 @@ cd ../../
 
 CONTRIB_PREFIX=$TRIPLET
 if [ ! -z "$BUILD_UCRT" ]; then
+
+    if [ ! "$COMPILING_WITH_UCRT" -gt 0 ]; then
+        echo "UCRT builds need a UCRT toolchain"
+        exit 1
+    fi
+
     if [ ! -z "$WINSTORE" ]; then
         CONTRIBFLAGS="$CONTRIBFLAGS --disable-disc --disable-srt --disable-sdl --disable-SDL_image --disable-caca"
         # modplug uses GlobalAlloc/Free and lstrcpyA/wsprintfA/lstrcpynA
@@ -205,6 +226,11 @@ if [ ! -z "$BUILD_UCRT" ]; then
     fi
 fi
 
+if [ ! -z "$WIXPATH" ]; then
+    # the CI didn't provide its own WIX, make sure we use our own
+    CONTRIBFLAGS="$CONTRIBFLAGS --enable-wix"
+fi
+
 export PATH="$PWD/contrib/$CONTRIB_PREFIX/bin":"$PATH"
 
 if [ "$INTERACTIVE" = "yes" ]; then
@@ -217,7 +243,7 @@ fi
 
 if [ ! -z "$BUILD_UCRT" ]; then
     WIDL=${TRIPLET}-widl
-    CPPFLAGS="$CPPFLAGS -D__MSVCRT_VERSION__=0xE00"
+    CPPFLAGS="$CPPFLAGS -D__MSVCRT_VERSION__=0xE00 -D_UCRT"
 
     if [ ! -z "$WINSTORE" ]; then
         SHORTARCH="$SHORTARCH-uwp"
@@ -237,20 +263,19 @@ if [ ! -z "$BUILD_UCRT" ]; then
         CFLAGS="$CFLAGS -Wl,-lwindowsapp,-lwindowsappcompat"
         CXXFLAGS="$CXXFLAGS -Wl,-lwindowsapp,-lwindowsappcompat"
         CPPFLAGS="$CPPFLAGS -DWINSTORECOMPAT"
-        EXTRA_CRUNTIME="vcruntime140_app"
+        EXTRA_CRUNTIME="-lvcruntime140_app"
     else
         SHORTARCH="$SHORTARCH-ucrt"
-        # this library doesn't exist yet, so use ucrt twice as a placeholder
-        # EXTRA_CRUNTIME="vcruntime140"
-        EXTRA_CRUNTIME="ucrt"
+        # this library doesn't exist yet
+        # EXTRA_CRUNTIME="-lvcruntime140"
     fi
 
-    LDFLAGS="$LDFLAGS -l$EXTRA_CRUNTIME -lucrt"
+    LDFLAGS="$LDFLAGS $EXTRA_CRUNTIME -lucrt"
     if [ ! "$COMPILING_WITH_CLANG" -gt 0 ]; then
         # assume gcc
         NEWSPECFILE="`pwd`/specfile-$SHORTARCH"
         # tell gcc to replace msvcrt with ucrtbase+ucrt
-        $CC -dumpspecs | sed -e "s/-lmsvcrt/-l$EXTRA_CRUNTIME -lucrt/" > $NEWSPECFILE
+        $CC -dumpspecs | sed -e "s/-lmsvcrt/$EXTRA_CRUNTIME -lucrt/" > $NEWSPECFILE
         CFLAGS="$CFLAGS -specs=$NEWSPECFILE"
         CXXFLAGS="$CXXFLAGS -specs=$NEWSPECFILE"
 
@@ -262,8 +287,10 @@ if [ ! -z "$BUILD_UCRT" ]; then
             sed -i -e "s/-lkernel32//" $NEWSPECFILE
         fi
     else
-        CFLAGS="$CFLAGS -Wl,-l$EXTRA_CRUNTIME,-lucrt"
-        CXXFLAGS="$CXXFLAGS -Wl,-l$EXTRA_CRUNTIME,-lucrt"
+        if [ -n "$EXTRA_CRUNTIME" ]; then
+            CFLAGS="$CFLAGS -Wl,$EXTRA_CRUNTIME"
+            CXXFLAGS="$CXXFLAGS -Wl,$EXTRA_CRUNTIME"
+        fi
     fi
 
     # the values are not passed to the makefiles/configures
@@ -320,31 +347,27 @@ export CXXFLAGS
 ${VLC_ROOT_PATH}/contrib/bootstrap --host=$TRIPLET --prefix=../$CONTRIB_PREFIX $CONTRIBFLAGS
 
 # Rebuild the contribs or use the prebuilt ones
-if [ "$PREBUILT" != "yes" ]; then
-    make list
+make list
+if [ "$PREBUILT" = "yes" ]; then
+    if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
+        make prebuilt PREBUILT_URL="$VLC_PREBUILT_CONTRIBS_URL" || PREBUILT_FAILED=yes
+    else
+        make prebuilt || PREBUILT_FAILED=yes
+    fi
+else
+    PREBUILT_FAILED=yes
+fi
+if [ -n "$PREBUILT_FAILED" ]; then
     make -j$JOBS fetch
     make -j$JOBS -k || make -j1
     if [ "$PACKAGE" = "yes" ]; then
         make package
     fi
 else
-    if [ -n "$VLC_PREBUILT_CONTRIBS_URL" ]; then
-        make prebuilt PREBUILT_URL="$VLC_PREBUILT_CONTRIBS_URL"
-    else
-        make prebuilt
-    fi
     make -j$JOBS tools
 fi
 cd ../..
 
-info "Bootstrapping"
-
-if ! [ -e ${VLC_ROOT_PATH}/configure ]; then
-    echo "Bootstraping vlc"
-    ${VLC_ROOT_PATH}/bootstrap
-fi
-
-info "Configuring VLC"
 if [ -z "$PKG_CONFIG" ]; then
     if [ `unset PKG_CONFIG_LIBDIR; $TRIPLET-pkg-config --version 1>/dev/null 2>/dev/null || echo FAIL` = "FAIL" ]; then
         # $TRIPLET-pkg-config DOESNT WORK
@@ -361,16 +384,16 @@ if [ -z "$PKG_CONFIG" ]; then
     fi
 fi
 
-mkdir -p $SHORTARCH
-cd $SHORTARCH
-
 if [ "$RELEASE" != "yes" ]; then
      CONFIGFLAGS="$CONFIGFLAGS --enable-debug"
+     MCONFIGFLAGS="$MCONFIGFLAGS --buildtype debugoptimized"
 else
      CONFIGFLAGS="$CONFIGFLAGS --disable-debug"
+     MCONFIGFLAGS="$MCONFIGFLAGS --buildtype release"
 fi
 if [ "$I18N" != "yes" ]; then
      CONFIGFLAGS="$CONFIGFLAGS --disable-nls"
+     MCONFIGFLAGS="$MCONFIGFLAGS -Dnls=disabled"
 fi
 if [ ! -z "$BREAKPAD" ]; then
      CONFIGFLAGS="$CONFIGFLAGS --with-breakpad=$BREAKPAD"
@@ -381,33 +404,65 @@ fi
 if [ ! -z "$EXTRA_CHECKS" ]; then
     CFLAGS="$CFLAGS -Werror=incompatible-pointer-types -Werror=missing-field-initializers"
     CXXFLAGS="$CXXFLAGS -Werror=missing-field-initializers"
+    if [ ! "$COMPILING_WITH_CLANG" -gt 0 ]; then
+        CFLAGS="$CFLAGS -Werror=restrict"
+    fi
 fi
 if [ ! -z "$DISABLEGUI" ]; then
     CONFIGFLAGS="$CONFIGFLAGS --disable-vlc --disable-qt --disable-skins2"
+    MCONFIGFLAGS="$MCONFIGFLAGS -Dvlc=false -Dqt=disabled"
+    # MCONFIGFLAGS="$MCONFIGFLAGS -Dskins2=disabled"
 else
     CONFIGFLAGS="$CONFIGFLAGS --enable-qt --enable-skins2"
+    MCONFIGFLAGS="$MCONFIGFLAGS -Dqt=enabled"
+    # MCONFIGFLAGS="$MCONFIGFLAGS -Dskins2=enabled"
 fi
 if [ ! -z "$WINSTORE" ]; then
     CONFIGFLAGS="$CONFIGFLAGS --enable-winstore-app"
+    MCONFIGFLAGS="$MCONFIGFLAGS -Dwinstore_app=true"
     # uses CreateFile to access files/drives outside of the app
     CONFIGFLAGS="$CONFIGFLAGS --disable-vcd"
+    MCONFIGFLAGS="$MCONFIGFLAGS -Dvcd_module=false"
     # other modules that were disabled in the old UWP builds
     CONFIGFLAGS="$CONFIGFLAGS --disable-dxva2"
+    # MCONFIGFLAGS="$MCONFIGFLAGS -Ddxva2=disabled"
 
 else
     CONFIGFLAGS="$CONFIGFLAGS --enable-dvdread --enable-caca"
+    MCONFIGFLAGS="$MCONFIGFLAGS -Ddvdread=enabled -Dcaca=enabled"
 fi
 if [ ! -z "$INSTALL_PATH" ]; then
-    CONFIGFLAGS="$CONFIGFLAGS --prefix=$INSTALL_PATH"
+    CONFIGFLAGS="$CONFIGFLAGS --with-packagedir=$INSTALL_PATH"
 fi
 
-${SCRIPT_PATH}/configure.sh --host=$TRIPLET --with-contrib=../contrib/$CONTRIB_PREFIX $CONFIGFLAGS
+if [ -n "$BUILD_MESON" ]; then
+    mkdir -p $SHORTARCH-meson
+    rm -rf $SHORTARCH-meson/meson-private
+
+    info "Configuring VLC"
+    BUILD_PATH="$( pwd -P )"
+    cd ${VLC_ROOT_PATH}
+    meson setup ${BUILD_PATH}/$SHORTARCH-meson $MCONFIGFLAGS --cross-file ${BUILD_PATH}/contrib/contrib-$SHORTARCH/crossfile.meson --cross-file ${BUILD_PATH}/contrib/$CONTRIB_PREFIX/share/meson/cross/contrib.ini
+
+    info "Compiling"
+    cd ${BUILD_PATH}/$SHORTARCH-meson
+    meson compile -j $JOBS
+else
+info "Bootstrapping"
+${VLC_ROOT_PATH}/bootstrap
+
+mkdir -p $SHORTARCH
+cd $SHORTARCH
+
+info "Configuring VLC"
+${SCRIPT_PATH}/configure.sh --host=$TRIPLET --with-contrib=../contrib/$CONTRIB_PREFIX "$WIXPATH" $CONFIGFLAGS
 
 info "Compiling"
 make -j$JOBS
 
 if [ "$INSTALLER" = "n" ]; then
-make package-win32-debug package-win32 package-msi
+make package-win32-debug-7zip
+make -j$JOBS package-win32 package-msi
 elif [ "$INSTALLER" = "r" ]; then
 make package-win32
 elif [ "$INSTALLER" = "u" ]; then
@@ -416,5 +471,6 @@ sha512sum vlc-*-release.7z
 elif [ "$INSTALLER" = "m" ]; then
 make package-msi
 elif [ ! -z "$INSTALL_PATH" ]; then
-make package-win-install
+make package-win-common
+fi
 fi

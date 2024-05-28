@@ -27,6 +27,7 @@
 #include <QObject>
 #include <QEvent>
 #include <QScopedPointer>
+#include <QUrl>
 #include <vlc_cxx_helpers.hpp>
 #include "player/input_models.hpp"
 #include "util/audio_device_model.hpp"
@@ -126,6 +127,12 @@ public:
 
     Q_PROPERTY(bool canRestorePlayback READ canRestorePlayback NOTIFY playbackRestoreQueried FINAL)
 
+    // meta
+    Q_PROPERTY(QString title READ getTitle NOTIFY currentMetaChanged FINAL)
+    Q_PROPERTY(QString artist READ getArtist NOTIFY currentMetaChanged FINAL)
+    Q_PROPERTY(QString album READ getAlbum NOTIFY currentMetaChanged FINAL)
+    Q_PROPERTY(QUrl artwork READ getArtwork NOTIFY currentMetaChanged FINAL)
+
     //tracks
     Q_PROPERTY(TrackListModel* videoTracks READ getVideoTracks CONSTANT FINAL)
     Q_PROPERTY(TrackListModel* audioTracks READ getAudioTracks CONSTANT FINAL)
@@ -151,6 +158,8 @@ public:
 
     //programs
     Q_PROPERTY(ProgramListModel* programs READ getPrograms CONSTANT FINAL)
+
+    Q_PROPERTY(bool hasPrograms READ hasPrograms NOTIFY hasProgramsChanged FINAL)
     Q_PROPERTY(bool isEncrypted READ isEncrypted NOTIFY isEncryptedChanged FINAL)
 
     //teletext
@@ -324,6 +333,7 @@ public slots:
 
     //programs
     ProgramListModel* getPrograms();
+    bool hasPrograms() const;
     bool isEncrypted() const;
 
     //teletext
@@ -371,6 +381,17 @@ public slots:
 
     // High resolution time fed by SMPTE timer
     QString highResolutionTime() const;
+
+    // associates subtitle file to currently playing media
+    // returns true on success
+    bool associateSubtitleFile(const QString &uri);
+
+    // meta
+    QString getTitle() const;
+    QString getArtist() const;
+    QString getAlbum() const;
+    QUrl getArtwork() const;
+
 signals:
     //playback
     void playingStateChanged( PlayingState state );
@@ -409,6 +430,7 @@ signals:
     void isInteractiveChanged( bool );
 
     //program
+    void hasProgramsChanged( bool );
     void isEncryptedChanged( bool );
 
     //teletext

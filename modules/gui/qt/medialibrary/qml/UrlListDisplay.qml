@@ -34,8 +34,11 @@ Widgets.KeyNavigableTableView {
     readonly property int _nbCols: VLCStyle.gridColumnsForWidth(
                                        listView_id.availableRowWidth)
     property Component urlHeaderDelegate: Widgets.IconLabel {
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+        font.pixelSize: VLCStyle.icon_tableHeader
         text: VLCIcons.history
-        color: VLCStyle.colors.caption
+        color: listView_id.colorContext.fg.secondary
     }
 
     visible: urlModel.count > 0
@@ -43,23 +46,31 @@ Widgets.KeyNavigableTableView {
     selectionDelegateModel: selectionModel
 
     sortModel: [{
-            "isPrimary": true,
-            "criteria": "url",
-            "width": VLCStyle.colWidth(Math.max(listView_id._nbCols - 1,
-                                                1)),
-            "text": I18n.qtr("Url"),
-            "showSection": "url",
+        size: Math.max(listView_id._nbCols - 1, 1),
+
+        model: {
+            criteria: "url",
+
+            text: I18n.qtr("Url"),
+
+            showSection: "url",
+
             headerDelegate: urlHeaderDelegate
-        }, {
-            "criteria": "last_played_date",
-            "width": VLCStyle.colWidth(1),
-            "showSection": "",
-            "headerDelegate": tableColumns.timeHeaderDelegate,
-            "showContextButton": true
-        }]
+        }
+    }, {
+        size: 1,
+
+        model: {
+            criteria: "last_played_date",
+
+            showSection: "",
+            showContextButton: true,
+
+            headerDelegate: tableColumns.timeHeaderDelegate
+        }
+    }]
 
     rowHeight: VLCStyle.listAlbumCover_height + VLCStyle.margin_xxsmall * 2
-    headerColor: VLCStyle.colors.bg
 
     onActionForSelection: MediaLib.addAndPlay(model.getIdsForIndexes(
                                                   selection))

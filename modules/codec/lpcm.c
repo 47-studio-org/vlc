@@ -217,7 +217,7 @@ static int OpenCommon( decoder_t *p_dec, bool b_packetizer )
     int i_type;
     int i_header_size;
 
-    switch( p_dec->fmt_in.i_codec )
+    switch( p_dec->fmt_in->i_codec )
     {
     /* DVD LPCM */
     case VLC_CODEC_DVD_LPCM:
@@ -537,7 +537,7 @@ static int OpenEncoder( vlc_object_t *p_this )
     }
 
     /* Allocate the memory needed to store the encoder's structure */
-    if( ( p_enc->p_sys = p_sys =
+    if( ( p_sys =
           (encoder_sys_t *)malloc(sizeof(encoder_sys_t)) ) == NULL )
         return VLC_ENOMEM;
 
@@ -570,6 +570,7 @@ static int OpenEncoder( vlc_object_t *p_this )
     };
 
     p_enc->ops = &ops;
+    p_enc->p_sys = p_sys;
 
     return VLC_SUCCESS;
 }

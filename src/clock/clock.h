@@ -17,8 +17,10 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-#ifndef VLC_CLOCK_H
-#define VLC_CLOCK_H
+#ifndef CLOCK_H
+#define CLOCK_H
+
+#include <vlc_clock.h>
 
 enum vlc_clock_master_source
 {
@@ -27,9 +29,6 @@ enum vlc_clock_master_source
     VLC_CLOCK_MASTER_INPUT,
     VLC_CLOCK_MASTER_MONOTONIC,
 };
-
-typedef struct vlc_clock_main_t vlc_clock_main_t;
-typedef struct vlc_clock_t vlc_clock_t;
 
 /**
  * Callbacks for the owner of the main clock
@@ -230,4 +229,4 @@ vlc_clock_ConvertToSystem(vlc_clock_t *clock, vlc_tick_t system_now,
     return system;
 }
 
-#endif /*VLC_CLOCK_H*/
+#endif /*CLOCK_H*/

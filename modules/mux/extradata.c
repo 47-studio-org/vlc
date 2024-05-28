@@ -27,6 +27,7 @@
 #include "extradata.h"
 #include "../packetizer/av1_obu.h"
 #include "../packetizer/a52.h"
+#include "../codec/hxxx_helper.h"
 
 struct mux_extradata_builder_cb
 {
@@ -38,11 +39,17 @@ struct mux_extradata_builder_cb
 struct mux_extradata_builder_t
 {
     struct mux_extradata_builder_cb cb;
+    vlc_object_t *obj;
     void *priv;
     uint8_t *p_extra;
     size_t i_extra;
     vlc_fourcc_t fcc;
 };
+
+static void generic_free_extra_Deinit(mux_extradata_builder_t *m)
+{
+    free(m->p_extra);
+}
 
 static void ac3_extradata_builder_Feed(mux_extradata_builder_t *m,
                                        const uint8_t *p_data, size_t i_data)
@@ -76,7 +83,7 @@ const struct mux_extradata_builder_cb ac3_cb =
 {
     NULL,
     ac3_extradata_builder_Feed,
-    NULL,
+    generic_free_extra_Deinit,
 };
 
 static void eac3_extradata_builder_Feed(mux_extradata_builder_t *m,
@@ -120,7 +127,7 @@ const struct mux_extradata_builder_cb eac3_cb =
 {
     NULL,
     eac3_extradata_builder_Feed,
-    NULL,
+    generic_free_extra_Deinit,
 };
 
 static void av1_extradata_builder_Feed(mux_extradata_builder_t *m,
@@ -152,14 +159,47 @@ const struct mux_extradata_builder_cb av1_cb =
 {
     NULL,
     av1_extradata_builder_Feed,
+    generic_free_extra_Deinit,
+};
+
+static void hxxx_extradata_builder_Feed(mux_extradata_builder_t *m,
+                                        const uint8_t *data, size_t size)
+{
+    if (m->i_extra)
+        return;
+
+    struct hxxx_helper hh;
+    hxxx_helper_init(&hh, m->obj, m->fcc, 0, 0);
+
+    int ret = hxxx_helper_process_buffer(&hh, data, size);
+    (void)ret;
+
+    if (hxxx_helper_has_config(&hh) && m->i_extra == 0)
+    {
+        assert(m->priv == NULL);
+        block_t *config = hxxx_helper_get_extradata_block(&hh);
+        m->i_extra = config->i_buffer;
+        m->p_extra = config->p_buffer;
+        m->priv = config;
+    }
+}
+
+static void hxxx_extradata_builder_Deinit(mux_extradata_builder_t *m)
+{
+    if (m->priv)
+        block_Release(m->priv);
+}
+
+const struct mux_extradata_builder_cb hxxx_cb =
+{
     NULL,
+    hxxx_extradata_builder_Feed,
+    hxxx_extradata_builder_Deinit,
 };
 
 void mux_extradata_builder_Delete(mux_extradata_builder_t *m)
 {
-    if(m->cb.pf_deinit)
-        m->cb.pf_deinit(m);
-    free(m->p_extra);
+    m->cb.pf_deinit(m);
     free(m);
 }
 
@@ -172,9 +212,12 @@ static const struct
     { EXTRADATA_ISOBMFF, VLC_CODEC_AV1,  &av1_cb },
     { EXTRADATA_ISOBMFF, VLC_CODEC_A52,  &ac3_cb },
     { EXTRADATA_ISOBMFF, VLC_CODEC_EAC3, &eac3_cb },
+    { EXTRADATA_ISOBMFF, VLC_CODEC_H264, &hxxx_cb },
+    { EXTRADATA_ISOBMFF, VLC_CODEC_HEVC, &hxxx_cb },
 };
 
-mux_extradata_builder_t * mux_extradata_builder_New(vlc_fourcc_t fcc,
+mux_extradata_builder_t * mux_extradata_builder_New(vlc_object_t *obj,
+                                                    vlc_fourcc_t fcc,
                                                     enum mux_extradata_type_e type)
 {
     const struct mux_extradata_builder_cb *cb = NULL;
@@ -189,16 +232,21 @@ mux_extradata_builder_t * mux_extradata_builder_New(vlc_fourcc_t fcc,
     if(cb == NULL)
         return NULL;
 
+    assert(cb->pf_feed != NULL);
+    assert(cb->pf_deinit != NULL);
+
     mux_extradata_builder_t *m = calloc(1, sizeof(*m));
-    if(m)
+    if(m == NULL)
+        return NULL;
+
+    m->priv = NULL;
+    m->fcc = fcc;
+    m->cb = *cb;
+    m->obj = obj;
+    if(m->cb.pf_init && m->cb.pf_init(m) != 0)
     {
-        m->fcc = fcc;
-        m->cb = *cb;
-        if(m->cb.pf_init && m->cb.pf_init(m) != 0)
-        {
-            free(m);
-            m = NULL;
-        }
+        free(m);
+        m = NULL;
     }
     return m;
 }

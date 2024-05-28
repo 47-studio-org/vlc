@@ -26,10 +26,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class VLCImageView;
 @class VLCTrackingView;
-@class VLCMediaLibraryMediaItem;
+@protocol VLCMediaLibraryItemProtocol;
 @class VLCInputItem;
 
 @interface VLCLibraryTableCellView : NSTableCellView
+
++ (instancetype)fromNibWithOwner:(id)owner;
 
 @property (readwrite, assign) IBOutlet VLCTrackingView *trackingView;
 @property (readwrite, assign) IBOutlet NSTextField *singlePrimaryTitleTextField;
@@ -37,8 +39,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readwrite, assign) IBOutlet NSTextField *primaryTitleTextField;
 @property (readwrite, assign) IBOutlet VLCImageView *representedImageView;
 @property (readwrite, assign) IBOutlet NSButton *playInstantlyButton;
-@property (readwrite, strong, nonatomic) VLCMediaLibraryMediaItem *representedMediaItem;
+
+@property (readwrite, strong, nonatomic) id<VLCMediaLibraryItemProtocol> representedItem;
 @property (readwrite, strong, nonatomic) VLCInputItem *representedInputItem;
+@property (readwrite, nonatomic) NSUInteger representedVideoLibrarySection;
 
 @end
 

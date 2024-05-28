@@ -23,6 +23,8 @@
 #import "VLCInputItem.h"
 
 #import "main/VLCMain.h"
+
+#import "extensions/NSImage+VLCAdditions.h"
 #import "extensions/NSString+Helpers.h"
 
 #import <vlc_url.h>
@@ -450,6 +452,25 @@ static const struct input_preparser_callbacks_t preparseCallbacks = {
     return nil;
 }
 
+- (NSString*)path
+{
+    if (_vlcInputItem || (_vlcInputItem && _vlcInputItem->b_net)) {
+        char *psz_url = input_item_GetURI(_vlcInputItem);
+        if (!psz_url) {
+            return @"";
+        }
+
+        char *psz_path = vlc_uri2path(psz_url);
+        NSString *path = toNSStr(psz_path);
+        free(psz_url);
+        free(psz_path);
+
+        return path;
+    }
+
+    return @"";
+}
+
 - (vlc_tick_t)duration
 {
     if (_vlcInputItem) {
@@ -571,13 +592,66 @@ static const struct input_preparser_callbacks_t preparseCallbacks = {
     return input_item_WriteMeta(VLC_OBJECT(getIntf()), _vlcInputItem);
 }
 
+- (NSImage*)thumbnailWithSize:(NSSize)size
+{
+    NSImage *image;
+    if (!self.isStream && _vlcInputItem != NULL) {
+        char *psz_url = input_item_GetURI(_vlcInputItem);
+        if (psz_url) {
+            char *psz_path = vlc_uri2path(psz_url);
+            if (psz_path) {
+                NSString *path = toNSStr(psz_path);
+                free(psz_path);
+                image = [NSImage quickLookPreviewForLocalPath:path
+                                                     withSize:size];
+
+                if (!image) {
+                    image = [[NSWorkspace sharedWorkspace] iconForFile:path];
+                    image.size = size;
+                }
+            }
+            free(psz_url);
+        }
+    }
+
+    if (!image) {
+        image = [NSImage imageNamed: @"noart.png"];
+    }
+    return image;
+}
+
+- (void)moveToTrash
+{
+    if (self.isStream) {
+        return;
+    }
+    
+    NSURL *pathUrl = [NSURL URLWithString:self.path];
+    if (pathUrl == nil) {
+        return;
+    }
+
+    [NSFileManager.defaultManager trashItemAtURL:pathUrl
+                                resultingItemURL:nil
+                                           error:nil];
+}
+
+- (void)revealInFinder
+{
+    if (self.isStream) {
+        return;
+    }
+
+    NSURL *pathUrl = [NSURL URLWithString:self.path];
+    if (pathUrl == nil) {
+        return;
+    }
+
+    [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[pathUrl]];
+}
+
 @end
 
-@interface VLCInputNode()
-{
-    struct input_item_node_t *_p_inputNode;
-}
-@end
 
 @implementation VLCInputNode
 
@@ -585,7 +659,11 @@ static const struct input_preparser_callbacks_t preparseCallbacks = {
 {
     self = [super init];
     if (self && p_inputNode != NULL) {
-        _p_inputNode = p_inputNode;
+        _vlcInputItemNode = p_inputNode;
+        
+        if (_vlcInputItemNode->p_item) {
+            _inputItem = [[VLCInputItem alloc] initWithInputItem:_vlcInputItemNode->p_item];
+        }
     }
     return self;
 }
@@ -593,31 +671,23 @@ static const struct input_preparser_callbacks_t preparseCallbacks = {
 - (NSString *)description
 {
     NSString *inputItemName;
-    if (_p_inputNode->p_item)
-        inputItemName = toNSStr(_p_inputNode->p_item->psz_name);
+    if (_vlcInputItemNode->p_item)
+        inputItemName = toNSStr(_vlcInputItemNode->p_item->psz_name);
     else
         inputItemName = @"p_item == nil";
-    return [NSString stringWithFormat:@"%@: node: %p input name: %@, number of children: %i", NSStringFromClass([self class]), _p_inputNode, inputItemName, self.numberOfChildren];
-}
-
-- (VLCInputItem *)inputItem
-{
-    if (_p_inputNode->p_item) {
-        return [[VLCInputItem alloc] initWithInputItem:_p_inputNode->p_item];
-    }
-    return nil;
+    return [NSString stringWithFormat:@"%@: node: %p input name: %@, number of children: %i", NSStringFromClass([self class]),_vlcInputItemNode, inputItemName, self.numberOfChildren];
 }
 
 - (int)numberOfChildren
 {
-    return _p_inputNode->i_children;
+    return _vlcInputItemNode->i_children;
 }
 
 - (NSArray<VLCInputNode *> *)children
 {
-    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:_p_inputNode->i_children];
-    for (int i = 0; i < _p_inputNode->i_children; i++) {
-        VLCInputNode *inputNode = [[VLCInputNode alloc] initWithInputNode:_p_inputNode->pp_children[i]];
+    NSMutableArray *mutableArray = [[NSMutableArray alloc] initWithCapacity:_vlcInputItemNode->i_children];
+    for (int i = 0; i < _vlcInputItemNode->i_children; i++) {
+        VLCInputNode *inputNode = [[VLCInputNode alloc] initWithInputNode:_vlcInputItemNode->pp_children[i]];
         if (inputNode) {
             [mutableArray addObject:inputNode];
         }

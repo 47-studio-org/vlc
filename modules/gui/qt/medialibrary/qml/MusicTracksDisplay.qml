@@ -27,10 +27,26 @@ import "qrc:///main/" as MainInterface
 FocusScope {
     id: root
 
-    property alias sortModel: tracklistdisplay_id.sortModel
+    // Properties
+
+    readonly property bool isViewMultiView: false
+
+    property var sortModel: [
+        { text: I18n.qtr("Title"),    criteria: "title"},
+        { text: I18n.qtr("Album"),    criteria: "album_title" },
+        { text: I18n.qtr("Artist"),   criteria: "main_artist" },
+        { text: I18n.qtr("Duration"), criteria: "duration" },
+        { text: I18n.qtr("Track"),    criteria: "track_number" },
+        { text: I18n.qtr("Disc"),     criteria: "disc_number" }
+    ]
+
+    // Aliases
+
+    property alias leftPadding: tracklistdisplay_id.leftPadding
+    property alias rightPadding: tracklistdisplay_id.rightPadding
+
     property alias model: tracklistdisplay_id.model
     property alias selectionModel: tracklistdisplay_id.selectionDelegateModel
-    readonly property bool isViewMultiView: false
 
     function setCurrentItemFocus(reason) {
         tracklistdisplay_id.setCurrentItemFocus(reason);
@@ -40,6 +56,7 @@ FocusScope {
         id: tracklistdisplay_id
 
         anchors.fill: parent
+
         visible: model.count > 0
         focus: model.count > 0
         headerTopPadding: VLCStyle.margin_normal
@@ -50,14 +67,16 @@ FocusScope {
             else
                 tracklistdisplay_id.currentIndex = 0;
         }
-        displayMarginEnd: miniPlayer.height // to get blur effect while scrolling in mainview
+
+        // To get blur effect while scrolling in mainview
+        displayMarginEnd: g_mainDisplay.displayMargin
     }
 
     EmptyLabelButton {
         anchors.fill: parent
-        visible: tracklistdisplay_id.model.count === 0
-        focus: tracklistdisplay_id.model.count === 0
-        text: I18n.qtr("No tracks found\nPlease try adding sources, by going to the Network tab")
+        visible: tracklistdisplay_id.model.isReady && (tracklistdisplay_id.model.count <= 0)
+        focus: visible
+        text: I18n.qtr("No tracks found\nPlease try adding sources, by going to the Browse tab")
         Navigation.parentItem: root
         cover: VLCStyle.noArtAlbumCover
     }

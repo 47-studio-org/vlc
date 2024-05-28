@@ -33,12 +33,15 @@
 
 #include <vlc_common.h>
 #include <vlc_charset.h>
+#include <vlc_es.h>
+#include <vlc_frame.h>
 #include <vlc_plugin.h>
 #include <vlc_window.h>
 #include <vlc_mouse.h>
 #include <vlc_actions.h>
 
 #include <shellapi.h>                                         /* ExtractIcon */
+#include "../wasync_resize_compressor.h"
 
 #define RECTWidth(r)   (LONG)((r).right - (r).left)
 #define RECTHeight(r)  (LONG)((r).bottom - (r).top)
@@ -55,8 +58,12 @@ typedef struct vout_window_sys_t
 
     HWND hwnd;
 
+    HMONITOR monitor; /* last monitor associated with window */
     WCHAR class_main[256];
     HICON vlc_icon;
+
+    /* icc profile */
+    char *icc_profile;
 
     /* mouse */
     unsigned button_pressed;
@@ -74,6 +81,9 @@ typedef struct vout_window_sys_t
 
     /* Title */
     wchar_t *_Atomic pwz_title;
+
+    vlc_wasync_resize_compressor_t compressor;
+
 } vout_window_sys_t;
 
 
@@ -238,6 +248,78 @@ static void MouseReleased( vlc_window_t *wnd, unsigned button )
     vlc_window_ReportMouseReleased(wnd, button);
 }
 
+#define MAX_ICC_FILE_SIZE  (100*1024*1024)
+
+static void UpdateICCProfile(vlc_window_t *wnd, const wchar_t *pathw)
+{
+    vout_window_sys_t *sys = wnd->sys;
+    vlc_icc_profile_t *icc = NULL;
+
+    if (!pathw) {
+        /* Profile cleared */
+        if (sys->icc_profile) {
+            free(sys->icc_profile);
+            sys->icc_profile = NULL;
+            vlc_window_ReportICCProfile(wnd, NULL);
+        }
+        return;
+    }
+
+    char *path = FromWide(pathw);
+    if (!path)
+        goto error;
+
+    if (sys->icc_profile && strcmp(path, sys->icc_profile) == 0) {
+        /* No change to profile */
+        free(path);
+        return;
+    }
+
+    free(sys->icc_profile);
+    sys->icc_profile = path;
+
+    /* Open ICC profile */
+    vlc_frame_t *frame = vlc_frame_FilePath(path, false);
+    if (!frame)
+        goto error;
+    vlc_frame_cleanup_push(frame);
+
+    icc = malloc(sizeof(*icc) + frame->i_buffer);
+    if (!icc)
+        goto error;
+
+    icc->size = frame->i_buffer;
+    memcpy(icc->data, frame->p_buffer, icc->size);
+    /* fall through */
+
+error:
+    if (!icc)
+        msg_Err(wnd, "Failed to open ICC profile: %s", path ? path : "(unknown)");
+
+    vlc_cleanup_pop();
+    vlc_window_ReportICCProfile(wnd, icc);
+}
+
+static void MonitorChanged(vlc_window_t *wnd, HMONITOR monitor)
+{
+    MONITORINFOEXW mi = { .cbSize = sizeof(mi) };
+    GetMonitorInfoW(monitor, (LPMONITORINFO) &mi);
+
+    /* Try updating ICC profile */
+    HDC ic = CreateICW(mi.szDevice, NULL, NULL, NULL);
+    if (!ic)
+        return;
+
+    wchar_t iccw[MAX_PATH];
+    if (GetICMProfileW(ic, &(DWORD){ sizeof(iccw) }, iccw)) {
+        UpdateICCProfile(wnd, iccw);
+    } else {
+        UpdateICCProfile(wnd, NULL);
+    }
+
+    DeleteDC(ic);
+}
+
 
 static struct
 {
@@ -318,8 +400,8 @@ static int Win32VoutConvertKey( int i_key )
  * Nonqueued Messages are those that Windows will send directly to this
  * procedure (like WM_DESTROY, WM_WINDOWPOSCHANGED...)
  *****************************************************************************/
-static long FAR PASCAL WinVoutEventProc( HWND hwnd, UINT message,
-                                         WPARAM wParam, LPARAM lParam )
+static LRESULT CALLBACK WinVoutEventProc( HWND hwnd, UINT message,
+                                          WPARAM wParam, LPARAM lParam )
 {
     if( message == WM_CREATE )
     {
@@ -337,22 +419,45 @@ static long FAR PASCAL WinVoutEventProc( HWND hwnd, UINT message,
     switch( message )
     {
     case WM_CLOSE:
+    {
+        vout_window_sys_t *sys = wnd->sys;
+        /* wait for all pending timers */
+        vlc_wasync_resize_compressor_dropOrWait(&sys->compressor);
         vlc_window_ReportClose(wnd);
         break;
-
+    }
     case WM_DESTROY:
         PostQuitMessage(0);
         break;
 
     case WM_SIZE:
-        vlc_window_ReportSize(wnd, LOWORD(lParam), HIWORD(lParam));
+    {
+        vout_window_sys_t *sys = wnd->sys;
+        vlc_wasync_resize_compressor_reportSize(&sys->compressor, LOWORD(lParam), HIWORD(lParam));
         return 0;
-
+    }
     case WM_MOUSEMOVE:
         vlc_window_ReportMouseMoved(wnd, LOWORD(lParam), HIWORD(lParam));
         break;
     case WM_NCMOUSEMOVE:
         break;
+
+    case WM_DISPLAYCHANGE:
+    {
+        vout_window_sys_t *sys = wnd->sys;
+        sys->monitor = NULL;
+    }
+    /* fall through */
+    case WM_MOVE:
+    {
+        vout_window_sys_t *sys = wnd->sys;
+        HMONITOR hmon = MonitorFromWindow(sys->hwnd, MONITOR_DEFAULTTONEAREST);
+        if (hmon != sys->monitor) {
+            sys->monitor = hmon;
+            MonitorChanged(wnd, hmon);
+        }
+        break;
+    }
 
     case WM_CAPTURECHANGED:
     {
@@ -475,6 +580,8 @@ static void Close(vlc_window_t *wnd)
         PostMessage( sys->hwnd, WM_CLOSE, 0, 0 );
     vlc_join(sys->thread, NULL);
     free(atomic_load(&sys->pwz_title));
+
+    vlc_wasync_resize_compressor_destroy(&sys->compressor);
 
     HINSTANCE hInstance = GetModuleHandle(NULL);
     UnregisterClass( sys->class_main, hInstance );
@@ -631,6 +738,10 @@ static void *EventThread( void *p_this )
         return NULL;
     }
 
+    /* Detect starting monitor */
+    sys->monitor = MonitorFromWindow(sys->hwnd, MONITOR_DEFAULTTOPRIMARY);
+    MonitorChanged(wnd, sys->monitor);
+
     /* Append a "Always On Top" entry in the system menu */
     HMENU hMenu = GetSystemMenu( sys->hwnd, FALSE );
     AppendMenu( hMenu, MF_SEPARATOR, 0, TEXT("") );
@@ -705,7 +816,7 @@ static int Open(vlc_window_t *wnd)
     WNDCLASS wc = { 0 };
     /* Fill in the window class structure */
     wc.style         = CS_OWNDC|CS_DBLCLKS;           /* style: dbl click */
-    wc.lpfnWndProc   = (WNDPROC)WinVoutEventProc;        /* event handler */
+    wc.lpfnWndProc   = WinVoutEventProc;                 /* event handler */
     wc.hInstance     = hInstance;                             /* instance */
     wc.hIcon         = sys->vlc_icon;            /* load the vlc big icon */
     wc.lpszClassName = sys->class_main;            /* use a special class */
@@ -721,8 +832,15 @@ static int Open(vlc_window_t *wnd)
         return VLC_EGENERIC;
     }
     vlc_sem_init( &sys->ready, 0 );
-
     wnd->sys = sys;
+
+    if( vlc_wasync_resize_compressor_init( &sys->compressor, wnd ) )
+    {
+        msg_Err( wnd, "Failed to init compressor" );
+        Close(wnd);
+        return VLC_EGENERIC;
+    }
+
     if( vlc_clone( &sys->thread, EventThread, wnd ) )
     {
         Close(wnd);
@@ -737,7 +855,6 @@ static int Open(vlc_window_t *wnd)
         return VLC_EGENERIC;
     }
 
-    wnd->sys = sys;
     wnd->type = VLC_WINDOW_TYPE_HWND;
     wnd->handle.hwnd = sys->hwnd;
     wnd->ops = &ops;

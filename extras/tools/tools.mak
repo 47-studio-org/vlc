@@ -236,23 +236,6 @@ CLEAN_FILE += .buildpkg-config
 CLEAN_PKG += pkgconfig
 DISTCLEAN_PKG += pkg-config-$(PKGCFG_VERSION).tar.gz
 
-# gas-preprocessor
-gas-preprocessor-$(GAS_VERSION).tar.gz:
-	$(call download_pkg,$(GAS_URL),gas-preprocessor)
-
-gas: gas-preprocessor-$(GAS_VERSION).tar.gz
-	$(UNPACK)
-	$(MOVE)
-
-.buildgas: gas
-	mkdir -p $(PREFIX)/bin
-	cp gas/gas-preprocessor.pl $(PREFIX)/bin/
-	touch $@
-
-CLEAN_FILE += .buildgas
-CLEAN_PKG += gas
-DISTCLEAN_PKG += gas-preprocessor-$(GAS_VERSION).tar.gz
-
 # Ragel State Machine Compiler
 ragel-$(RAGEL_VERSION).tar.gz:
 	$(call download_pkg,$(RAGEL_URL),ragel)
@@ -396,6 +379,7 @@ CLEAN_FILE += .buildmeson
 ninja-$(NINJA_VERSION).tar.gz:
 	$(call download_pkg,$(NINJA_URL),ninja)
 
+ninja: UNPACK_DIR=ninja-$(NINJA_BUILD_NAME)
 ninja: ninja-$(NINJA_VERSION).tar.gz
 	$(UNPACK)
 	$(MOVE)

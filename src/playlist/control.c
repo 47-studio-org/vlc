@@ -36,8 +36,9 @@ vlc_playlist_PlaybackOrderChanged(vlc_playlist_t *playlist)
     {
         /* randomizer is expected to be empty at this point */
         assert(randomizer_Count(&playlist->randomizer) == 0);
-        randomizer_Add(&playlist->randomizer, playlist->items.data,
-                       playlist->items.size);
+        if (playlist->items.size)
+            randomizer_Add(&playlist->randomizer, playlist->items.data,
+                           playlist->items.size);
 
         bool loop = playlist->repeat == VLC_PLAYLIST_PLAYBACK_REPEAT_ALL;
         randomizer_SetLoop(&playlist->randomizer, loop);
@@ -205,12 +206,10 @@ vlc_playlist_NormalOrderGetNextIndex(vlc_playlist_t *playlist)
     {
         case VLC_PLAYLIST_PLAYBACK_REPEAT_NONE:
         case VLC_PLAYLIST_PLAYBACK_REPEAT_CURRENT:
-            if (playlist->current >= (ssize_t) playlist->items.size - 1)
-                return -1;
+            assert(playlist->current < (ssize_t) playlist->items.size - 1);
             return playlist->current + 1;
         case VLC_PLAYLIST_PLAYBACK_REPEAT_ALL:
-                if (playlist->items.size == 0)
-                    return -1;
+            assert(playlist->items.size != 0);
             return (playlist->current + 1) % playlist->items.size;
         default:
             vlc_assert_unreachable();
@@ -381,9 +380,7 @@ vlc_playlist_Next(vlc_playlist_t *playlist)
     if (!vlc_playlist_ComputeHasNext(playlist))
         return VLC_EGENERIC;
 
-    ssize_t index = vlc_playlist_GetNextIndex(playlist);
-    assert(index != -1);
-
+    ssize_t index = (ssize_t)vlc_playlist_GetNextIndex(playlist);
     int ret = vlc_playlist_SetCurrentMedia(playlist, index);
     if (ret != VLC_SUCCESS)
         return ret;
@@ -429,7 +426,7 @@ vlc_playlist_GetNextMediaIndex(vlc_playlist_t *playlist)
         return playlist->current;
     if (!vlc_playlist_ComputeHasNext(playlist))
         return -1;
-    return vlc_playlist_GetNextIndex(playlist);
+    return (ssize_t)vlc_playlist_GetNextIndex(playlist);
 }
 
 input_item_t *

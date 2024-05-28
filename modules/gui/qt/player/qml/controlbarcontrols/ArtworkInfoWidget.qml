@@ -19,8 +19,6 @@ import QtQuick 2.11
 import QtQuick.Controls 2.4
 import QtQuick.Layouts 1.11
 
-import QtGraphicalEffects 1.0
-
 import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
@@ -31,8 +29,6 @@ AbstractButton {
     id: artworkInfoItem
 
     property bool paintOnly: false
-
-    property VLCColors colors: VLCStyle.colors
 
     readonly property real minimumWidth: coverRect.implicitWidth +
                                          + (leftPadding + rightPadding)
@@ -68,9 +64,17 @@ AbstractButton {
         g_mainDisplay.showPlayer()
     }
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.ToolButton
+        focused: artworkInfoItem.visualFocus
+        hovered: artworkInfoItem.hovered
+    }
+
     background: Widgets.AnimatedBackground {
         active: visualFocus
-        activeBorderColor: colors.bgFocus
+        animate: theme.initialized
+        activeBorderColor: theme.visualFocus
     }
 
     contentItem: RowLayout {
@@ -82,17 +86,15 @@ AbstractButton {
             implicitHeight: VLCStyle.dp(60, VLCStyle.scale)
             implicitWidth: implicitHeight
 
-            color: colors.bg
+            color: theme.bg.primary
 
             Widgets.DoubleShadow {
                 anchors.fill: parent
 
                 primaryBlurRadius: VLCStyle.dp(3, VLCStyle.scale)
-                primaryColor: Qt.rgba(0, 0, 0, 0.18)
                 primaryVerticalOffset: VLCStyle.dp(1, VLCStyle.scale)
 
                 secondaryBlurRadius: VLCStyle.dp(14, VLCStyle.scale)
-                secondaryColor: Qt.rgba(0, 0, 0, 0.22)
                 secondaryVerticalOffset: VLCStyle.dp(6, VLCStyle.scale)
             }
 
@@ -103,9 +105,9 @@ AbstractButton {
 
                 source: {
                     if (!paintOnly
-                        && mainPlaylistController.currentItem.artwork
-                        && mainPlaylistController.currentItem.artwork.toString())
-                        mainPlaylistController.currentItem.artwork
+                        && Player.artwork
+                        && Player.artwork.toString())
+                        Player.artwork
                     else
                         VLCStyle.noArtAlbumCover
                 }
@@ -120,8 +122,6 @@ AbstractButton {
                 ToolTip.text: I18n.qtr("%1\n%2\n%3").arg(titleLabel.text)
                                                     .arg(artistLabel.text)
                                                     .arg(progressIndicator.text)
-
-                property alias colors: artworkInfoItem.colors
             }
         }
 
@@ -142,9 +142,9 @@ AbstractButton {
                     if (paintOnly)
                         I18n.qtr("Title")
                     else
-                        mainPlaylistController.currentItem.title
+                        Player.title
                 }
-                color: colors.text
+                color: theme.fg.primary
             }
 
             Widgets.MenuCaption {
@@ -157,9 +157,9 @@ AbstractButton {
                     if (paintOnly)
                         I18n.qtr("Artist")
                     else
-                        mainPlaylistController.currentItem.artist
+                        Player.artist
                 }
-                color: colors.menuCaption
+                color: theme.fg.secondary
             }
 
             Widgets.MenuCaption {
@@ -172,9 +172,9 @@ AbstractButton {
                     if (paintOnly)
                         " -- / -- "
                     else
-                        Player.time.toString() + " / " + Player.length.toString()
+                        Player.time.formatHMS() + " / " + Player.length.formatHMS()
                 }
-                color: colors.menuCaption
+                color: theme.fg.secondary
             }
         }
     }

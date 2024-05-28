@@ -17,6 +17,7 @@
  *****************************************************************************/
 import QtQuick 2.11
 import QtQuick.Controls 2.4
+import QtQuick.Templates 2.4 as T
 import QtQuick.Layouts 1.11
 import QtGraphicalEffects 1.0
 
@@ -25,16 +26,15 @@ import org.videolan.vlc 0.1
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
 
-FocusScope {
+T.Pane {
     id: root
 
-    implicitHeight: controlBar.implicitHeight
     height: 0
 
-    visible: false
+    implicitWidth: Math.max(background ? background.implicitWidth : 0, contentItem.implicitWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(background ? background.implicitHeight : 0, contentItem.implicitHeight + topPadding + bottomPadding)
 
-    property alias effectSource: effect.source
-    property alias effectSourceRect: effect.sourceRect
+    visible: false
 
     state: (Player.playingState === Player.PLAYING_STATE_STOPPED) ? ""
                                                                   : "expanded"
@@ -60,6 +60,11 @@ FocusScope {
         }
     }
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Window
+    }
+
     // this MouseArea prevents mouse events to be sent below miniplayer
     MouseArea {
         anchors.fill: parent
@@ -67,32 +72,20 @@ FocusScope {
         acceptedButtons: Qt.AllButtons
     }
 
-    Widgets.FrostedGlassEffect {
-        id: effect
-        anchors.fill: parent
-
-        tint: VLCStyle.colors.lowerBanner
+    background: Rectangle {
+        color: theme.bg.primary
     }
 
-    ControlBar {
-        id: controlBar
-
-        anchors.fill: parent
-
-        rightPadding: VLCStyle.applicationHorizontalMargin
-        leftPadding: rightPadding
-        bottomPadding: VLCStyle.applicationVerticalMargin
-
+    contentItem: ControlBar {
         focus: true
-        colors: VLCStyle.colors
         textPosition: ControlBar.TimeTextPosition.Hide
         sliderHeight: VLCStyle.dp(3, VLCStyle.scale)
-        sliderBackgroundColor: colors.sliderBarMiniplayerBgColor
+        bookmarksHeight: VLCStyle.icon_xsmall * 0.7
         identifier: PlayerControlbarModel.Miniplayer
         Navigation.parentItem: root
 
         Keys.onPressed: {
-            controlBar.Navigation.defaultKeyAction(event)
+            Navigation.defaultKeyAction(event)
 
             if (!event.accepted) {
                 MainCtx.sendHotkey(event.key, event.modifiers)

@@ -79,6 +79,16 @@ vlc_module_begin ()
 vlc_module_end ()
 
 /*****************************************************************************
+ *
+ *****************************************************************************/
+static void PrepareDecoderDiscontinuityGlitch( decoder_sys_t *p_sys )
+{
+    mad_frame_mute( &p_sys->mad_frame );
+    mad_synth_mute( &p_sys->mad_synth );
+    p_sys->i_reject_count = 3;
+}
+
+/*****************************************************************************
  * DecodeBlock: decode an MPEG audio frame.
  *****************************************************************************/
 static block_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block )
@@ -133,24 +143,29 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block )
 
     mad_stream_buffer( &p_sys->mad_stream, p_last_buf->p_buffer,
                        p_last_buf->i_buffer );
+
     /* Do the actual decoding now (ignore EOF error when draining). */
     if ( mad_frame_decode( &p_sys->mad_frame, &p_sys->mad_stream ) == -1
+         && p_sys->i_reject_count == 0
      && ( pp_block != NULL || p_sys->mad_stream.error != MAD_ERROR_BUFLEN ) )
     {
         msg_Err( p_dec, "libmad error: %s",
                   mad_stream_errorstr( &p_sys->mad_stream ) );
         if( !MAD_RECOVERABLE( p_sys->mad_stream.error ) )
-            p_sys->i_reject_count = 3;
+            PrepareDecoderDiscontinuityGlitch( p_sys );
     }
     else if( p_last_buf->i_flags & BLOCK_FLAG_DISCONTINUITY )
     {
-        p_sys->i_reject_count = 3;
+        PrepareDecoderDiscontinuityGlitch( p_sys );
     }
 
-    if( p_sys->i_reject_count > 0 )
+    if( p_sys->i_reject_count > 1 )
         goto reject;
 
     mad_synth_frame( &p_sys->mad_synth, &p_sys->mad_frame );
+
+    if( p_sys->i_reject_count > 0 )
+        goto reject;
 
     struct mad_pcm * p_pcm = &p_sys->mad_synth.pcm;
     unsigned int i_samples = p_pcm->length;
@@ -168,7 +183,7 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block )
     {
         msg_Err( p_dec, "wrong channels count (corrupt stream?): %u > %u",
                  p_pcm->channels, p_dec->fmt_out.audio.i_channels);
-        p_sys->i_reject_count = 3;
+        PrepareDecoderDiscontinuityGlitch( p_sys );
         goto reject;
     }
 
@@ -176,7 +191,7 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block )
     {
         msg_Err( p_dec, "unexpected samples count (corrupt stream?): "
                  "%u / %u", i_samples, p_out_buf->i_nb_samples );
-        p_sys->i_reject_count = 3;
+        PrepareDecoderDiscontinuityGlitch( p_sys );
         goto reject;
     }
 
@@ -232,6 +247,8 @@ static void DecodeFlush( decoder_t *p_dec )
     if( p_sys->p_last_buf )
         block_Release( p_sys->p_last_buf );
     p_sys->p_last_buf = NULL;
+
+    PrepareDecoderDiscontinuityGlitch( p_sys );
 }
 
 /*****************************************************************************
@@ -242,13 +259,13 @@ static int Open( vlc_object_t *p_this )
     decoder_t *p_dec = (decoder_t *)p_this;
     decoder_sys_t *p_sys;
 
-    if( ( p_dec->fmt_in.i_codec != VLC_CODEC_MPGA
-     && p_dec->fmt_in.i_codec != VLC_CODEC_MP3
-     && p_dec->fmt_in.i_codec != VLC_FOURCC('m','p','g','3') )
-     || p_dec->fmt_in.audio.i_rate == 0
-     || p_dec->fmt_in.audio.i_physical_channels == 0
-     || p_dec->fmt_in.audio.i_bytes_per_frame == 0
-     || p_dec->fmt_in.audio.i_frame_length == 0 )
+    if( ( p_dec->fmt_in->i_codec != VLC_CODEC_MPGA
+     && p_dec->fmt_in->i_codec != VLC_CODEC_MP3
+     && p_dec->fmt_in->i_codec != VLC_FOURCC('m','p','g','3') )
+     || p_dec->fmt_in->audio.i_rate == 0
+     || p_dec->fmt_in->audio.i_physical_channels == 0
+     || p_dec->fmt_in->audio.i_bytes_per_frame == 0
+     || p_dec->fmt_in->audio.i_frame_length == 0 )
         return VLC_EGENERIC;
 
     /* Allocate the memory needed to store the module's structure */
@@ -264,7 +281,7 @@ static int Open( vlc_object_t *p_this )
     mad_synth_init( &p_sys->mad_synth );
     mad_stream_options( &p_sys->mad_stream, MAD_OPTION_IGNORECRC );
 
-    p_dec->fmt_out.audio = p_dec->fmt_in.audio;
+    p_dec->fmt_out.audio = p_dec->fmt_in->audio;
     p_dec->fmt_out.audio.i_format = VLC_CODEC_FL32;
     p_dec->fmt_out.i_codec = p_dec->fmt_out.audio.i_format;
 

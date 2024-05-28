@@ -19,7 +19,11 @@ taglib: taglib-$(TAGLIB_VERSION).tar.gz .sum-taglib
 	$(APPLY) $(SRC)/taglib/0001-FileTypeResolver-Fix-IOStream-usage-with-custom-reso.patch
 	$(MOVE)
 
+TAGLIB_CONF := -DBUILD_BINDINGS=OFF
+
 .taglib: taglib toolchain.cmake
-	cd $< && $(HOSTVARS_PIC) $(CMAKE) .
-	+$(CMAKEBUILD) $< --target install
+	$(CMAKECLEAN)
+	$(HOSTVARS) $(CMAKE) $(TAGLIB_CONF)
+	+$(CMAKEBUILD)
+	$(CMAKEINSTALL)
 	touch $@

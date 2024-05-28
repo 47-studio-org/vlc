@@ -33,16 +33,11 @@
 
 #include <qconfig.h>
 
-#ifdef QT_STATIC
-#define QT_STATICPLUGIN
-#endif
-
 #define QT_NO_CAST_TO_ASCII
 #include <QString>
 
-#if ( QT_VERSION < QT_VERSION_CHECK(5, 11, 0) )
-# error Update your Qt version to at least 5.11.0
-#endif
+static_assert (QT_VERSION >= QT_VERSION_CHECK(5, 11, 0),
+               "Update your Qt version to at least 5.11.0");
 
 #if ( QT_VERSION < QT_VERSION_CHECK(5, 15, 0) )
 # define QSIGNALMAPPER_MAPPEDINT_SIGNAL QOverload<int>::of(&QSignalMapper::mapped)
@@ -156,20 +151,9 @@ struct vlc_player_locker {
 
 #define BUTTONACT( b, a ) connect( b, &QAbstractButton::clicked, this, a )
 
-#define BUTTON_SET( button, text, tooltip )  \
-    button->setText( text );                 \
-    button->setToolTip( tooltip );
-
 #define BUTTON_SET_ACT( button, text, tooltip, thisslot ) \
-    BUTTON_SET( button, text, tooltip );                  \
-    BUTTONACT( button, thisslot );
-
-#define BUTTON_SET_IMG( button, text, image, tooltip )    \
-    BUTTON_SET( button, text, tooltip );                  \
-    button->setIcon( QIcon( ":/"#image ".svg") );
-
-#define BUTTON_SET_ACT_I( button, text, image, tooltip, thisslot ) \
-    BUTTON_SET_IMG( button, text, image, tooltip );                \
+    button->setText( text );       \
+    button->setToolTip( tooltip ); \
     BUTTONACT( button, thisslot );
 
 #define getSettings() p_intf->mainSettings

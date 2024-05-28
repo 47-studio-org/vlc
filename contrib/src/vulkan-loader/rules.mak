@@ -1,5 +1,5 @@
 VULKAN_LOADER_VERSION := 1.3.211
-VULKAN_LOADER_URL := https://github.com/KhronosGroup/Vulkan-Loader/archive/v$(VULKAN_LOADER_VERSION).tar.gz
+VULKAN_LOADER_URL := $(GITHUB)/KhronosGroup/Vulkan-Loader/archive/v$(VULKAN_LOADER_VERSION).tar.gz
 
 DEPS_vulkan-loader = vulkan-headers $(DEPS_vulkan-headers)
 
@@ -46,6 +46,7 @@ vulkan-loader: Vulkan-Loader-$(VULKAN_LOADER_VERSION).tar.gz .sum-vulkan-loader
 ifeq ($(HOST),i686-w64-mingw32)
 	cp -v $(SRC)/vulkan-loader/libvulkan-32.def $(UNPACK_DIR)/loader/vulkan-1.def
 endif
+	$(call pkg_static,"loader/vulkan.pc.in")
 	$(MOVE)
 
 # Needed for the loader's cmake script to find the registry files
@@ -53,17 +54,16 @@ VULKAN_LOADER_ENV_CONF = \
 	VULKAN_HEADERS_INSTALL_DIR="$(PREFIX)"
 
 .vulkan-loader: vulkan-loader toolchain.cmake
-	cd $< && rm -rf ./build && mkdir -p build
-	cd $</build && $(VULKAN_LOADER_ENV_CONF) $(HOSTVARS) \
-		$(CMAKE) $(VULKAN_LOADER_CONF) ..
-	cd $</build && $(CMAKEBUILD) .
+	$(CMAKECLEAN)
+	$(VULKAN_LOADER_ENV_CONF) $(HOSTVARS) $(CMAKE) $(VULKAN_LOADER_CONF)
+	+$(CMAKEBUILD)
 
 ifdef HAVE_WIN32
 # CMake will generate a .pc file with -lvulkan even if the static library
 # generated is libvulkan.dll.a. It also forget to link with libcfgmgr32.
-	cd $< && sed -i.orig -e "s,-lvulkan,-lvulkan.dll -lcfgmgr32," build/loader/vulkan.pc
+	sed -i.orig -e "s,-lvulkan,-lvulkan.dll -lcfgmgr32," $(BUILD_DIR)/loader/vulkan.pc
 endif
 
-	$(call pkg_static,"build/loader/vulkan.pc")
-	+$(CMAKEBUILD) $</build --target install
+	+$(CMAKEBUILD)
+	$(CMAKEINSTALL)
 	touch $@

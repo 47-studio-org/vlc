@@ -172,10 +172,6 @@ static int getDefaultAudioVolume(const char *aout)
         return (config_GetFloat("auhal-volume") * 100.f + .5f)
                  / AOUT_VOLUME_DEFAULT;
 #endif
-#ifdef _WIN32
-    if (!strcmp(aout, "directsound") && module_exists("directsound"))
-        return config_GetFloat("directx-volume") * 100.f + .5f;
-#endif
 
     if (!strcmp(aout, "jack"))
         return cbrtf(config_GetFloat("jack-gain")) * 100.f + 0.5f;
@@ -257,7 +253,7 @@ SPrefsCatList::SPrefsCatList( qt_intf_t *_p_intf, QWidget *_parent ) :
     QToolButton * button = new QToolButton( this );                         \
     /* Scale icon to non native size outside of toolbutton to avoid widget size */\
     /* computation using native size */\
-    scaled = QPixmap( ":/prefsmenu/" #icon ".png" )\
+    scaled = QPixmap( icon )\
              .scaledToHeight( ICON_HEIGHT * dpr, Qt::SmoothTransformation );\
     scaled.setDevicePixelRatio( dpr ); \
     button->setIcon( scaled );                \
@@ -274,18 +270,18 @@ SPrefsCatList::SPrefsCatList( qt_intf_t *_p_intf, QWidget *_parent ) :
     mapper->setMapping( button, numb );                                     \
     layout->addWidget( button );
 
-    ADD_CATEGORY( SPrefsInterface, qfut(INTF_TITLE), qfut(INTF_TOOLTIP), cone_interface_64, 0 );
-    ADD_CATEGORY( SPrefsAudio, qfut(AUDIO_TITLE), qfut(AUDIO_TOOLTIP), cone_audio_64, 1 );
-    ADD_CATEGORY( SPrefsVideo, qfut(VIDEO_TITLE), qfut(VIDEO_TOOLTIP), cone_video_64, 2 );
-    ADD_CATEGORY( SPrefsSubtitles, qfut(SUBPIC_TITLE), qfut(SUBPIC_TOOLTIP), cone_subtitles_64, 3 );
-    ADD_CATEGORY( SPrefsInputAndCodecs, qfut(INPUT_TITLE), qfut(INPUT_TOOLTIP), cone_input_64, 4 );
-    ADD_CATEGORY( SPrefsHotkeys, qfut(HOTKEYS_TITLE), qfut(HOTKEYS_TOOLTIP), cone_hotkeys_64, 5 );
-    ADD_CATEGORY( SPrefsMediaLibrary, qfut(ML_TITLE), qfut(ML_TOOLTIP), cone_medialibrary_64, 6 );
+    ADD_CATEGORY( SPrefsInterface, qfut(INTF_TITLE), qfut(INTF_TOOLTIP), ":/prefsmenu/spref_interface.png" , 0 );
+    ADD_CATEGORY( SPrefsAudio, qfut(AUDIO_TITLE), qfut(AUDIO_TOOLTIP), ":/prefsmenu/spref_audio.png", 1 );
+    ADD_CATEGORY( SPrefsVideo, qfut(VIDEO_TITLE), qfut(VIDEO_TOOLTIP), ":/prefsmenu/spref_video.png", 2 );
+    ADD_CATEGORY( SPrefsSubtitles, qfut(SUBPIC_TITLE), qfut(SUBPIC_TOOLTIP), ":/prefsmenu/spref_subtitles.png", 3 );
+    ADD_CATEGORY( SPrefsInputAndCodecs, qfut(INPUT_TITLE), qfut(INPUT_TOOLTIP), ":/prefsmenu/spref_input.png", 4 );
+    ADD_CATEGORY( SPrefsHotkeys, qfut(HOTKEYS_TITLE), qfut(HOTKEYS_TOOLTIP), ":/prefsmenu/spref_hotkeys.png", 5 );
+    ADD_CATEGORY( SPrefsMediaLibrary, qfut(ML_TITLE), qfut(ML_TOOLTIP), ":/prefsmenu/spref_medialibrary.png", 6 );
 
 #undef ADD_CATEGORY
 
     SPrefsInterface->setChecked( true );
-    layout->setMargin( 0 );
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing( 1 );
 
     setSizePolicy(QSizePolicy::MinimumExpanding,QSizePolicy::Preferred);
@@ -375,7 +371,7 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
 
     QVBoxLayout *panel_layout = new QVBoxLayout();
     QWidget *panel = new QWidget();
-    panel_layout->setMargin( 3 );
+    panel_layout->setContentsMargins(3, 3, 3, 3);
 
     // Title Label
     QLabel *panel_label = new QLabel;
@@ -671,7 +667,7 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
                 free( dvd_discpath );
                 free( vcd_discpath );
             }
-#ifndef _WIN32
+#if !defined( _WIN32 ) && !defined( __OS2__)
             QStringList DVDDeviceComboBoxStringList = QStringList();
             DVDDeviceComboBoxStringList
                     << "dvd*" << "scd*" << "sr*" << "sg*" << "cd*";
@@ -851,6 +847,7 @@ SPrefsPanel::SPrefsPanel( qt_intf_t *_p_intf, QWidget *_parent,
 
 
             CONFIG_BOOL( "qt-pin-controls", pinVideoControlsCheckbox );
+            m_resetters.push_back(std::make_unique<PropertyResetter>(ui.pinVideoControlsCheckbox, "checked"));
             QObject::connect( ui.pinVideoControlsCheckbox, &QCheckBox::stateChanged, p_intf->p_mi, &MainCtx::setPinVideoControls );
 
             ui.colorSchemeComboBox->setModel( p_intf->p_mi->getColorScheme() );
@@ -1100,8 +1097,6 @@ void SPrefsPanel::updateAudioOptions( int number )
     optionWidgets["mmdeviceW"]->setVisible( mmDeviceEnabled );
     optionWidgets["mmdeviceL"]->setVisible( mmDeviceEnabled );
 
-    optionWidgets["directxW"]->setVisible( ( value == "directsound" ) );
-    optionWidgets["directxL"]->setVisible( ( value == "directsound" ) );
     optionWidgets["waveoutW"]->setVisible( ( value == "waveout" ) );
     optionWidgets["waveoutL"]->setVisible( ( value == "waveout" ) );
 #elif defined( __OS2__ )
@@ -1122,7 +1117,7 @@ void SPrefsPanel::updateAudioOptions( int number )
 #endif
     optionWidgets["fileW"]->setVisible( ( value == "afile" ) );
     optionWidgets["spdifChB"]->setVisible( ( value == "alsa" || value == "oss" || value == "auhal" ||
-                                           value == "directsound" || value == "waveout" ) );
+                                             value == "waveout" ) );
 
     int volume = getDefaultAudioVolume(qtu(value));
     bool save = true;
@@ -1252,8 +1247,6 @@ void SPrefsPanel::apply()
         VLC_UNUSED( f_gain );
         if( save_vol_aout( "mmdevice" ) )
             config_PutFloat( "mmdevice-volume", i_volume / 100.f );
-        if( save_vol_aout( "directsound" ) )
-            config_PutFloat( "directx-volume", i_volume / 100.f );
         if( save_vol_aout( "waveout" ) )
             config_PutFloat( "waveout-volume", i_volume / 100.f );
 #elif defined( Q_OS_MAC )

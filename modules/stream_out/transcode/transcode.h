@@ -65,7 +65,11 @@ typedef struct
     /* Spu's video */
     sout_stream_id_sys_t *id_video;
 
+    bool pcr_forwarding_enabled;
     vlc_pcr_sync_t *pcr_sync;
+    bool first_pcr_sent;
+    bool pcr_sync_has_input;
+    unsigned int transcoded_stream_nb;
 } sout_stream_sys_t;
 
 struct aout_filters;
@@ -156,6 +160,7 @@ struct sout_stream_id_sys_t
 struct decoder_owner
 {
     decoder_t dec;
+    es_format_t fmt_in;
     sout_stream_t *p_stream;
     sout_stream_id_sys_t *id;
 };
@@ -163,6 +168,16 @@ struct decoder_owner
 static inline struct decoder_owner *dec_get_owner( decoder_t *p_dec )
 {
     return container_of( p_dec, struct decoder_owner, dec );
+}
+
+static inline void dec_Delete( decoder_t *p_dec )
+{
+    if( p_dec == NULL )
+        return;
+
+    struct decoder_owner *p_owner = dec_get_owner( p_dec );
+    es_format_Clean( &p_owner->fmt_in );
+    decoder_Destroy( p_dec );
 }
 
 static inline void es_format_SetMeta( es_format_t *p_dst, const es_format_t *p_src )

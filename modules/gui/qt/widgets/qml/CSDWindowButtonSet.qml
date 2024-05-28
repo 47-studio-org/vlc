@@ -28,41 +28,81 @@ Row {
     spacing: 0
     padding: 0
 
-    property color color: VLCStyle.colors.text
-    property color hoverColor: VLCStyle.colors.windowCSDButtonBg
+    width: implicitWidth
 
-    property bool hovered: minimizeButton.hovered || maximizeButton.hovered || closeButton.hovered
+    property color color: theme.fg.primary
+    property color hoverColor: VLCStyle.setColorAlpha(theme.bg.primary, 0.5)
 
-    CSDWindowButton {
-        id: minimizeButton
-        iconTxt: VLCIcons.window_minimize
-        onClicked: MainCtx.requestInterfaceMinimized()
-        height: windowButtonGroup.height
-        color: windowButtonGroup.color
-        hoverColor: windowButtonGroup.hoverColor
+    readonly property bool hovered: {
+        var h = false
+        for (var i = 0; i < repeater.count; ++i) {
+            var button = repeater.itemAt(i)
+            h = h || button.hovered || button.showHovered
+        }
+
+        return h
     }
 
-    CSDWindowButton {
-        id: maximizeButton
-        iconTxt: (MainCtx.intfMainWindow.visibility === Window.Maximized)  ? VLCIcons.window_restore :VLCIcons.window_maximize
-        onClicked: {
-            if (MainCtx.intfMainWindow.visibility === Window.Maximized) {
-                MainCtx.requestInterfaceNormal()
-            } else {
-                MainCtx.requestInterfaceMaximized()
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Window
+    }
+
+    Repeater {
+        id: repeater
+
+        model: MainCtx.csdButtonModel.windowCSDButtons
+
+        CSDWindowButton {
+            height: windowButtonGroup.height
+
+            showHovered: modelData.showHovered
+
+            color: (modelData.type === CSDButton.Close && (hovered || modelData.showHovered))
+                   ? "white"
+                   : windowButtonGroup.color
+
+            hoverColor: (modelData.type === CSDButton.Close) ? "red" : windowButtonGroup.hoverColor
+
+            isThemeDark: theme.palette.isDark
+
+            iconTxt: {
+                switch (modelData.type) {
+                case CSDButton.Minimize:
+                    return VLCIcons.window_minimize
+
+                case CSDButton.MaximizeRestore:
+                    return (MainCtx.intfMainWindow.visibility === Window.Maximized)
+                            ? VLCIcons.window_restore
+                            : VLCIcons.window_maximize
+
+                case CSDButton.Close:
+                    return VLCIcons.window_close
+                }
+
+                console.assert(false, "unreachable")
+            }
+
+            onClicked: modelData.click()
+
+            // handles VLCStyle.scale changes
+            onWidthChanged: Qt.callLater(updateRect)
+            onHeightChanged: Qt.callLater(updateRect)
+
+            Connections {
+                target: VLCStyle.self
+
+                // handle window resize
+                onAppWidthChanged: Qt.callLater(updateRect)
+                onAppHeightChanged: Qt.callLater(updateRect)
+            }
+
+            function updateRect() {
+                var point = mapToItem(null, 0, 0)
+                var rect = Qt.rect(point.x, point.y, width, height)
+
+                modelData.rect = rect
             }
         }
-        height: windowButtonGroup.height
-        color: windowButtonGroup.color
-        hoverColor: windowButtonGroup.hoverColor
-    }
-
-    CSDWindowButton {
-        id: closeButton
-        iconTxt: VLCIcons.window_close
-        onClicked: MainCtx.intfMainWindow.close()
-        height: windowButtonGroup.height
-        color: closeButton.hovered ? "white" : windowButtonGroup.color
-        hoverColor: "red"
     }
 }

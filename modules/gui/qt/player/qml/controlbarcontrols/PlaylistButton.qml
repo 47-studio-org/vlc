@@ -25,7 +25,6 @@ import "qrc:///style/"
 
 Widgets.IconControlButton {
     id: playlistBtn
-    size: VLCStyle.icon_medium
     iconText: VLCIcons.playlist
     onClicked: {
         MainCtx.playlistVisible = !MainCtx.playlistVisible
@@ -33,6 +32,7 @@ Widgets.IconControlButton {
             playlistWidget.gainFocus(playlistBtn)
         }
     }
+    checked: MainCtx.playlistVisible
 
     text: I18n.qtr("Playlist")
 }

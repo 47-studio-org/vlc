@@ -10,6 +10,8 @@ SRC_BUILT := $(TOPSRC_BUILT)/src
 TARBALLS := $(TOPSRC)/tarballs
 VLC_TOOLS ?= $(TOPSRC)/../extras/tools/build
 
+CMAKE_GENERATOR ?= Ninja
+
 PATH :=$(abspath $(VLC_TOOLS)/bin):$(PATH)
 export PATH
 
@@ -19,11 +21,14 @@ VPATH := $(TARBALLS)
 
 # Common download locations
 GNU ?= http://ftp.gnu.org/gnu
-SF := https://netcologne.dl.sourceforge.net/
+SF := https://downloads.sourceforge.net/project
 VIDEOLAN := http://downloads.videolan.org/pub/videolan
 CONTRIB_VIDEOLAN := http://downloads.videolan.org/pub/contrib
-GITHUB := https://github.com/
+VIDEOLAN_GIT := https://git.videolan.org/git
+GITHUB := https://github.com
 GOOGLE_CODE := https://storage.googleapis.com/google-code-archive-downloads/v2/code.google.com
+QT := https://download.qt.io/official_releases/qt
+XIPH := https://ftp.osuosl.org/pub/xiph/releases
 
 #
 # Machine-dependent variables
@@ -31,7 +36,7 @@ GOOGLE_CODE := https://storage.googleapis.com/google-code-archive-downloads/v2/c
 
 PREFIX ?= $(TOPDST)/$(HOST)
 PREFIX := $(abspath $(PREFIX))
-BUILDPREFIX ?= $(TOPDST)
+BUILDPREFIX ?= $(PREFIX)/..
 BUILDPREFIX := $(abspath $(BUILDPREFIX))
 BUILDBINDIR ?= $(BUILDPREFIX)/bin
 ifneq ($(HOST),$(BUILD))
@@ -118,13 +123,6 @@ endif
 
 CCAS=$(CC) -c
 
-ifdef HAVE_IOS
-ifdef HAVE_NEON
-AS=perl $(abspath $(VLC_TOOLS)/bin/gas-preprocessor.pl) $(CC)
-CCAS=gas-preprocessor.pl $(CC) -c
-endif
-endif
-
 LN_S = ln -s
 ifdef HAVE_WIN32
 MINGW_W64_VERSION := $(shell echo "__MINGW64_VERSION_MAJOR" | $(CC) $(CFLAGS) -E -include _mingw.h - | tail -n 1)
@@ -132,7 +130,6 @@ ifneq ($(MINGW_W64_VERSION),)
 HAVE_MINGW_W64 := 1
 mingw_at_least = $(shell [ $(MINGW_W64_VERSION) -gt $(1) ] && echo true)
 endif
-HAVE_WINPTHREAD := $(shell $(CC) $(CFLAGS) -E -dM -include pthread.h - < /dev/null >/dev/null 2>&1 || echo FAIL)
 ifndef HAVE_CROSS_COMPILE
 LN_S = cp -R
 endif
@@ -157,7 +154,7 @@ ifneq ($(findstring clang, $(shell $(CC) --version 2>/dev/null)),)
 HAVE_CLANG := 1
 endif
 
-cppcheck = $(shell $(CC) $(CFLAGS) -E -dM - < /dev/null | grep -E $(1))
+cppcheck = $(shell printf '$(2)' | $(CC) $(CFLAGS) -E -dM - 2>/dev/null | grep -E $(1))
 
 EXTRA_CFLAGS += -I$(PREFIX)/include
 CPPFLAGS := $(CPPFLAGS) $(EXTRA_CFLAGS)
@@ -253,9 +250,6 @@ endif # HAVE_CROSS_COMPILE
 PKG_CONFIG ?= pkg-config
 
 PKG_CONFIG_PATH := $(PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)
-ifeq ($(findstring mingw32,$(BUILD)),mingw32)
-PKG_CONFIG_PATH := $(shell cygpath -pm ${PKG_CONFIG_PATH})
-endif
 export PKG_CONFIG_PATH
 
 ifndef GIT
@@ -327,16 +321,12 @@ PIC := -fPIC
 endif
 
 HOSTTOOLS := \
-	CC="$(CC)" CXX="$(CXX)" LD="$(LD)" \
+	CC="$(CC)" CXX="$(CXX)" OBJC="$(OBJC)" LD="$(LD)" \
 	AR="$(AR)" CCAS="$(CCAS)" RANLIB="$(RANLIB)" STRIP="$(STRIP)" \
 	PATH="$(PREFIX)/bin:$(PATH)" \
 	PKG_CONFIG="$(PKG_CONFIG)"
 
-HOSTVARS_MESON := $(HOSTTOOLS) \
-	CPPFLAGS="$(CPPFLAGS)" \
-	CFLAGS="$(CFLAGS)" \
-	CXXFLAGS="$(CXXFLAGS)" \
-	LDFLAGS="$(LDFLAGS)"
+HOSTVARS_MESON := $(HOSTTOOLS)
 
 # Add these flags after Meson consumed the CFLAGS/CXXFLAGS
 # as when setting those for Meson, it would apply to tests
@@ -368,6 +358,7 @@ HOSTVARS_PIC := $(HOSTTOOLS) \
 
 BUILDCOMMONCONF := --disable-dependency-tracking
 BUILDCOMMONCONF += --prefix="$(BUILDPREFIX)"
+BUILDCOMMONCONF += --bindir="$(BUILDBINDIR)"
 BUILDCOMMONCONF += --datarootdir="$(BUILDPREFIX)/share"
 BUILDCOMMONCONF += --includedir="$(BUILDPREFIX)/include"
 BUILDCOMMONCONF += --libdir="$(BUILDPREFIX)"
@@ -382,7 +373,7 @@ BUILDTOOLCONF := $(BUILDCOMMONCONF) \
 BUILDTOOLS := \
 	CC="$(BUILDCC)" CXX="$(BUILDCXX)" LD="$(BUILDLD)" \
 	AR="$(BUILDAR)" NM="$(BUILDNM)" RANLIB="$(BUILDRANLIB)" \
-	STRIP="$(BUILDSTRIP)" PATH="$(BUILDPREFIX)/bin:$(PATH)"
+	STRIP="$(BUILDSTRIP)" PATH="$(BUILDBINDIR):$(PATH)"
 
 BUILDVARS := $(BUILDTOOLS) \
 	CPPFLAGS="$(BUILDCPPFLAGS)" \
@@ -409,6 +400,10 @@ check_githash = \
 		< "$(<:.tar.xz=.githash)"` && \
 	test "$$h" = "$1"
 
+ifeq ($(V),1)
+TAR_VERBOSE := v
+endif
+
 checksum = \
 	$(foreach f,$(filter $(TARBALLS)/%,$^), \
 		grep -- " $(f:$(TARBALLS)/%=%)$$" \
@@ -417,10 +412,10 @@ checksum = \
 		"$(SRC)/$(patsubst $(3)%,%,$@)/$(2)SUMS"
 CHECK_SHA512 = $(call checksum,$(SHA512SUM),SHA512,.sum-)
 UNPACK = $(RM) -R $@ \
-	$(foreach f,$(filter %.tar.gz %.tgz,$^), && tar xvzfo $(f)) \
-	$(foreach f,$(filter %.tar.bz2,$^), && tar xvjfo $(f)) \
-	$(foreach f,$(filter %.tar.xz,$^), && tar xvJfo $(f)) \
-	$(foreach f,$(filter %.zip,$^), && unzip $(f))
+	$(foreach f,$(filter %.tar.gz %.tgz,$^), && tar $(TAR_VERBOSE)xzfo $(f)) \
+	$(foreach f,$(filter %.tar.bz2,$^), && tar $(TAR_VERBOSE)xjfo $(f)) \
+	$(foreach f,$(filter %.tar.xz,$^), && tar $(TAR_VERBOSE)xJfo $(f)) \
+	$(foreach f,$(filter %.zip,$^), && unzip $(f) $(UNZIP_PARAMS))
 UNPACK_DIR = $(patsubst %.tar,%,$(basename $(notdir $<)))
 APPLY = (cd $(UNPACK_DIR) && patch -fp1) <
 pkg_static = (cd $(UNPACK_DIR) && $(SRC_BUILT)/pkg-static.sh $(1))
@@ -434,36 +429,49 @@ UPDATE_AUTOCONFIG = for dir in $(AUTOMAKE_DATA_DIRS); do \
 		fi; \
 	done
 
-ifdef HAVE_DARWIN_OS
-AUTORECONF = AUTOPOINT=true autoreconf
-else
 AUTORECONF = GTKDOCIZE=true autoreconf
-endif
 RECONF = mkdir -p -- $(PREFIX)/share/aclocal && \
 	cd $< && $(AUTORECONF) -fiv $(ACLOCAL_AMFLAGS)
+
+BUILD_DIR = $</vlc_build
+BUILD_SRC := ..
+# build directory relative to UNPACK_DIR
+BUILD_DIRUNPACK = vlc_build
+
+MAKEBUILDDIR = mkdir -p $(BUILD_DIR) && rm -f $(BUILD_DIR)/config.status && test ! -f $</config.status || $(MAKE) -C $< distclean
+MAKEBUILD = $(MAKE) -C $(BUILD_DIR)
+MAKECONFDIR = cd $(BUILD_DIR) && $(HOSTVARS) $(BUILD_SRC)
+MAKECONFIGURE = $(MAKECONFDIR)/configure $(HOSTCONF)
+
 # Work around for https://lists.nongnu.org/archive/html/bug-gnulib/2020-05/msg00237.html
 # When using a single command, make might take a shortcut and fork/exec
 # itself instead of relying on a shell, but a bug in gnulib ends up
 # trying to execute a cmake folder when one is found in the PATH
-CMAKEBUILD := env cmake --build
-CMAKE = cmake . -DCMAKE_TOOLCHAIN_FILE=$(abspath toolchain.cmake) \
+CMAKEBUILD = env cmake --build $(BUILD_DIR)
+CMAKEINSTALL = env cmake --install $(BUILD_DIR) --prefix $(PREFIX)
+CMAKECLEAN = rm -f $(BUILD_DIR)/CMakeCache.txt
+CMAKE = cmake -S $< -DCMAKE_TOOLCHAIN_FILE=$(abspath toolchain.cmake) \
+		-B $(BUILD_DIR) \
+		-DCMAKE_POSITION_INDEPENDENT_CODE=ON \
 		-DCMAKE_INSTALL_PREFIX:STRING=$(PREFIX) \
 		-DBUILD_SHARED_LIBS:BOOL=OFF \
-		-DCMAKE_INSTALL_LIBDIR:STRING=lib
+		-DCMAKE_INSTALL_LIBDIR:STRING=lib \
+		-DBUILD_TESTING:BOOL=OFF
 ifdef HAVE_WIN32
 CMAKE += -DCMAKE_DEBUG_POSTFIX:STRING=
 endif
 ifdef MSYS_BUILD
-CMAKE := PKG_CONFIG_LIBDIR="$(PKG_CONFIG_PATH)" $(CMAKE)
+CMAKE = PKG_CONFIG_LIBDIR="$(PKG_CONFIG_PATH)" $(CMAKE)
 CMAKE += -DCMAKE_LINK_LIBRARY_SUFFIX:STRING=.a
 endif
+CMAKE += -G $(CMAKE_GENERATOR)
 
 ifeq ($(V),1)
 CMAKE += -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
 endif
 
-MESONFLAGS = --default-library static --prefix "$(PREFIX)" --backend ninja \
-	-Dlibdir=lib
+MESONFLAGS = $(BUILD_DIR) $< --default-library static --prefix "$(PREFIX)" \
+	--backend ninja -Dlibdir=lib
 ifndef WITH_OPTIMIZATION
 MESONFLAGS += --buildtype debug
 else
@@ -471,6 +479,10 @@ MESONFLAGS += --buildtype debugoptimized
 endif
 ifdef HAVE_BITCODE_ENABLED
 MESONFLAGS += -Db_bitcode=true
+endif
+MESONFLAGS += -Dc_args="$(CFLAGS)" -Dc_link_args="$(LDFLAGS)" -Dcpp_args="$(CXXFLAGS)" -Dcpp_link_args="$(LDFLAGS)"
+ifdef HAVE_DARWIN_OS
+MESONFLAGS += -Dobjc_args="$(CFLAGS)" -Dobjc_link_args="$(LDFLAGS)" -Dobjcpp_args="$(CXXFLAGS)" -Dobjcpp_link_args="$(LDFLAGS)"
 endif
 
 ifdef HAVE_CROSS_COMPILE
@@ -487,12 +499,16 @@ ifdef HAVE_CROSS_COMPILE
 MESONFLAGS += --cross-file $(abspath crossfile.meson)
 MESON = env -i PATH="$(PREFIX)/bin:$(PATH)" \
 	PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" \
-	meson -Dpkg_config_path="$(PKG_CONFIG_PATH)" \
+	CMAKE="$(shell command -v cmake)" \
+	CMAKE_PREFIX_PATH="$(PREFIX)" \
+	meson setup -Dpkg_config_path="$(PKG_CONFIG_PATH)" \
 	$(MESONFLAGS)
 
 else
-MESON = meson $(MESONFLAGS)
+MESON = meson setup $(MESONFLAGS)
 endif
+MESONCLEAN = rm -rf $(BUILD_DIR)/meson-private
+MESONBUILD = meson compile -C $(BUILD_DIR) $(MESON_BUILD) && meson install -C $(BUILD_DIR)
 
 ifdef GPL
 REQUIRE_GPL =
@@ -506,6 +522,14 @@ REQUIRE_GNUV3 = \
 	@echo "Package \"$<\" requires the version 3 of GNU licenses." >&2; \
 	exit 1
 endif
+
+PYTHON_VENV = $(BUILDPREFIX)/python-venv
+PYTHON_ACTIVATE = . $(PYTHON_VENV)/bin/activate
+PYTHON_INSTALL = $(HOSTVARS) $(PYTHON_VENV)/bin/pip3 install ./$<
+
+.python-venv:
+	python3 -m venv $(PYTHON_VENV)
+	touch $@
 
 #
 # Rust specific rules
@@ -542,6 +566,8 @@ tools: $(PKGS_TOOLS:%=.dep-%)
 
 mostlyclean:
 	-$(RM) $(foreach p,$(PKGS_ALL),.$(p) .sum-$(p) .dep-$(p))
+	-$(RM) -R "$(PYTHON_VENV)"
+	-$(RM) .python-venv
 	-$(RM) toolchain.cmake
 	-$(RM) crossfile.meson
 	-$(RM) -R "$(PREFIX)"
@@ -562,7 +588,7 @@ vlc-contrib-$(HOST)-latest.tar.bz2:
 
 prebuilt: vlc-contrib-$(HOST)-latest.tar.bz2
 	$(RM) -r $(PREFIX)
-	-$(UNPACK)
+	$(UNPACK)
 	mv $(HOST) $(PREFIX)
 	cd $(PREFIX) && $(abspath $(SRC))/change_prefix.sh
 ifdef HAVE_WIN32
@@ -631,6 +657,8 @@ CMAKE_SYSTEM_NAME = Darwin
 endif
 ifdef HAVE_EMSCRIPTEN
 CMAKE_SYSTEM_NAME = Emscripten
+EMCMAKE_PATH := $(shell command -v emcmake)
+EMSDK_PATH := $(dir $(EMCMAKE_PATH))
 endif
 
 ifdef HAVE_ANDROID
@@ -638,59 +666,47 @@ CFLAGS += -DANDROID_NATIVE_API_LEVEL=$(ANDROID_API)
 endif
 
 # CMake toolchain
-toolchain.cmake:
-	$(RM) $@
+CMAKE_TOOLCHAIN_ENV := $(HOSTTOOLS) HOST_ARCH="$(ARCH)" SYSTEM_NAME="$(CMAKE_SYSTEM_NAME)"
 ifndef WITH_OPTIMIZATION
-	echo "set(CMAKE_BUILD_TYPE Debug)" >> $@
+	CMAKE_TOOLCHAIN_ENV += BUILD_TYPE=Debug
 else
-	echo "set(CMAKE_BUILD_TYPE RelWithDebInfo)" >> $@
+	CMAKE_TOOLCHAIN_ENV += BUILD_TYPE=RelWithDebInfo
 endif
-	echo "set(CMAKE_SYSTEM_PROCESSOR $(ARCH))" >> $@
-	if test -n "$(CMAKE_SYSTEM_NAME)"; then \
-		echo "set(CMAKE_SYSTEM_NAME $(CMAKE_SYSTEM_NAME))" >> $@; \
-	fi;
 ifdef HAVE_WIN32
 ifdef HAVE_CROSS_COMPILE
-	echo "set(CMAKE_RC_COMPILER $(WINDRES))" >> $@
+	CMAKE_TOOLCHAIN_ENV += RC_COMPILER="$(WINDRES)"
 endif
 endif
 ifdef HAVE_DARWIN_OS
-	echo "set(CMAKE_C_FLAGS \"$(CFLAGS)\")" >> $@
-	echo "set(CMAKE_CXX_FLAGS \"$(CXXFLAGS)\")" >> $@
-	echo "set(CMAKE_LD_FLAGS \"$(LDFLAGS)\")" >> $@
 ifdef HAVE_IOS
-	echo "set(CMAKE_OSX_SYSROOT $(IOS_SDK))" >> $@
+	CMAKE_TOOLCHAIN_ENV += OSX_SYSROOT="$(IOS_SDK)"
 else
-	echo "set(CMAKE_OSX_SYSROOT $(MACOSX_SDK))" >> $@
+	CMAKE_TOOLCHAIN_ENV += OSX_SYSROOT="$(MACOSX_SDK)"
 endif
 endif
-	echo "set(CMAKE_AR $(AR) CACHE FILEPATH \"Archiver\")" >> $@
-	echo "set(CMAKE_RANLIB $(RANLIB) CACHE FILEPATH \"Add index to Archive\")" >> $@
 ifdef HAVE_CROSS_COMPILE
-	echo "set(_CMAKE_TOOLCHAIN_PREFIX $(HOST)-)" >> $@
+	CMAKE_TOOLCHAIN_ENV += TOOLCHAIN_PREFIX="$(HOST)-"
+	CMAKE_TOOLCHAIN_ENV += PATH_MODE_LIBRARY="ONLY"
+	CMAKE_TOOLCHAIN_ENV += PATH_MODE_INCLUDE="ONLY"
+endif
 ifdef HAVE_ANDROID
 # cmake will overwrite our --sysroot with a native (host) one on Darwin
 # Set it to "" right away to short-circuit this behaviour
-	echo "set(CMAKE_CXX_SYSROOT_FLAG \"\")" >> $@
-	echo "set(CMAKE_C_SYSROOT_FLAG \"\")" >> $@
+	CMAKE_TOOLCHAIN_ENV += CXX_SYSROOT_FLAG=
+	CMAKE_TOOLCHAIN_ENV += C_SYSROOT_FLAG=
 endif
-endif
-	echo "set(CMAKE_C_COMPILER $(CC))" >> $@
-	echo "set(CMAKE_CXX_COMPILER $(CXX))" >> $@
 ifdef MSYS_BUILD
-	echo "set(CMAKE_FIND_ROOT_PATH `cygpath -m $(PREFIX)`)" >> $@
+	CMAKE_TOOLCHAIN_ENV += FIND_ROOT_PATH="$(shell cygpath -m $(PREFIX))"
 else
-	echo "set(CMAKE_FIND_ROOT_PATH $(PREFIX))" >> $@
-endif
-	echo "set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)" >> $@
-ifdef HAVE_CROSS_COMPILE
-	echo "set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)" >> $@
-	echo "set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)" >> $@
+	CMAKE_TOOLCHAIN_ENV += FIND_ROOT_PATH="$(PREFIX)"
 endif
 ifdef HAVE_EMSCRIPTEN
-	# https://github.com/emscripten-core/emscripten/blob/main/cmake/Modules/Platform/Emscripten.cmake#L268
-	echo "set(EMSCRIPTEN 1)" >> $@
+	CMAKE_TOOLCHAIN_ENV += EXTRA_INCLUDE="$(EMSDK_PATH)cmake/Modules/Platform/Emscripten.cmake"
 endif
+
+toolchain.cmake: $(SRC)/gen-cmake-toolchain.py
+	$(CMAKE_TOOLCHAIN_ENV) $(SRC)/gen-cmake-toolchain.py $@
+	cat $@
 
 MESON_SYSTEM_NAME =
 ifdef HAVE_WIN32
@@ -716,14 +732,14 @@ endif
 endif
 endif
 
-crossfile.meson: $(SRC)/gen-meson-crossfile.py
+crossfile.meson: $(SRC)/gen-meson-machinefile.py
 	$(HOSTVARS_MESON) \
 	WINDRES="$(WINDRES)" \
 	PKG_CONFIG="$(PKG_CONFIG)" \
 	HOST_SYSTEM="$(MESON_SYSTEM_NAME)" \
 	HOST_ARCH="$(subst i386,x86,$(ARCH))" \
 	HOST="$(HOST)" \
-	$(SRC)/gen-meson-crossfile.py $@
+	$(SRC)/gen-meson-machinefile.py $@
 	cat $@
 
 # Default pattern rules

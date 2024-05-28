@@ -75,7 +75,8 @@ class CheckableListMenu : public QMenu
     Q_OBJECT
 public:
     enum GroupingMode {
-        GROUPED,
+        GROUPED_EXLUSIVE,
+        GROUPED_OPTIONAL,
         UNGROUPED
     };
 
@@ -143,7 +144,7 @@ private:
 };
 
 /**
- * @brief The BooleanPropertyAction class allows to bind a boolean Q_PROPRERTY to a QAction
+ * @brief The BooleanPropertyAction class allows to bind a boolean Q_PROPERTY to a QAction
  */
 class BooleanPropertyAction: public QAction
 {

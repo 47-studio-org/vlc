@@ -320,7 +320,6 @@ static int Start( audio_output_t *p_aout, audio_sample_format_t *restrict fmt )
         malloc( sys->i_buffer_size );
     if( sys->p_silence_buffer == NULL )
     {
-        msg_Err( p_aout, "Couldn't alloc silence buffer... aborting");
         return VLC_ENOMEM;
     }
     sys->i_repeat_counter = 0;
@@ -354,7 +353,6 @@ static void Play( audio_output_t *p_aout, block_t *block, vlc_tick_t date )
         (struct lkwavehdr *) malloc(sizeof(struct lkwavehdr));
     if(!p_waveheader)
     {
-        msg_Err(p_aout, "Couldn't alloc WAVEHDR");
         if( block )
             block_Release( block );
         return;
@@ -755,7 +753,7 @@ static uint32_t findDeviceID(char *psz_device_name)
         _snwprintf( dev_name, MAXPNAMELEN + 32, device_name_fmt,
                   caps.szPname, caps.wMid, caps.wPid );
         char *u8 = FromWide(dev_name);
-        if( !stricmp(u8, psz_device_name) )
+        if( !_stricmp(u8, psz_device_name) )
         {
             free( u8 );
             return i;

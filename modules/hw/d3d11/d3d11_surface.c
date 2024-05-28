@@ -454,8 +454,7 @@ static void D3D11_RGBA(filter_t *p_filter, picture_t *src, picture_t *dst)
     plane_CopyPixels( dst->p, &src_planes );
 
     /* */
-    ID3D11DeviceContext_Unmap(sys->d3d_dev->d3dcontext,
-                              p_sys->resource[KNOWN_DXGI_INDEX], p_sys->slice_index);
+    ID3D11DeviceContext_Unmap(sys->d3d_dev->d3dcontext, sys->staging_resource, 0);
     vlc_mutex_unlock(&sys->staging_lock);
 }
 
@@ -635,7 +634,7 @@ static picture_t *AllocateCPUtoGPUTexture(filter_t *p_filter, filter_sys_t *p_sy
     video_format_Copy(&fmt_staging, &p_filter->fmt_out.video);
     fmt_staging.i_chroma = cfg->fourcc;
 
-    picture_resource_t dummy_res = {};
+    picture_resource_t dummy_res = { .p_sys = NULL };
     picture_t *p_dst = picture_NewFromResource(&fmt_staging, &dummy_res);
     if (p_dst == NULL) {
         msg_Err(p_filter, "Failed to map create the temporary picture.");
@@ -654,6 +653,7 @@ static picture_t *AllocateCPUtoGPUTexture(filter_t *p_filter, filter_sys_t *p_sy
         d3d11_pic_context_destroy, d3d11_pic_context_copy,
         vlc_video_context_Hold(p_filter->vctx_out),
     };
+    pic_ctx->picsys.sharedHandle = INVALID_HANDLE_VALUE;
     AcquireD3D11PictureSys(&pic_ctx->picsys);
     ID3D11Texture2D_Release(pic_ctx->picsys.texture[KNOWN_DXGI_INDEX]);
 
@@ -728,6 +728,7 @@ int D3D11OpenConverter( filter_t *p_filter )
         pixel_bytes = 2;
         break;
     case VLC_CODEC_RGBA:
+    case VLC_CODEC_RGBA10:
         if( p_filter->fmt_in.video.i_chroma != VLC_CODEC_D3D11_OPAQUE_RGBA )
             return VLC_EGENERIC;
         p_filter->ops = &D3D11_RGBA_ops;

@@ -21,17 +21,36 @@
  *****************************************************************************/
 
 #import <Cocoa/Cocoa.h>
-#import "VLCLibraryCollectionViewItemProtocol.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class VLCMediaLibraryMediaItem;
+@class VLCImageView;
+@class VLCLinearProgressIndicator;
+@protocol VLCMediaLibraryItemProtocol;
 
 extern NSString *VLCLibraryCellIdentifier;
 
-@interface VLCLibraryCollectionViewItem : NSCollectionViewItem<VLCLibraryCollectionViewItemProtocol>
+@interface VLCLibraryCollectionViewItem : NSCollectionViewItem
 
-@property (readwrite, retain, nonatomic) VLCMediaLibraryMediaItem *representedMediaItem;
+// NOTE: These will need to be changed after changes to XIB
++ (const NSSize)defaultSize;
++ (const NSSize)defaultVideoItemSize;
++ (const CGFloat)defaultWidth;
++ (const CGFloat)bottomTextViewsHeight;
++ (const CGFloat)videoHeightAspectRatioMultiplier;
+
+@property (readwrite, assign) IBOutlet NSTextField *mediaTitleTextField;
+@property (readwrite, assign) IBOutlet NSTextField *annotationTextField;
+@property (readwrite, assign) IBOutlet NSTextField *unplayedIndicatorTextField;
+@property (readwrite, assign) IBOutlet NSTextField *secondaryInfoTextField;
+@property (readwrite, assign) IBOutlet VLCImageView *mediaImageView;
+@property (readwrite, assign) IBOutlet NSButton *playInstantlyButton;
+@property (readwrite, assign) IBOutlet NSButton *addToPlaylistButton;
+@property (readwrite, assign) IBOutlet VLCLinearProgressIndicator *progressIndicator;
+@property (readwrite, assign) IBOutlet NSBox *highlightBox;
+@property (readwrite, assign) IBOutlet NSLayoutConstraint *imageViewAspectRatioConstraint;
+
+@property (readwrite, retain, nonatomic) id<VLCMediaLibraryItemProtocol> representedItem;
 
 @end
 

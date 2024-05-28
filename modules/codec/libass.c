@@ -133,7 +133,7 @@ static int Create( vlc_object_t *p_this )
     decoder_t *p_dec = (decoder_t *)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_SSA )
+    if( p_dec->fmt_in->i_codec != VLC_CODEC_SSA )
         return VLC_EGENERIC;
 
     p_dec->pf_decode = DecodeBlock;
@@ -180,7 +180,7 @@ static int Create( vlc_object_t *p_this )
         if( !strcasecmp( p_attach->psz_mime, "application/x-truetype-font" ) )
             found = true;
         /* Then extension */
-        else if( !found && strlen( p_attach->psz_name ) > 4 )
+        else if( !found && strnlen( p_attach->psz_name, 4+1 ) > 4 )
         {
             char *ext = p_attach->psz_name + strlen( p_attach->psz_name ) - 4;
 
@@ -278,7 +278,7 @@ static int Create( vlc_object_t *p_this )
         DecSysRelease( p_sys );
         return VLC_EGENERIC;
     }
-    ass_process_codec_private( p_track, p_dec->fmt_in.p_extra, p_dec->fmt_in.i_extra );
+    ass_process_codec_private( p_track, p_dec->fmt_in->p_extra, p_dec->fmt_in->i_extra );
 
     p_dec->fmt_out.i_codec = VLC_CODEC_RGBA;
 

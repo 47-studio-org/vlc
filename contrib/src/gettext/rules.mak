@@ -18,11 +18,11 @@ $(TARBALLS)/gettext-$(GETTEXT_VERSION).tar.gz:
 gettext: gettext-$(GETTEXT_VERSION).tar.gz .sum-gettext
 	$(UNPACK)
 	$(APPLY) $(SRC)/gettext/gettext-0.21-disable-libtextstyle.patch
+	$(APPLY) $(SRC)/gettext/obstack-func-ptr.patch
 	$(MOVE)
 
 DEPS_gettext = iconv $(DEPS_iconv) libxml2 $(DEPS_libxml2)
 
-GETTEXT_CFLAGS := $(CFLAGS)
 GETTEXT_CONF = \
 	--disable-relocatable \
 	--disable-java \
@@ -37,15 +37,20 @@ endif
 .gettext: gettext
 	cd $< && cd gettext-runtime && $(AUTORECONF)
 	cd $< && cd gettext-tools && $(AUTORECONF)
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) CFLAGS="$(GETTEXT_CFLAGS)" $(GETTEXT_CONF)
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(GETTEXT_CONF)
 ifndef HAVE_ANDROID
-	cd $< && $(MAKE) install
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 else
 	# Android 32bits does not have localeconv
-	cd $< && $(MAKE) -C gettext-runtime install
-	cd $< && $(MAKE) -C gettext-tools/intl
-	cd $< && $(MAKE) -C gettext-tools/misc install
-	cd $< && $(MAKE) -C gettext-tools/m4 install
+	+$(MAKEBUILD) -C gettext-runtime
+	+$(MAKEBUILD) -C gettext-tools/intl
+	+$(MAKEBUILD) -C gettext-tools/misc
+	+$(MAKEBUILD) -C gettext-tools/m4
+	+$(MAKEBUILD) -C gettext-runtime install
+	+$(MAKEBUILD) -C gettext-tools/misc install
+	+$(MAKEBUILD) -C gettext-tools/m4 install
 endif
 ifdef HAVE_MACOSX
 	# detect libintl correctly in configure for static library

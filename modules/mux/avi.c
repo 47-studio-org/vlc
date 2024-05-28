@@ -130,11 +130,11 @@ typedef struct
     int i_streams;
     int i_stream_video;
 
-    off_t i_movi_size;
+    uint32_t i_movi_size;
     avi_stream_t stream[100];
 
     avi_idx1_t idx1;
-    off_t i_idx1_size;
+    uint32_t i_idx1_size;
 
 } sout_mux_sys_t;
 
@@ -910,7 +910,7 @@ static block_t *avi_HeaderCreateRIFF( sout_mux_t *p_mux )
 
     /* Now set hdrl size */
     bo_set_32le( &bo, offsets.i_hdrllistsize,
-                 bo.b->i_buffer - offsets.i_hdrldatastart );
+                 bo.b->i_buffer + 4 - offsets.i_hdrldatastart );
 
     avi_HeaderAdd_INFO( p_mux, &bo );
 

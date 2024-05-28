@@ -115,7 +115,7 @@ int transcode_spu_init( sout_stream_t *p_stream, const es_format_t *p_fmt,
         /* Open encoder */
         /* Initialization of encoder format structures */
         assert(!id->encoder);
-        id->encoder = transcode_encoder_new( sout_EncoderCreate(p_stream, sizeof(encoder_t)), &id->p_decoder->fmt_in );
+        id->encoder = transcode_encoder_new( sout_EncoderCreate(p_stream, sizeof(encoder_t)), id->p_decoder->fmt_in );
         if( !id->encoder )
         {
             module_unneed( id->p_decoder, id->p_decoder->p_module );
@@ -135,13 +135,12 @@ int transcode_spu_init( sout_stream_t *p_stream, const es_format_t *p_fmt,
         /* open output stream */
         id->downstream_id =
                 id->pf_transcode_downstream_add( p_stream,
-                                                 &id->p_decoder->fmt_in,
+                                                 id->p_decoder->fmt_in,
                                                  transcode_encoder_format_out( id->encoder ) );
         if( !id->downstream_id )
         {
             msg_Err( p_stream, "cannot output transcoded stream %4.4s",
                                (char *) &id->p_enccfg->i_codec );
-            transcode_encoder_close( id->encoder );
             transcode_encoder_delete( id->encoder );
             module_unneed( id->p_decoder, id->p_decoder->p_module );
             id->p_decoder->p_module = NULL;
@@ -162,10 +161,7 @@ void transcode_spu_clean( sout_stream_t *p_stream, sout_stream_id_sys_t *id)
 
     /* Close encoder */
     if( id->encoder )
-    {
-        transcode_encoder_close( id->encoder );
         transcode_encoder_delete( id->encoder );
-    }
 }
 
 int transcode_spu_process( sout_stream_t *p_stream,

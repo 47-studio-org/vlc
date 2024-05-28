@@ -30,42 +30,154 @@ import "qrc:///style/"
 Widgets.KeyNavigableTableView {
     id: root
 
-    property var sortModelSmall: [
-        { isPrimary: true, criteria: "title",       width: VLCStyle.colWidth(1), text: I18n.qtr("Title"),    showSection: "title", colDelegate: tableColumns.titleDelegate, headerDelegate: tableColumns.titleHeaderDelegate, placeHolder: VLCStyle.noArtAlbumCover },
-        { criteria: "album_title", width: VLCStyle.colWidth(1), text: I18n.qtr("Album"),    showSection: "album_title" },
-        { criteria: "main_artist", width: VLCStyle.colWidth(1), text: I18n.qtr("Artist"),   showSection: "main_artist" },
-        { criteria: "duration", width: VLCStyle.colWidth(1), text: I18n.qtr("Duration"), showSection: "", colDelegate: tableColumns.timeColDelegate, headerDelegate: tableColumns.timeHeaderDelegate },
-    ]
+    // Properties
 
-    property var sortModelMedium: [
-        { isPrimary: true, criteria: "title",       width: VLCStyle.colWidth(2), text: I18n.qtr("Title"),    showSection: "title", colDelegate: tableColumns.titleDelegate, headerDelegate: tableColumns.titleHeaderDelegate, placeHolder: VLCStyle.noArtAlbumCover },
-        { criteria: "album_title", width: VLCStyle.colWidth(2), text: I18n.qtr("Album"),    showSection: "album_title" },
-        { criteria: "main_artist", width: VLCStyle.colWidth(1), text: I18n.qtr("Artist"),   showSection: "main_artist" },
-        { criteria: "duration", width: VLCStyle.colWidth(1), text: I18n.qtr("Duration"), showSection: "", colDelegate: tableColumns.timeColDelegate, headerDelegate: tableColumns.timeHeaderDelegate },
-    ]
+    property int _nbCols: VLCStyle.gridColumnsForWidth(availableRowWidth)
 
-    readonly property int _expandingColsSpan: Math.floor((VLCStyle.gridColumnsForWidth(root.availableRowWidth) - 3 /* static cols (track_number, etc)*/) / 3)
-    property var sortModelLarge: [
-        { isPrimary: true, criteria: "title",       width: VLCStyle.colWidth(root._expandingColsSpan), text: I18n.qtr("Title"),    showSection: "title", colDelegate: tableColumns.titleDelegate, headerDelegate: tableColumns.titleHeaderDelegate, placeHolder: VLCStyle.noArtAlbumCover },
-        { criteria: "album_title", width: VLCStyle.colWidth(root._expandingColsSpan), text: I18n.qtr("Album"),    showSection: "album_title" },
-        { criteria: "main_artist", width: VLCStyle.colWidth(root._expandingColsSpan), text: I18n.qtr("Artist"),   showSection: "main_artist" },
-        { criteria: "duration", width: VLCStyle.colWidth(1), text: I18n.qtr("Duration"), showSection: "", colDelegate: tableColumns.timeColDelegate, headerDelegate: tableColumns.timeHeaderDelegate },
-        { criteria: "track_number",width: VLCStyle.colWidth(1), text: I18n.qtr("Track"), showSection: "" },
-        { criteria: "disc_number", width: VLCStyle.colWidth(1), text: I18n.qtr("Disc"),  showSection: "" },
-    ]
+    readonly property int _sizeA: Math.floor((_nbCols - 3) / 3)
+    readonly property int _sizeB: Math.floor((_nbCols - 2) / 2)
 
-    sortModel: ( availableRowWidth < VLCStyle.colWidth(6) ) ? sortModelSmall
-                                                            : ( availableRowWidth < VLCStyle.colWidth(9) )
-                                                              ? sortModelMedium : sortModelLarge
+    // Private
+
+    property var _lineTitle: ({
+        criteria: "title",
+
+        text: I18n.qtr("Title"),
+
+        showSection: "title",
+
+        colDelegate: tableColumns.titleDelegate,
+        headerDelegate: tableColumns.titleHeaderDelegate,
+
+        placeHolder: VLCStyle.noArtAlbumCover
+    })
+
+    property var _lineAlbum: ({
+        criteria: "album_title",
+
+        text: I18n.qtr("Album"),
+
+        showSection: "album_title"
+    })
+
+    property var _lineArtist: ({
+        criteria: "main_artist",
+
+        text: I18n.qtr("Artist"),
+
+        showSection: "main_artist"
+    })
+
+    property var _lineDuration: ({
+        criteria: "duration",
+
+        text: I18n.qtr("Duration"),
+
+        showSection: "",
+
+        colDelegate: tableColumns.timeColDelegate,
+        headerDelegate: tableColumns.timeHeaderDelegate
+    })
+
+    property var _lineTrack: ({
+        criteria: "track_number",
+
+        text: I18n.qtr("Track"),
+
+        showSection: ""
+    })
+
+    property var _lineDisc: ({
+        criteria: "disc_number",
+
+        text: I18n.qtr("Disc"),
+
+        showSection: ""
+    })
+
+    property var _modelLarge: [{
+        size: _sizeA,
+
+        model: _lineTitle
+    }, {
+        size: _sizeA,
+
+        model: _lineAlbum
+    }, {
+        size: _sizeA,
+
+        model: _lineArtist
+    }, {
+        size: 1,
+
+        model: _lineDuration
+    }, {
+        size: 1,
+
+        model: _lineTrack
+    }, {
+        size: 1,
+
+        model: _lineDisc
+    }]
+
+    property var _modelMedium: [{
+        size: _sizeB,
+
+        model: _lineTitle
+    }, {
+        size: _sizeB,
+
+        model: _lineAlbum
+    }, {
+        size: 1,
+
+        model: _lineArtist
+    }, {
+        size: 1,
+
+        model: _lineDuration
+    }]
+
+    property var _modelSmall: [{
+        size: Math.max(2, _nbCols),
+
+        model: ({
+            criteria: "title",
+
+            subCriterias: [ "duration", "album_title" ],
+
+            text: I18n.qtr("Title"),
+
+            showSection: "title",
+
+            colDelegate: tableColumns.titleDelegate,
+            headerDelegate: tableColumns.titleHeaderDelegate,
+
+            placeHolder: VLCStyle.noArtAlbumCover
+        })
+    }]
+
+    // Aliases
+
+    property alias parentId: rootmodel.parentId
+
+    // Settings
+
+    sortModel: {
+        if (availableRowWidth < VLCStyle.colWidth(4))
+            return _modelSmall
+        else if (availableRowWidth < VLCStyle.colWidth(9))
+            return _modelMedium
+        else
+            return _modelLarge
+    }
+
     section.property: "title_first_symbol"
-
-    headerColor: VLCStyle.colors.bg
 
     model: rootmodel
     selectionDelegateModel: selectionModel
     rowHeight: VLCStyle.tableCoverRow_height
-
-    property alias parentId: rootmodel.parentId
 
     onActionForSelection:  MediaLib.addAndPlay(model.getIdsForIndexes( selection ))
     onItemDoubleClicked: MediaLib.addAndPlay(model.id)
@@ -80,6 +192,8 @@ Widgets.KeyNavigableTableView {
 
     Widgets.TableColumns {
         id: tableColumns
+
+        showCriterias: (root.sortModel === root._modelSmall)
     }
 
     MLAlbumTrackModel {

@@ -1,7 +1,7 @@
 # libvpx
 
-VPX_VERSION := 1.11.0
-VPX_URL := http://github.com/webmproject/libvpx/archive/v${VPX_VERSION}.tar.gz
+VPX_VERSION := 1.12.0
+VPX_URL := $(GITHUB)/webmproject/libvpx/archive/v${VPX_VERSION}.tar.gz
 
 PKGS += vpx
 ifeq ($(call need_pkg,"vpx >= 1.5.0"),)
@@ -34,7 +34,7 @@ endif
 DEPS_vpx =
 
 ifdef HAVE_WIN32
-DEPS_vpx += pthreads $(DEPS_pthreads)
+DEPS_vpx += winpthreads $(DEPS_winpthreads)
 endif
 
 ifdef HAVE_CROSS_COMPILE
@@ -136,14 +136,7 @@ endif
 endif
 endif
 
-ifneq ($(filter i386 x86_64,$(ARCH)),)
-# broken text relocations or invalid register for .seh_savexmm with gcc8
-VPX_CONF += --disable-mmx
-endif
-
-ifdef WITH_OPTIMIZATION
-VPX_CFLAGS += -DNDEBUG
-else
+ifndef WITH_OPTIMIZATION
 VPX_CONF += --disable-optimizations
 endif
 
@@ -162,13 +155,19 @@ ifdef HAVE_ANDROID
 ifneq ($(shell $(VPX_CROSS)gcc -v >/dev/null 2>&1 || echo FAIL),)
 VPX_HOSTVARS = $(HOSTVARS)
 endif
+
+# Depends on "arm-linux-androideabi-as" that is removed in NDK25
+ifeq ($(ARCH),arm)
+VPX_CONF += --disable-neon_asm
+endif
 endif
 
 .vpx: libvpx
 	rm -rf $(PREFIX)/include/vpx
-	cd $< && LDFLAGS="$(VPX_LDFLAGS)" CROSS=$(VPX_CROSS) $(VPX_HOSTVARS) ./configure --target=$(VPX_TARGET) \
+	$(MAKEBUILDDIR)
+	cd $(BUILD_DIR) && LDFLAGS="$(VPX_LDFLAGS)" CROSS=$(VPX_CROSS) $(VPX_HOSTVARS) $(BUILD_SRC)/configure --target=$(VPX_TARGET) \
 		$(VPX_CONF) --prefix=$(PREFIX)
-	cd $< && CONFIG_DEBUG=1 $(MAKE)
-	$(call pkg_static,"vpx.pc")
-	cd $< && CONFIG_DEBUG=1 $(MAKE) install
+	+CONFIG_DEBUG=1 $(MAKEBUILD)
+	$(call pkg_static,"$(BUILD_DIRUNPACK)/vpx.pc")
+	+CONFIG_DEBUG=1 $(MAKEBUILD) install
 	touch $@

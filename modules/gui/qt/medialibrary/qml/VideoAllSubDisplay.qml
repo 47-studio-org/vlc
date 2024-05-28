@@ -91,7 +91,7 @@ VideoAll {
         if (headerItem && headerItem.focus)
             headerItem.forceActiveFocus(reason)
         else
-            _currentView.setCurrentItemFocus(reason)
+            currentItem.setCurrentItemFocus(reason)
     }
 
     // VideoAll events reimplementation
@@ -125,9 +125,8 @@ VideoAll {
             property var model: MLVideoModel { ml: MediaLib }
 
             function onAction(indexes) {
-                g_mainDisplay.showPlayer()
-
                 MediaLib.addAndPlay(model.getIdsForIndexes(indexes))
+                g_mainDisplay.showPlayer()
             }
 
             function onDoubleClick(object) { g_mainDisplay.play(MediaLib, object.id) }
@@ -153,9 +152,8 @@ VideoAll {
                 var object = model.getDataAt(index);
 
                 if (object.isVideo) {
-                    g_mainDisplay.showPlayer()
-
                     MediaLib.addAndPlay(model.getIdsForIndexes(indexes))
+                    g_mainDisplay.showPlayer()
 
                     return
                 }
@@ -220,20 +218,23 @@ VideoAll {
     }
 
     header: VideoDisplayRecentVideos {
-        width: root.width
+        width: root.width - displayMarginBeginning - displayMarginEnd
 
-        subtitleText: (root.model && root.model.count > 0) ? I18n.qtr("Videos") : ""
-
-        // NOTE: We want grid items to be visible on the sides.
-        leftPadding: root.contentMargin
+        x: displayMarginBeginning
 
         // spacing between header and content
         bottomPadding: VLCStyle.margin_normal
 
+        subtitleText: (root.model && root.model.count > 0) ? I18n.qtr("Videos") : ""
+
+        // NOTE: We want grid items to be visible on the sides.
+        displayMarginBeginning: root.contentMargin
+        displayMarginEnd: displayMarginBeginning
+
         Navigation.parentItem: root
 
         Navigation.downAction: function() {
-            _currentView.setCurrentItemFocus(Qt.TabFocusReason);
+            currentItem.setCurrentItemFocus(Qt.TabFocusReason)
         }
 
         onImplicitHeightChanged: {

@@ -49,14 +49,12 @@ Rectangle {
 
     // Signals
 
-    signal playIconClicked
+    signal playIconClicked(var /* MouseEvent */ mouse)
 
     // Settings
 
     height: VLCStyle.listAlbumCover_height
     width: VLCStyle.listAlbumCover_width
-
-    color: VLCStyle.colors.grid
 
     // Children
 
@@ -86,7 +84,7 @@ Rectangle {
         sourceComponent: Widgets.PlayCover {
             width: playIconSize
 
-            onClicked: playIconClicked()
+            onClicked: playIconClicked(mouse)
         }
 
         asynchronous: true

@@ -29,14 +29,20 @@ import "qrc:///util/Helpers.js" as Helpers
 Slider {
     id: control
 
+    readonly property real _hoveredScalingFactor: 1.8
     property int barHeight: VLCStyle.dp(5, VLCStyle.scale)
+    readonly property real _scaledBarHeight: control.barHeight * _hoveredScalingFactor
+    readonly property real _scaledY: (-control.barHeight / 2) * (control._hoveredScalingFactor - 1)
+
     property bool _isSeekPointsShown: true
+    readonly property int _seekPointsDistance: VLCStyle.dp(2, VLCStyle.scale)
+    readonly property int _seekPointsRadius: VLCStyle.dp(0.5, VLCStyle.scale)
+    readonly property real _scaledSeekPointsRadius: _seekPointsRadius * _hoveredScalingFactor
+
+    property bool _currentChapterHovered: false
     property real _tooltipPosition: timeTooltip.pos.x / sliderRectMouseArea.width
 
-    property alias backgroundColor: sliderRect.color
-    property alias progressBarColor: progressRect.color
-
-    property VLCColors colors: VLCStyle.colors
+    property color backgroundColor: theme.bg.primary
 
     Keys.onRightPressed: Player.jumpFwd()
     Keys.onLeftPressed: Player.jumpBwd()
@@ -44,6 +50,15 @@ Slider {
     function showChapterMarks() {
         _isSeekPointsShown = true
         seekpointTimer.restart()
+    }
+
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Slider
+
+        enabled: control.enabled
+        focused: control.visualFocus
+        hovered: control.hovered
     }
 
     Timer {
@@ -56,15 +71,16 @@ Slider {
     Widgets.PointingTooltip {
         id: timeTooltip
 
+        //tooltip is a Popup, palette should be passed explicitly
+        colorContext.palette: theme.palette
+
         visible: control.hovered
 
-        text: Player.length.scale(pos.x / control.width).toString() +
+        text: Player.length.scale(pos.x / control.width).formatHMS() +
               (Player.hasChapters ?
                    " - " + Player.chapters.getNameAtPosition(control._tooltipPosition) : "")
 
         pos: Qt.point(sliderRectMouseArea.mouseX, 0)
-
-        colors: control.colors
     }
 
     Item {
@@ -134,28 +150,36 @@ Slider {
         onPositionChanged: fsm.playerUpdatePosition(Player.position)
     }
 
-    height: control.barHeight
-    implicitHeight: control.barHeight
+    Component.onCompleted:  {
+        fsm.playerUpdatePosition(Player.position)
+    }
 
-    topPadding: 0
-    leftPadding: 0
-    bottomPadding: 0
-    rightPadding: 0
+    implicitHeight: control.barHeight
+    height: implicitHeight
+
+    padding: 0
 
     stepSize: 0.01
 
-    background: Rectangle {
-        id: sliderRect
+    background: Item {
         width: control.availableWidth
         implicitHeight: control.implicitHeight
         height: implicitHeight
-        color: control.colors.setColorAlpha( control.colors.playerFg, 0.2 )
-        radius: implicitHeight
+
+        Rectangle {
+            id: sliderRect
+            visible: !Player.hasChapters
+            color: control.backgroundColor
+            anchors.fill: parent
+            radius: implicitHeight
+        }
 
         MouseArea {
             id: sliderRectMouseArea
 
-            anchors.fill: parent
+            width: control.availableWidth
+            height: control._scaledBarHeight
+            y: control._scaledY
 
             hoverEnabled: true
 
@@ -175,12 +199,102 @@ Slider {
             }
         }
 
+        Repeater {
+            id: seekpointsRptr
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: control.barHeight
+            visible: Player.hasChapters
+
+            model: Player.chapters
+            Item {
+                Rectangle {
+                    id: seekpointsRect
+                    readonly property real startPosition: model.startPosition === undefined ? 0.0 : model.startPosition
+                    readonly property real endPosition: model.endPosition === undefined ? 1.0 : model.endPosition
+
+                    readonly property int _currentChapter: {
+                        if (control.visualPosition < seekpointsRect.startPosition)
+                            return 1
+                        else if (control.visualPosition > seekpointsRect.endPosition)
+                            return -1
+                        return 0
+                    }
+                    on_CurrentChapterChanged: {
+                        if(_hovered)
+                            control._currentChapterHovered = _currentChapter === 0
+                    }
+
+                    readonly property bool _hovered: control.hovered &&
+                                            (sliderRectMouseArea.mouseX > x && sliderRectMouseArea.mouseX < x+width)
+
+                    color: _currentChapter < 0 ? theme.fg.primary : control.backgroundColor
+                    width: sliderRect.width * seekpointsRect.endPosition - x - control._seekPointsDistance
+                    x: sliderRect.width * seekpointsRect.startPosition
+
+                    Rectangle {
+                        id: progressRepRect
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        radius: parent.radius
+
+                        width: sliderRect.width * control.visualPosition - parent.x - control._seekPointsDistance
+                        visible: parent._currentChapter === 0
+                        color: theme.fg.primary
+                    }
+                }
+
+                transitions: [
+                    Transition {
+                        to: "*"
+                        SequentialAnimation{
+                            PropertyAction { targets: control; property: "_currentChapterHovered" }
+                            NumberAnimation {
+                                targets: [seekpointsRect, progressRepRect]; properties: "height, y, radius"
+                                duration: VLCStyle.duration_short; easing.type: Easing.InSine
+                            }
+                        }
+                    }
+                ]
+
+                states:[
+                    State {
+                        name: "visible"
+                        PropertyChanges {
+                            target: control;
+                            _currentChapterHovered: seekpointsRect._currentChapter === 0 ? false : control._currentChapterHovered
+                        }
+                        PropertyChanges { target: seekpointsRect; height: control.barHeight }
+                        PropertyChanges { target: seekpointsRect; y: 0 }
+                        PropertyChanges { target: seekpointsRect; radius: control._seekPointsRadius }
+                    },
+                    State {
+                        name: "visibleLarge"
+                        PropertyChanges {
+                            target: control;
+                            _currentChapterHovered: seekpointsRect._currentChapter === 0 ? true : control._currentChapterHovered
+                        }
+                        PropertyChanges { target: seekpointsRect; height: control._scaledBarHeight }
+                        PropertyChanges { target: seekpointsRect; y: control._scaledY }
+                        PropertyChanges { target: seekpointsRect; radius: control._scaledSeekPointsRadius }
+                    }
+                ]
+
+                state: (seekpointsRect._hovered || (seekpointsRect._currentChapter === 0 && fsm._state == fsmHeld))
+                       ? "visibleLarge"
+                       : "visible"
+            }
+        }
+
         Rectangle {
             id: progressRect
             width: control.visualPosition * parent.width
+            visible: !Player.hasChapters
+            color: theme.fg.primary
             height: control.barHeight
-            color: control.colors.accent
-            radius: control.barHeight
+            radius: control._seekPointsRadius
         }
 
         Rectangle {
@@ -192,7 +306,7 @@ Slider {
 
             height: control.barHeight
             opacity: 0.4
-            color: control.colors.buffer
+            color: theme.fg.neutral //FIXME buffer color ?
             radius: control.barHeight
 
             states: [
@@ -266,51 +380,20 @@ Slider {
                 }
             }
         }
-
-        Item {
-            id: seekpointsRow
-
-            width: parent.width
-            height: control.barHeight
-            visible: Player.hasChapters
-
-            Repeater {
-                id: seekpointsRptr
-                model: Player.chapters
-                Rectangle {
-                    id: seekpointsRect
-                    property real position: model.position === undefined ? 0.0 : model.position
-
-                    color: control.colors.seekpoint
-                    width: VLCStyle.dp(1, VLCStyle.scale)
-                    height: control.barHeight
-                    x: sliderRect.width * seekpointsRect.position
-                }
-            }
-
-            OpacityAnimator on opacity {
-                from: 1
-                to: 0
-                running: !control._isSeekPointsShown
-            }
-            OpacityAnimator on opacity{
-                from: 0
-                to: 1
-                running: control._isSeekPointsShown
-            }
-        }
     }
 
     handle: Rectangle {
         id: sliderHandle
 
-        visible: control.activeFocus
+        property int _size: control.barHeight * 3
+
         x: (control.visualPosition * control.availableWidth) - width / 2
-        y: (control.barHeight - width) / 2
-        implicitWidth: VLCStyle.margin_small
-        implicitHeight: VLCStyle.margin_small
+        y: (control.barHeight - height) / 2
+
+        implicitWidth: sliderHandle._size
+        implicitHeight: sliderHandle._size
         radius: VLCStyle.margin_small
-        color: control.colors.accent
+        color: theme.fg.primary
 
         transitions: [
             Transition {
@@ -318,12 +401,9 @@ Slider {
                 SequentialAnimation {
                     NumberAnimation {
                         target: sliderHandle; properties: "implicitWidth,implicitHeight"
-
                         to: 0
-
                         duration: VLCStyle.duration_short; easing.type: Easing.OutSine
                     }
-
                     PropertyAction { target: sliderHandle; property: "visible"; value: false; }
                 }
             },
@@ -331,18 +411,28 @@ Slider {
                 to: "visible"
                 SequentialAnimation {
                     PropertyAction { target: sliderHandle; property: "visible"; value: true; }
-
                     NumberAnimation {
                         target: sliderHandle; properties: "implicitWidth,implicitHeight"
-
-                        to: VLCStyle.margin_small
-
+                        to: sliderHandle._size
+                        duration: VLCStyle.duration_short; easing.type: Easing.InSine
+                    }
+                }
+            },
+            Transition {
+                to: "visibleLarge"
+                SequentialAnimation {
+                    PropertyAction { target: sliderHandle; property: "visible"; value: true; }
+                    NumberAnimation {
+                        target: sliderHandle; properties: "implicitWidth,implicitHeight"
+                        to: sliderHandle._size * (0.8 * control._hoveredScalingFactor)
                         duration: VLCStyle.duration_short; easing.type: Easing.InSine
                     }
                 }
             }
         ]
 
-        state: (control.hovered || control.activeFocus) ? "visible" : "hidden"
+        state: (control.hovered || control.activeFocus)
+               ? ((control._currentChapterHovered || (Player.hasChapters && fsm._state == fsmHeld)) ? "visibleLarge" : "visible")
+               : "hidden"
     }
 }

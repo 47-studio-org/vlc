@@ -24,8 +24,8 @@
 #include <vlc_common.h>
 #include <vlc_vout_display.h>
 
-#include <libplacebo/context.h>
 #include <libplacebo/swapchain.h>
+#include <libplacebo/log.h>
 #include <libplacebo/gpu.h>
 
 struct vlc_placebo_t;
@@ -45,12 +45,11 @@ typedef struct vlc_placebo_t
 {
     // fields internal to instance.c, should not be touched
     struct vlc_object_t obj;
-    module_t *module;
     vlc_placebo_system_t *sys;
 
-    struct pl_context *ctx;
-    const struct pl_gpu *gpu;
-    const struct pl_swapchain *swapchain;
+    pl_log log;
+    pl_gpu gpu;
+    pl_swapchain swapchain;
 
     const struct vlc_placebo_operations *ops;
 } vlc_placebo_t;

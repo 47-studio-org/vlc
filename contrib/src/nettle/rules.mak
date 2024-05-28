@@ -8,6 +8,7 @@ PKGS_FOUND += nettle
 endif
 
 ifdef HAVE_WIN32
+NETTLE_CONF += --disable-pic
 ifeq ($(ARCH),arm)
 NETTLE_CONF += --disable-assembler
 endif
@@ -31,6 +32,7 @@ ifndef GPL
 	$(REQUIRE_GNUV3)
 endif
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) $(NETTLE_CONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(NETTLE_CONF)
+	+$(MAKEBUILD) install
 	touch $@

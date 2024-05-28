@@ -27,6 +27,7 @@
 
 #include "roundimage.hpp"
 #include "util/asynctask.hpp"
+#include "util/qsgroundedrectangularimagenode.hpp"
 
 #include <qhashfunctions.h>
 
@@ -77,8 +78,13 @@ namespace
     // images are cached (result of RoundImageGenerator) with the cost calculated from QImage::sizeInBytes
     QCache<ImageCacheKey, QImage> imageCache(32 * 1024 * 1024); // 32 MiB
 
-    QImage applyRadius(const QSize &targetSize, const qreal radius, const QImage sourceImage)
+    QImage prepareImage(const QSize &targetSize, const qreal radius, const QImage sourceImage)
     {
+        if (qFuzzyIsNull(radius))
+        {
+            return sourceImage.scaled(targetSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+
         QImage target(targetSize, QImage::Format_ARGB32_Premultiplied);
         if (target.isNull())
             return target;
@@ -117,7 +123,7 @@ namespace
 
         QString errorString() const { return errorStr; }
 
-        QImage execute()
+        QImage execute() override
         {
             QImageReader reader;
             reader.setDevice(device);
@@ -130,7 +136,7 @@ namespace
             errorStr = reader.errorString();
 
             if (!errorStr.isEmpty())
-                img = applyRadius(requestedSize.isValid() ? requestedSize : img.size(), radius, img);
+                img = prepareImage(requestedSize.isValid() ? requestedSize : img.size(), radius, img);
 
             return img;
         }
@@ -244,68 +250,6 @@ namespace
     };
 #endif
 
-    class ImageProviderAsyncAdaptor : public QQuickImageResponse
-    {
-    public:
-        ImageProviderAsyncAdaptor(QQuickImageProvider *provider, const QString &id, const QSize &requestedSize, const qreal radius)
-        {
-            task.reset(new ProviderImageGetter(provider, id, requestedSize, radius));
-            connect(task.get(), &ProviderImageGetter::result, this, [this]()
-            {
-                result = task->takeResult();
-                task.reset();
-
-                emit finished();
-            });
-
-            task->start(*QThreadPool::globalInstance());
-        }
-
-        QQuickTextureFactory *textureFactory() const override
-        {
-            return result.isNull() ? nullptr : QQuickTextureFactory::textureFactoryForImage(result);
-        }
-
-    private:
-        class ProviderImageGetter : public AsyncTask<QImage>
-        {
-        public:
-            ProviderImageGetter(QQuickImageProvider *provider, const QString &id, const QSize &requestedSize, const qreal radius)
-                : provider {provider}
-                , id{id}
-                , requestedSize{requestedSize}
-                , radius {radius}
-            {
-            }
-
-            QImage execute() override
-            {
-                auto img = provider->requestImage(id, &sourceSize, requestedSize);
-                if (!img.isNull())
-                {
-                    QSize targetSize = sourceSize;
-                    if (requestedSize.isValid())
-                        targetSize.scale(requestedSize, Qt::KeepAspectRatioByExpanding);
-
-                    applyRadius(targetSize, radius, img);
-                }
-
-                return img;
-            }
-
-        private:
-            QQuickImageProvider *provider;
-            QString id;
-            QSize requestedSize;
-            qreal radius;
-            QSize sourceSize;
-        };
-
-        TaskHandle<ProviderImageGetter> task;
-        QImage result;
-    };
-
-
     // adapts a given QQuickImageResponse to produce a image with radius
     class ImageResponseRadiusAdaptor : public QQuickImageResponse
     {
@@ -332,9 +276,9 @@ namespace
             {
             }
 
-            QImage execute()
+            QImage execute() override
             {
-                return applyRadius(sourceImg.size(), radius, sourceImg);
+                return prepareImage(sourceImg.size(), radius, sourceImg);
             }
 
         private:
@@ -383,13 +327,10 @@ namespace
             if (!provider)
                 return nullptr;
 
-            assert(provider->imageType() == QQmlImageProviderBase::Image
-                   || provider->imageType() == QQmlImageProviderBase::ImageResponse);
+            assert(provider->imageType() == QQmlImageProviderBase::ImageResponse);
 
             const auto imageId = url.toString(QUrl::RemoveScheme | QUrl::RemoveAuthority).mid(1);;
 
-            if (provider->imageType() == QQmlImageProviderBase::Image)
-                return new ImageProviderAsyncAdaptor(static_cast<QQuickImageProvider *>(provider), imageId, requestedSize, radius);
             if (provider->imageType() == QQmlImageProviderBase::ImageResponse)
             {
                 auto rawImageResponse = static_cast<QQuickAsyncImageProvider *>(provider)->requestImageResponse(imageId, requestedSize);
@@ -410,27 +351,48 @@ namespace
             auto reply = engine->networkAccessManager()->get(request);
             return new NetworkImageResponse(reply, requestedSize, radius);
         }
+#else
+        return nullptr;
 #endif
     }
 }
 
 RoundImage::RoundImage(QQuickItem *parent) : QQuickItem {parent}
 {
-    if (window() || qGuiApp)
-        setDPR(window() ? window()->devicePixelRatio() : qGuiApp->devicePixelRatio());
+    if (Q_LIKELY(qGuiApp))
+        setDPR(qGuiApp->devicePixelRatio());
 
     connect(this, &QQuickItem::heightChanged, this, &RoundImage::regenerateRoundImage);
     connect(this, &QQuickItem::widthChanged, this, &RoundImage::regenerateRoundImage);
+
+    connect(this, &QQuickItem::windowChanged, this, [this](const QQuickWindow* const window) {
+        if (window)
+            setDPR(window->devicePixelRatio());
+        else if (Q_LIKELY(qGuiApp))
+            setDPR(qGuiApp->devicePixelRatio());
+    });
+
+    connect(this, &QQuickItem::windowChanged, this, &RoundImage::adjustQSGCustomGeometry);
 }
 
 RoundImage::~RoundImage()
 {
-    resetImageRequest();
+    resetImageResponse(true);
 }
 
 QSGNode *RoundImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
-    auto node = static_cast<QSGImageNode *>(oldNode);
+    auto customImageNode = dynamic_cast<QSGRoundedRectangularImageNode*>(oldNode);
+    auto imageNode = dynamic_cast<QSGImageNode*>(oldNode);
+
+    if (Q_UNLIKELY(oldNode && ((m_QSGCustomGeometry && !customImageNode)
+                               || (!m_QSGCustomGeometry && !imageNode))))
+    {
+        // This must be extremely unlikely.
+        // Assigned to different window with different renderer?
+        delete oldNode;
+        oldNode = nullptr;
+    }
 
     if (m_roundImage.isNull())
     {
@@ -439,12 +401,19 @@ QSGNode *RoundImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         return nullptr;
     }
 
-    if (!node)
+    if (!oldNode)
     {
-        assert(window());
-        node = window()->createImageNode();
-        assert(node);
-        node->setOwnsTexture(true);
+        if (m_QSGCustomGeometry)
+        {
+            customImageNode = new QSGRoundedRectangularImageNode;
+        }
+        else
+        {
+            assert(window());
+            imageNode = window()->createImageNode();
+            assert(imageNode);
+            imageNode->setOwnsTexture(true);
+        }
     }
 
     if (m_dirty)
@@ -453,16 +422,21 @@ QSGNode *RoundImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         assert(window());
 
         QQuickWindow::CreateTextureOptions flags = QQuickWindow::TextureCanUseAtlas;
-        if (Q_LIKELY(m_roundImage.hasAlphaChannel()))
-            flags |= QQuickWindow::TextureHasAlphaChannel;
 
-        QSGTexture* texture = window()->createTextureFromImage(m_roundImage, flags);
+        if (!m_roundImage.hasAlphaChannel())
+            flags |= QQuickWindow::TextureIsOpaque;
 
-        if (texture)
+        if (std::unique_ptr<QSGTexture> texture { window()->createTextureFromImage(m_roundImage, flags) })
         {
-            // No need to delete the old texture manually as it is owned by the node.
-            node->setTexture(texture);
-            node->markDirty(QSGNode::DirtyMaterial);
+            if (m_QSGCustomGeometry)
+            {
+                customImageNode->setTexture(std::move(texture));
+            }
+            else
+            {
+                // No need to delete the old texture manually as it is owned by the node.
+                imageNode->setTexture(texture.release());
+            }
         }
         else
         {
@@ -470,9 +444,20 @@ QSGNode *RoundImage::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         }
     }
 
-    node->setRect(boundingRect());
-
-    return node;
+    // Geometry:
+    if (m_QSGCustomGeometry)
+    {
+        customImageNode->setShape({boundingRect(), radius()});
+        customImageNode->setSmooth(smooth());
+        assert(customImageNode->geometry() && customImageNode->material());
+        return customImageNode;
+    }
+    else
+    {
+        imageNode->setRect(boundingRect());
+        imageNode->setFiltering(smooth() ? QSGTexture::Linear : QSGTexture::Nearest);
+        return imageNode;
+    }
 }
 
 void RoundImage::componentComplete()
@@ -515,7 +500,6 @@ void RoundImage::setRadius(qreal radius)
 
     m_radius = radius;
     emit radiusChanged(m_radius);
-    regenerateRoundImage();
 }
 
 void RoundImage::itemChange(QQuickItem::ItemChange change, const QQuickItem::ItemChangeData &value)
@@ -535,17 +519,17 @@ void RoundImage::setDPR(const qreal value)
     regenerateRoundImage();
 }
 
-void RoundImage::handleImageRequestFinished()
+void RoundImage::handleImageResponseFinished()
 {
-    const QString error = m_activeImageRequest->errorString();
+    const QString error = m_activeImageResponse->errorString();
     QImage image;
-    if (auto textureFactory = m_activeImageRequest->textureFactory())
+    if (auto textureFactory = m_activeImageResponse->textureFactory())
     {
         image = textureFactory->image();
         delete textureFactory;
     }
 
-    resetImageRequest();
+    resetImageResponse(false);
 
     if (image.isNull())
     {
@@ -558,22 +542,26 @@ void RoundImage::handleImageRequestFinished()
     setRoundImage(image);
     setStatus(Status::Ready);
 
+    // FIXME: These should be gathered from the generator:
     const qreal scaledWidth = this->width() * m_dpr;
     const qreal scaledHeight = this->height() * m_dpr;
-    const qreal scaledRadius = this->radius() * m_dpr;
+    const qreal scaledRadius = m_QSGCustomGeometry ? 0.0 : (this->radius() * m_dpr);
 
     const ImageCacheKey key {source(), QSizeF {scaledWidth, scaledHeight}.toSize(), scaledRadius};
     imageCache.insert(key, new QImage(image), image.sizeInBytes());
 }
 
-void RoundImage::resetImageRequest()
+void RoundImage::resetImageResponse(bool cancel)
 {
-    if (!m_activeImageRequest)
+    if (!m_activeImageResponse)
         return;
 
-    m_activeImageRequest->disconnect(this);
-    m_activeImageRequest->deleteLater();
-    m_activeImageRequest = nullptr;
+    m_activeImageResponse->disconnect(this);
+
+    if (cancel)
+        m_activeImageResponse->cancel();
+
+    m_activeImageResponse = nullptr;
 }
 
 void RoundImage::load()
@@ -586,7 +574,7 @@ void RoundImage::load()
 
     const qreal scaledWidth = this->width() * m_dpr;
     const qreal scaledHeight = this->height() * m_dpr;
-    const qreal scaledRadius = this->radius() * m_dpr;
+    const qreal scaledRadius = m_QSGCustomGeometry ? 0.0 : (this->radius() * m_dpr);
 
     const ImageCacheKey key {source(), QSizeF {scaledWidth, scaledHeight}.toSize(), scaledRadius};
     if (auto image = imageCache.object(key)) // should only by called in mainthread
@@ -596,8 +584,10 @@ void RoundImage::load()
         return;
     }
 
-    m_activeImageRequest = getAsyncImageResponse(source(), QSizeF {scaledWidth, scaledHeight}.toSize(), scaledRadius, engine);
-    connect(m_activeImageRequest, &QQuickImageResponse::finished, this, &RoundImage::handleImageRequestFinished);
+    m_activeImageResponse = getAsyncImageResponse(source(), QSizeF {scaledWidth, scaledHeight}.toSize(), scaledRadius, engine);
+
+    connect(m_activeImageResponse, &QQuickImageResponse::finished, this, &RoundImage::handleImageResponseFinished);
+    connect(m_activeImageResponse, &QQuickImageResponse::finished, m_activeImageResponse, &QObject::deleteLater);
 }
 
 void RoundImage::setRoundImage(QImage image)
@@ -633,11 +623,91 @@ void RoundImage::regenerateRoundImage()
     // remove old contents
     setRoundImage({});
 
-    resetImageRequest();
+    resetImageResponse(true);
 
     // use Qt::QueuedConnection to delay generation, so that dependent properties
     // subsequent updates can be merged, f.e when VLCStyle.scale changes
     m_enqueuedGeneration = true;
 
     QMetaObject::invokeMethod(this, &RoundImage::load, Qt::QueuedConnection);
+}
+
+void RoundImage::adjustQSGCustomGeometry(const QQuickWindow* const window)
+{
+    if (!window) return;
+
+    // No need to check if the scene graph is initialized according to docs.
+
+    const auto enableCustomGeometry = [this, window]() {
+        if (m_QSGCustomGeometry)
+            return;
+
+        // Favor custom geometry instead of clipping the image.
+        // This allows making the texture opaque, as long as
+        // source image is also opaque, for optimization
+        // purposes.
+        if (window->format().samples() != -1)
+            m_QSGCustomGeometry = true;
+        // No need to regenerate as transparent part will not
+        // matter. However, in order for the material to not
+        // require blending, a regeneration is necessary.
+        // We could force the material to not require blending
+        // for the outer transparent part which is not within the
+        // geometry, but then inherently transparent images would
+        // not be rendered correctly due to the alpha channel.
+
+        QMetaObject::invokeMethod(this,
+                                  &RoundImage::regenerateRoundImage,
+                                  Qt::QueuedConnection);
+
+        // It might be tempting to not regenerate the image on size
+        // change. However;
+        // If upscaled, we don't know if the image can be provided
+        // in a higher resolution.
+        // If downscaled, we would like to free some used memory.
+        // On the other hand, there is no need to regenerate the
+        // image when the radius changes. This behavior does not
+        // mean that the radius can be animated. Although possible,
+        // the custom geometry node is not designed to handle animations.
+        disconnect(this, &RoundImage::radiusChanged, this, &RoundImage::regenerateRoundImage);
+        connect(this, &RoundImage::radiusChanged, this, &QQuickItem::update);
+    };
+
+    const auto disableCustomGeometry = [this]() {
+        if (!m_QSGCustomGeometry)
+            return;
+
+        m_QSGCustomGeometry = false;
+
+        QMetaObject::invokeMethod(this,
+                                  &RoundImage::regenerateRoundImage,
+                                  Qt::QueuedConnection);
+
+        connect(this, &RoundImage::radiusChanged, this, &RoundImage::regenerateRoundImage);
+        disconnect(this, &RoundImage::radiusChanged, this, &QQuickItem::update);
+    };
+
+
+    if (window->rendererInterface()->graphicsApi() == QSGRendererInterface::GraphicsApi::OpenGL)
+    {
+        // Direct OpenGL, enable custom geometry:
+        enableCustomGeometry();
+    }
+    else
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+        // QSG(Opaque)TextureMaterial supports Qt RHI,
+        // so there is no obstacle using custom geometry
+        // if Qt RHI is in use.
+        if (QSGRendererInterface::isApiRhiBased(window->rendererInterface()->graphicsApi()))
+            enableCustomGeometry();
+        else
+            disableCustomGeometry();
+#else
+        // Qt RHI is introduced in Qt 5.14.
+        // QSG(Opaque)TextureMaterial does not support any graphics API other than OpenGL
+        // without the Qt RHI abstraction layer.
+        disableCustomGeometry();
+#endif
+    }
 }

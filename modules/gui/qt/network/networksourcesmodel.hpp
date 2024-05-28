@@ -31,7 +31,6 @@
 #include <vlc_cxx_helpers.hpp>
 
 #include <maininterface/mainctx.hpp>
-#include "networksourcelistener.hpp"
 
 #include <memory>
 
@@ -83,7 +82,7 @@ private:
         QUrl artworkUrl;
     };
 
-    bool initializeMediaSources();
+    bool initializeMediaTree();
 
 private:
     std::vector<Item> m_items;

@@ -27,92 +27,125 @@ import org.videolan.vlc 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
+import "qrc:///util/Helpers.js" as Helpers
 
 FocusScope {
     id: root
 
+    property int rightPadding: 0
+
     property var artist: ({})
 
-    height: VLCStyle.artistBanner_height
+    implicitHeight: VLCStyle.artistBanner_height
 
     function setCurrentItemFocus(reason) {
         playActionBtn.forceActiveFocus(reason);
     }
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        ////force the dark theme in the header
+        palette: VLCStyle.darkPalette
+        colorSet: ColorContext.View
+    }
+
     Image {
         id: background
+
+        // NOTE: We want the banner to ignore safe margins.
+        anchors.fill: parent
+
         asynchronous: true
-
-        width: parent.width
-        height: VLCStyle.artistBanner_height
         source: artist.cover || VLCStyle.noArtArtist
+        sourceSize: artist.cover ? Qt.size(MainCtx.screen ? Helpers.alignUp(MainCtx.screen.availableGeometry.width, 32) : 1024, 0)
+                                 : undefined
+        mipmap: !!artist.cover
         fillMode: artist.cover ? Image.PreserveAspectCrop : Image.Tile
+        visible: !blurLoader.active
 
-        Rectangle {
-            anchors.fill: background
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, .5) }
-                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, .7) }
-            }
+        // Single pass linear filtering, in case the effect is not available:
+        layer.enabled: visible
+        layer.smooth: true
+        layer.textureSize: Qt.size(width * .75, height * .75)
+    }
+
+    Loader {
+        id: blurLoader
+        anchors.fill: background
+
+        // Don't care Qt 6 Qt5Compat RHI compatible graphical effects for now
+        active: (GraphicsInfo.api === GraphicsInfo.OpenGL)
+
+        sourceComponent: FastBlur {
+            source: background
+            radius: VLCStyle.dp(4, VLCStyle.scale)
         }
     }
 
-    GaussianBlur {
-        source: background
+    Rectangle {
         anchors.fill: background
-        radius: VLCStyle.dp(4, VLCStyle.scale)
-        samples: (radius * 2) + 1
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, .5) }
+            GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, .7) }
+        }
     }
 
     RowLayout {
         id: col
 
-        anchors.fill: background
+        anchors.fill: parent
         anchors.topMargin: VLCStyle.margin_xxlarge
         anchors.bottomMargin: VLCStyle.margin_xxlarge
         anchors.leftMargin: VLCStyle.margin_xlarge
+        anchors.rightMargin: root.rightPadding
+
         spacing: VLCStyle.margin_normal
-        clip: true
 
         Item {
-            Layout.alignment: Qt.AlignVCenter
-            Layout.preferredHeight: VLCStyle.cover_normal
-            Layout.preferredWidth: VLCStyle.cover_normal
+            implicitHeight: VLCStyle.cover_normal
+            implicitWidth: VLCStyle.cover_normal
 
             RoundImage {
                 source: artist.cover || VLCStyle.noArtArtist
-                height: VLCStyle.cover_normal
-                width: VLCStyle.cover_normal
+                anchors.fill: parent
                 radius: VLCStyle.cover_normal
             }
 
             Rectangle {
-                height: VLCStyle.cover_normal
-                width: VLCStyle.cover_normal
+                anchors.fill: parent
                 radius: VLCStyle.cover_normal
                 color: "transparent"
                 border.width: VLCStyle.dp(1, VLCStyle.scale)
-                border.color: VLCStyle.colors.roundPlayCoverBorder
+                border.color: theme.border
             }
         }
 
         ColumnLayout {
-            spacing: 0
-
-            Layout.alignment: Qt.AlignVCenter
             Layout.fillWidth: true
 
+            // NOTE: The layout can be resized to zero to hide the text entirely.
+            Layout.minimumWidth: 0
+
+            Layout.rightMargin: VLCStyle.margin_small
+
+            spacing: 0
+
             Widgets.SubtitleLabel {
+                Layout.fillWidth: true
+
                 text: artist.name || I18n.qtr("No artist")
-                color: "white"
+                color: theme.fg.primary
+
+                Layout.maximumWidth: parent.width
             }
 
             Widgets.MenuCaption {
-                text: I18n.qtr("%1 Songs").arg(artist.nb_tracks)
-                color: "white"
-                opacity: .6
+                Layout.fillWidth: true
 
                 Layout.topMargin: VLCStyle.margin_xxxsmall
+
+                text: I18n.qtr("%1 Songs").arg(artist.nb_tracks)
+                color: theme.fg.secondary
             }
 
             Widgets.NavigableRow {
@@ -128,11 +161,13 @@ FocusScope {
                 model: ObjectModel {
                     Widgets.ActionButtonPrimary {
                         id: playActionBtn
-                        iconTxt: VLCIcons.play
+                        iconTxt: VLCIcons.play_outline
                         text: I18n.qtr("Play all")
                         focus: true
-                        // NOTE: In overlay, the focus rectangle is always white.
-                        colorFocus: VLCStyle.colors.white
+
+                        //we probably want to keep this button like the other action buttons
+                        colorContext.palette: VLCStyle.palette
+
                         onClicked: MediaLib.addAndPlay( artist.id )
                     }
 

@@ -34,6 +34,7 @@
     if (self) {
         NSAssert([self.cell isKindOfClass:[VLCVolumeSliderCell class]],
                  @"VLCVolumeSlider cell is not VLCVolumeSliderCell");
+
         if (@available(macOS 10.14, *)) {
             [self viewDidChangeEffectiveAppearance];
         } else {

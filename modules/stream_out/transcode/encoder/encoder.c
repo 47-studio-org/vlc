@@ -48,12 +48,12 @@ void transcode_encoder_delete( transcode_encoder_t *p_enc )
     {
         if( p_enc->p_encoder->fmt_in.i_cat == VIDEO_ES )
         {
+            transcode_encoder_video_stop( p_enc );
             block_ChainRelease( p_enc->p_buffers );
             picture_fifo_Delete( p_enc->pp_pics );
         }
-        es_format_Clean( &p_enc->p_encoder->fmt_in );
-        es_format_Clean( &p_enc->p_encoder->fmt_out );
-        vlc_object_delete(p_enc->p_encoder);
+
+        vlc_encoder_Destroy( p_enc->p_encoder );
     }
     free( p_enc );
 }
@@ -183,15 +183,16 @@ void transcode_encoder_close( transcode_encoder_t *p_enc )
     if( !p_enc->p_encoder->p_module )
         return;
 
-    switch( p_enc->p_encoder->fmt_in.i_cat )
+    if( p_enc->p_encoder->fmt_in.i_cat == VIDEO_ES )
+        transcode_encoder_video_stop( p_enc );
+
+    if( p_enc->p_encoder->ops != NULL && p_enc->p_encoder->ops->close != NULL )
     {
-        case VIDEO_ES:
-            transcode_encoder_video_close( p_enc );
-            break;
-        default:
-            module_unneed( p_enc->p_encoder, p_enc->p_encoder->p_module );
-            break;
+        p_enc->p_encoder->ops->close( p_enc->p_encoder );
+        p_enc->p_encoder->ops = NULL;
     }
+
+    module_unneed( p_enc->p_encoder, p_enc->p_encoder->p_module );
 
     p_enc->p_encoder->p_module = NULL;
 }

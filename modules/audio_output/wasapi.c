@@ -37,7 +37,9 @@
 #include <vlc_plugin.h>
 
 #include <audioclient.h>
-#include "audio_output/mmdevice.h"
+#include "mmdevice.h"
+
+#define TIMING_REPORT_DELAY VLC_TICK_FROM_MS(1000)
 
 /* 00000092-0000-0010-8000-00aa00389b71 */
 DEFINE_GUID(_KSDATAFORMAT_SUBTYPE_IEC61937_DOLBY_DIGITAL,
@@ -107,12 +109,11 @@ static BOOL CALLBACK InitFreq(INIT_ONCE *once, void *param, void **context)
 typedef struct aout_stream_sys
 {
     IAudioClient *client;
-    vlc_timer_t timer;
 
 #define STARTED_STATE_INIT 0
 #define STARTED_STATE_OK 1
 #define STARTED_STATE_ERROR 2
-    atomic_char started_state;
+    uint8_t started_state;
 
     uint8_t chans_table[AOUT_CHAN_MAX];
     uint8_t chans_to_reorder;
@@ -125,28 +126,21 @@ typedef struct aout_stream_sys
     bool s24s32; /**< Output configured as S24N, but input as S32N */
 } aout_stream_sys_t;
 
-static void ResetTimer(aout_stream_t *s)
-{
-    aout_stream_sys_t *sys = s->sys;
-    vlc_timer_disarm(sys->timer);
-}
-
 /*** VLC audio output callbacks ***/
-static HRESULT TimeGet(aout_stream_t *s, vlc_tick_t *restrict delay)
+static void TimingReport(aout_stream_t *s)
 {
     aout_stream_sys_t *sys = s->sys;
     void *pv;
     UINT64 pos, qpcpos, clock_freq;
     HRESULT hr;
 
-    if (atomic_load(&sys->started_state) != STARTED_STATE_OK)
-        return E_FAIL;
+    assert(sys->started_state == STARTED_STATE_OK);
 
     hr = IAudioClient_GetService(sys->client, &IID_IAudioClock, &pv);
     if (FAILED(hr))
     {
         msg_Err(s, "cannot get clock (error 0x%lX)", hr);
-        return hr;
+        return;
     }
 
     IAudioClock *clock = pv;
@@ -158,65 +152,61 @@ static HRESULT TimeGet(aout_stream_t *s, vlc_tick_t *restrict delay)
     if (FAILED(hr))
     {
         msg_Err(s, "cannot get position (error 0x%lX)", hr);
-        return hr;
+        return;
     }
 
-    vlc_tick_t written = vlc_tick_from_frac(sys->written, sys->rate);
-    vlc_tick_t tick_pos = vlc_tick_from_frac(pos, clock_freq);
+    aout_stream_TimingReport(s, VLC_TICK_FROM_MSFTIME(qpcpos),
+                             vlc_tick_from_frac(pos, clock_freq));
+
+    aout_stream_TriggerTimer(s, TimingReport,
+                             vlc_tick_now() + TIMING_REPORT_DELAY);
 
     static_assert((10000000 % CLOCK_FREQ) == 0, "Frequency conversion broken");
+}
 
-    *delay = written - tick_pos
-           - VLC_TICK_FROM_MSFTIME(get_qpc() - qpcpos);
+static HRESULT StartNow(aout_stream_t *s)
+{
+    aout_stream_sys_t *sys = s->sys;
+
+    HRESULT hr = IAudioClient_Start(sys->client);
+
+    sys->started_state = SUCCEEDED(hr) ? STARTED_STATE_OK : STARTED_STATE_ERROR;
+
+    if (SUCCEEDED(hr))
+        TimingReport(s);
+    else
+        msg_Err(s, "stream failed to start: 0x%lX", hr);
 
     return hr;
 }
 
-static void StartDeferredCallback(void *val)
+static void StartDeferredCallback(aout_stream_t *s)
 {
-    aout_stream_t *s = val;
-    aout_stream_sys_t *sys = s->sys;
-
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    /* From a timer callback, so it's impossible that COM was init before */
-    assert(SUCCEEDED(hr));
-
-    hr = IAudioClient_Start(sys->client);
-
-    CoUninitialize();
-
-    atomic_store(&sys->started_state,
-                 SUCCEEDED(hr) ? STARTED_STATE_OK : STARTED_STATE_ERROR);
+    StartNow(s);
 }
 
 static HRESULT StartDeferred(aout_stream_t *s, vlc_tick_t date)
 {
     aout_stream_sys_t *sys = s->sys;
     vlc_tick_t written = vlc_tick_from_frac(sys->written, sys->rate);
-    vlc_tick_t start_delay = date - vlc_tick_now() - written;
-    BOOL timer_updated = false;
+    vlc_tick_t start_date = date - written;
+    vlc_tick_t start_delay = start_date - vlc_tick_now();
 
     /* Create or update the current timer */
     if (start_delay > 0)
     {
-        vlc_timer_schedule( sys->timer, false, start_delay, 0);
-        timer_updated = true;
-    }
-    else
-        ResetTimer(s);
-
-    if (!timer_updated)
-    {
-        HRESULT hr = IAudioClient_Start(sys->client);
-        if (FAILED(hr))
-        {
-            atomic_store(&sys->started_state, STARTED_STATE_ERROR);
-            return hr;
-        }
-        atomic_store(&sys->started_state, STARTED_STATE_OK);
-    }
-    else
+        aout_stream_TriggerTimer(s, StartDeferredCallback, start_date);
         msg_Dbg(s, "deferring start (%"PRId64" us)", start_delay);
+    }
+    else
+    {
+        aout_stream_DisarmTimer(s);
+
+        /* Check started_state again, since the timer callback could have been
+         * called before or while disarming the timer */
+        if (sys->started_state == STARTED_STATE_INIT)
+            return StartNow(s);
+    }
 
     return S_OK;
 }
@@ -228,13 +218,12 @@ static HRESULT Play(aout_stream_t *s, block_t *block, vlc_tick_t date)
     void *pv;
     HRESULT hr;
 
-    char started_state = atomic_load(&sys->started_state);
-    if (unlikely(started_state == STARTED_STATE_ERROR))
+    if (unlikely(sys->started_state == STARTED_STATE_ERROR))
     {
         hr = E_FAIL;
         goto out;
     }
-    else if (started_state == STARTED_STATE_INIT)
+    else if (sys->started_state == STARTED_STATE_INIT)
     {
         hr = StartDeferred(s, date);
         if (FAILED(hr))
@@ -312,8 +301,10 @@ static HRESULT Play(aout_stream_t *s, block_t *block, vlc_tick_t date)
         if (block->i_nb_samples == 0)
             break; /* done */
 
-        /* Out of buffer space, sleep */
-        vlc_tick_sleep(sys->frames * VLC_TICK_FROM_MS(500) / sys->rate);
+        block->i_length -= vlc_tick_from_samples(frames, sys->rate);
+        /* Out of buffer space, keep the block and notify the owner */
+        IAudioRenderClient_Release(render);
+        return S_FALSE;
     }
     IAudioRenderClient_Release(render);
 out:
@@ -329,18 +320,20 @@ static HRESULT Pause(aout_stream_t *s, bool paused)
 
     if (paused)
     {
-        ResetTimer(s);
-        if (atomic_load(&sys->started_state) == STARTED_STATE_OK)
+        aout_stream_DisarmTimer(s);
+
+        if (sys->started_state == STARTED_STATE_OK)
+        {
             hr = IAudioClient_Stop(sys->client);
+            if (FAILED(hr))
+                msg_Warn(s, "cannot stop stream (error 0x%lX)", hr);
+        }
         else
             hr = S_OK;
         /* Don't reset the timer state, we won't have to start deferred again. */
     }
     else
-        hr = IAudioClient_Start(sys->client);
-    if (FAILED(hr))
-        msg_Warn(s, "cannot %s stream (error 0x%lX)",
-                 paused ? "stop" : "start", hr);
+        hr = StartNow(s);
     return hr;
 }
 
@@ -349,10 +342,11 @@ static HRESULT Flush(aout_stream_t *s)
     aout_stream_sys_t *sys = s->sys;
     HRESULT hr;
 
-    ResetTimer(s);
+    aout_stream_DisarmTimer(s);
     /* Reset the timer state, the next start need to be deferred. */
-    if (atomic_exchange(&sys->started_state, STARTED_STATE_INIT) == STARTED_STATE_OK)
+    if (sys->started_state == STARTED_STATE_OK)
     {
+        sys->started_state = STARTED_STATE_INIT;
         IAudioClient_Stop(sys->client);
         hr = IAudioClient_Reset(sys->client);
     }
@@ -607,14 +601,13 @@ static void Stop(aout_stream_t *s)
 {
     aout_stream_sys_t *sys = s->sys;
 
-    ResetTimer(s);
+    aout_stream_DisarmTimer(s);
 
-    if (atomic_load(&sys->started_state) == STARTED_STATE_OK)
+    if (sys->started_state == STARTED_STATE_OK)
         IAudioClient_Stop(sys->client);
 
     IAudioClient_Release(sys->client);
 
-    vlc_timer_destroy(sys->timer);
     free(sys);
 }
 
@@ -777,13 +770,7 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
     if (unlikely(sys == NULL))
         return E_OUTOFMEMORY;
     sys->client = NULL;
-    atomic_init(&sys->started_state, STARTED_STATE_INIT);
-    if (unlikely(vlc_timer_create( &sys->timer, StartDeferredCallback, s ) != 0))
-    {
-        msg_Err(s, "failed to create the delayed start timer");
-        free(sys);
-        return E_UNEXPECTED;
-    }
+    sys->started_state = STARTED_STATE_INIT;
 
     /* Configure audio stream */
     WAVEFORMATEXTENSIBLE_IEC61937 wf_iec61937;
@@ -900,12 +887,21 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
     if (sys->s24s32)
         msg_Dbg(s, "audio device configured as s24");
 
-    hr = IAudioClient_Initialize(sys->client, shared_mode, 0, buffer_duration,
-                                 0, pwf, sid);
+    hr = IAudioClient_Initialize(sys->client, shared_mode,
+                                 AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                 buffer_duration, 0, pwf, sid);
     CoTaskMemFree(pwf_closest);
     if (FAILED(hr))
     {
         msg_Err(s, "cannot initialize audio client (error 0x%lX)", hr);
+        goto error;
+    }
+
+    hr = IAudioClient_SetEventHandle(sys->client,
+                                     aout_stream_GetBufferReadyEvent(s));
+    if (FAILED(hr))
+    {
+        msg_Err(s, "cannot set audio client EventHandle (error 0x%lX)", hr);
         goto error;
     }
 
@@ -930,7 +926,6 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
     *pfmt = fmt;
     sys->written = 0;
     s->sys = sys;
-    s->time_get = TimeGet;
     s->play = Play;
     s->pause = Pause;
     s->flush = Flush;
@@ -940,7 +935,6 @@ error:
     CoTaskMemFree(pwf_mix);
     if (sys->client != NULL)
         IAudioClient_Release(sys->client);
-    vlc_timer_destroy(sys->timer);
     free(sys);
     return hr;
 }

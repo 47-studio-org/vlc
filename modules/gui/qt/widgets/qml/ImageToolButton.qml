@@ -16,37 +16,68 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 import QtQuick 2.11
-import QtQuick.Controls 2.4
+import QtQuick.Templates 2.4 as T
+
+import org.videolan.vlc 0.1
+
+import "qrc:///widgets/" as Widgets
 
 import "qrc:///style/"
 
-/* button to choose the view displayed (list or grid) */
-ToolButton {
+T.ToolButton {
     id: control
 
-    property url imageSource: undefined
+    property url imageSource: ""
 
-    contentItem:  Image {
-        source: control.imageSource
-        fillMode: Image.PreserveAspectFit
-        height: control.width
-        width: control.height
+    property bool paintOnly: false
+
+    property size sourceSize: Qt.size(VLCStyle.icon_normal, VLCStyle.icon_normal)
+
+    padding: 0
+
+    enabled: !paintOnly
+
+    implicitWidth: control.sourceSize.width + leftPadding + rightPadding
+    implicitHeight: control.sourceSize.height + topPadding + bottomPadding
+    baselineOffset: contentItem.y + contentItem.baselineOffset
+
+
+    Keys.priority: Keys.AfterItem
+    Keys.onPressed: Navigation.defaultKeyAction(event)
+
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.ToolButton
+
+        enabled: control.enabled || control.paintOnly
+        focused: control.visualFocus
+        hovered: control.hovered
+        pressed: control.down
+    }
+
+    background: AnimatedBackground {
+        width: control.sourceSize.width
+        height: control.sourceSize.height
+
+        active: control.visualFocus
+        animate: theme.initialized
+
+        backgroundColor: theme.bg.primary
+        foregroundColor: theme.fg.primary
+        activeBorderColor: theme.visualFocus
+    }
+
+    contentItem: Image {
         anchors.centerIn: control
+
+        source: control.imageSource
+
+        fillMode: Image.PreserveAspectFit
+
+        width: control.sourceSize.width
+        height: control.sourceSize.height
+        sourceSize: control.sourceSize
+
     }
 
-    background: Rectangle {
-        height: control.width
-        width: control.height
-        color: "transparent"
-        Rectangle {
-            anchors {
-                left: parent.left
-                right: parent.right
-                bottom: parent.bottom
-            }
-            height: 2
-            visible: control.activeFocus || control.checked
-            color: control.activeFocus ? VLCStyle.colors.accent  : VLCStyle.colors.bgHover
-        }
-    }
 }

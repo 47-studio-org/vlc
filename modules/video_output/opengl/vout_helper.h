@@ -46,7 +46,8 @@
     add_integer("dither-algo", -1, DITHER_TEXT, DITHER_LONGTEXT) \
             change_integer_list(dither_values, dither_text) \
     add_integer_with_range("dither-depth", 0, 0, 16, \
-            DITHER_DEPTH_TEXT, DITHER_DEPTH_LONGTEXT)
+            DITHER_DEPTH_TEXT, DITHER_DEPTH_LONGTEXT) \
+    add_loadfile("gl-lut-file", NULL, LUT_FILE_TEXT, LUT_FILE_LONGTEXT)
 #else
 #define add_glopts_placebo()
 #endif
@@ -80,5 +81,9 @@ void vout_display_opengl_Viewport(vout_display_opengl_t *vgl, int x, int y,
 int vout_display_opengl_Prepare(vout_display_opengl_t *vgl,
                                 picture_t *picture, subpicture_t *subpicture);
 int vout_display_opengl_Display(vout_display_opengl_t *vgl);
+
+int vout_display_opengl_UpdateFormat(vout_display_opengl_t *vgl,
+                                     const video_format_t *fmt,
+                                     vlc_video_context *vctx);
 
 #endif

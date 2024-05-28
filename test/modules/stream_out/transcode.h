@@ -20,10 +20,6 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-#define MODULE_NAME test_transcode_mock
-#define MODULE_STRING "test_transcode_mock"
-#undef __PLUGIN__
-
 #include <vlc_fourcc.h>
 
 #define TEST_FLAG_CONVERTER 0x01
@@ -40,6 +36,7 @@ struct transcode_scenario {
     void (*filter_setup)(filter_t *);
     void (*converter_setup)(filter_t *);
     void (*report_error)(sout_stream_t *);
+    void (*report_output)(const vlc_frame_t *);
 };
 
 

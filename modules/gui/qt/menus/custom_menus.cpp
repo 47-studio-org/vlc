@@ -55,9 +55,9 @@ RendererAction::RendererAction( vlc_renderer_item_t *p_item_ )
     p_item = p_item_;
     vlc_renderer_item_hold( p_item );
     if( vlc_renderer_item_flags( p_item ) & VLC_RENDERER_CAN_VIDEO )
-        setIcon( QIcon( ":/sidebar/movie.svg" ) );
+        setIcon( QIcon( ":/menu/movie.svg" ) );
     else
-        setIcon( QIcon( ":/sidebar/music.svg" ) );
+        setIcon( QIcon( ":/menu/music.svg" ) );
     setText( vlc_renderer_item_name( p_item ) );
     setCheckable(true);
 }
@@ -216,9 +216,17 @@ CheckableListMenu::CheckableListMenu(QString title, QAbstractListModel* model , 
     , m_grouping(grouping)
 {
     this->setTitle(title);
-    if (m_grouping == GROUPED)
+    if (m_grouping != UNGROUPED)
     {
         m_actionGroup = new QActionGroup(this);
+        if (m_grouping == GROUPED_OPTIONAL)
+        {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+            m_actionGroup->setExclusionPolicy(QActionGroup::ExclusionPolicy::ExclusiveOptional);
+#else
+            m_actionGroup->setExclusive(false);
+#endif
+        }
     }
 
     connect(m_model, &QAbstractListModel::rowsAboutToBeRemoved, this, &CheckableListMenu::onRowsAboutToBeRemoved);
@@ -377,7 +385,7 @@ void ListMenuHelper::onRowsRemoved(const QModelIndex &, int first, int last)
 
     QList<QAction *>::iterator begin = m_actions.begin();
 
-    m_actions.erase(begin + first, begin + last);
+    m_actions.erase(begin + first, begin + last + 1);
 
     emit countChanged(m_actions.count());
 }
@@ -479,7 +487,7 @@ void RecentMenu::onRowsRemoved(const QModelIndex&, int first, int last)
 
     QList<QAction *>::iterator begin = m_actions.begin();
 
-    m_actions.erase(begin + first, begin + last);
+    m_actions.erase(begin + first, begin + last + 1);
 
     if (m_actions.isEmpty())
         setEnabled(false);
@@ -554,7 +562,9 @@ BookmarkMenu::BookmarkMenu(MediaLib * mediaLib, vlc_player_t * player, QWidget *
 
     addSeparator();
 
-    MLBookmarkModel * model = new MLBookmarkModel(mediaLib, player, this);
+    MLBookmarkModel * model = new MLBookmarkModel(this);
+    model->setPlayer(player);
+    model->setMl(mediaLib);
 
     ListMenuHelper * helper = new ListMenuHelper(this, model, nullptr, this);
 

@@ -36,7 +36,7 @@
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLExtraFunctions>
 
-#include <qpa/qplatformnativeinterface.h>
+#include QPNI_HEADER
 #include "compositor_dcomp_error.hpp"
 #include "maininterface/interface_window_handler.hpp"
 
@@ -45,7 +45,7 @@ namespace vlc {
 using namespace Microsoft::WRL;
 
 //Signature for DCompositionCreateDevice
-typedef HRESULT (*DCompositionCreateDeviceFun)(IDXGIDevice *dxgiDevice, REFIID iid, void** dcompositionDevice);
+typedef HRESULT (WINAPI* DCompositionCreateDeviceFun)(IDXGIDevice *dxgiDevice, REFIID iid, void** dcompositionDevice);
 
 int CompositorDirectComposition::windowEnable(const vlc_window_cfg_t *)
 {
@@ -252,7 +252,7 @@ bool CompositorDirectComposition::makeMainInterface(MainCtx* mainCtx)
         bool ret;
         m_mainCtx = mainCtx;
 
-        m_rootWindow = new QWindow();
+        m_rootWindow = new DCompRenderWindow();
 
         m_videoWindowHandler = std::make_unique<VideoWindowHandler>(m_intf);
         m_videoWindowHandler->setWindow( m_rootWindow );

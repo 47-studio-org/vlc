@@ -724,10 +724,15 @@ bool AbstractStream::getMediaAdvanceAmount(vlc_tick_t *duration) const
     return true;
 }
 
-void AbstractStream::runUpdates()
+bool AbstractStream::runUpdates(bool)
 {
-    if(valid && !disabled)
-        segmentTracker->updateSelected();
+    if(!valid)
+        return false;
+
+    if(!disabled)
+        return segmentTracker->updateSelected();
+    else
+        return false;
 }
 
 void AbstractStream::fillExtraFMTInfo( es_format_t *p_fmt ) const
@@ -741,6 +746,11 @@ void AbstractStream::fillExtraFMTInfo( es_format_t *p_fmt ) const
         p_fmt->video.i_visible_width = currentrep.width;
         p_fmt->video.i_visible_height = currentrep.height;
     }
+}
+
+block_t *AbstractStream::checkBlock(block_t *p_block, bool)
+{
+    return p_block;
 }
 
 AbstractDemuxer * AbstractStream::createDemux(const StreamFormat &format)

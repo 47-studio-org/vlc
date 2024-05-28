@@ -60,7 +60,7 @@ GotoTimeDialog::GotoTimeDialog( qt_intf_t *_p_intf)
     timeEdit->setAlignment( Qt::AlignRight );
     timeEdit->setSizePolicy( QSizePolicy::Expanding, QSizePolicy::Minimum );
 
-    QPushButton *resetButton = new QPushButton( QIcon(":/update.svg"), "" );
+    QPushButton *resetButton = new QPushButton( QIcon(":/menu/update.svg"), "" );
     resetButton->setToolTip( qtr("Reset") );
 
     mainLayout->addWidget( timeIntro, 0, 0, 1, 1 );
@@ -105,7 +105,7 @@ void GotoTimeDialog::close()
     if ( THEMIM->hasInput() )
     {
         int i_time = QTime( 0, 0, 0 ).msecsTo( timeEdit->time() );
-        THEMIM->jumpToTime( VLC_TICK_FROM_MS(i_time) );
+        THEMIM->setTime( VLC_TICK_FROM_MS(i_time) );
     }
     toggleVisible();
 }

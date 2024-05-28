@@ -35,44 +35,62 @@ FocusScope {
     property var sortModel: []
 
     property Component tableHeaderDelegate: Widgets.CaptionLabel {
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+
         text: model.text || ""
+        color: parent.colorContext.fg.secondary
     }
 
-    readonly property real sectionWidth: !!section.property ? VLCStyle.table_section_width : 0
+    // NOTE: We want edge to edge backgrounds in our delegate and header, so we implement our own
+    //       margins implementation like in ExpandGridView. The default values should be the same
+    //       than ExpandGridView to respect the grid parti pris.
+    property int leftMargin: VLCStyle.column_margin + leftPadding
+    property int rightMargin: VLCStyle.column_margin + rightPadding
+
+    property int leftPadding: 0
+    property int rightPadding: 0
+
+    readonly property int extraMargin: Math.max(0, (width - usedRowSpace) / 2)
+
+    // NOTE: The list margins for the item(s) horizontal positioning.
+    readonly property int contentLeftMargin: extraMargin + leftMargin
+    readonly property int contentRightMargin: extraMargin + rightMargin
 
     readonly property real usedRowSpace: {
-        var s = 0
+        var size = leftMargin + rightMargin
+
         for (var i in sortModel)
-            s += sortModel[i].width + root.horizontalSpacing
-        return s + root._contextButtonHorizontalSpace + (VLCStyle.margin_xxxsmall * 2)
+            size += VLCStyle.colWidth(sortModel[i].size)
+
+        return size + Math.max(VLCStyle.column_spacing * (sortModel.length - 1), 0)
     }
 
     property Component header: Item{}
-    property Item headerItem: view.headerItem.loadedHeader
-    property color headerColor
+    property Item headerItem: view.headerItem ? view.headerItem.loadedHeader : null
+    property color headerColor: colorContext.bg.primary
     property int headerTopPadding: 0
 
     property Util.SelectableDelegateModel selectionDelegateModel
     property real rowHeight: VLCStyle.tableRow_height
-    readonly property int _contextButtonHorizontalSpace: VLCStyle.icon_normal
-    property int horizontalSpacing: VLCStyle.column_margin_width
 
     property real availableRowWidth: 0
-    property real _availabeRowWidthLastUpdateTime: Date.now()
-    readonly property real _currentAvailableRowWidth: root.width
-                                                      - root.sectionWidth * 2
-                                                      - (root.horizontalSpacing + _contextButtonHorizontalSpace)
-                                                      - (VLCStyle.margin_xxxsmall * 2)
 
     property Item dragItem
     property bool acceptDrop: false
+
+    // Private
+
+    property bool _ready: false
+
+    property real _availabeRowWidthLastUpdateTime: Date.now()
+
+    readonly property real _currentAvailableRowWidth: width - leftMargin - rightMargin
 
     // Aliases
 
     property alias topMargin: view.topMargin
     property alias bottomMargin: view.bottomMargin
-    property alias leftMargin: view.leftMargin
-    property alias rightMargin: view.rightMargin
 
     property alias spacing: view.spacing
 
@@ -97,8 +115,10 @@ FocusScope {
     property alias footerItem: view.footerItem
     property alias footer: view.footer
 
-    property alias fadeColor: view.fadeColor
+    property alias backgroundColor: view.backgroundColor
     property alias fadeSize: view.fadeSize
+    property alias enableBeginningFade: view.enableBeginningFade
+    property alias enableEndFade: view.enableEndFade
 
     property alias add:       view.add
     property alias displaced: view.displaced
@@ -107,6 +127,10 @@ FocusScope {
     property alias listView: view
 
     property alias displayMarginEnd: view.displayMarginEnd
+
+    property alias count: view.count
+
+    property alias colorContext: view.colorContext
 
     // Signals
 
@@ -127,11 +151,15 @@ FocusScope {
 
     // Events
 
-    Component.onDestruction: {
-        _qtAvoidSectionUpdate()
+    Component.onCompleted: {
+        _ready = true
+
+        availableRowWidthUpdater.enqueueUpdate()
     }
 
-    on_CurrentAvailableRowWidthChanged: availableRowWidthUpdater.enqueueUpdate()
+    Component.onDestruction: _qtAvoidSectionUpdate()
+
+    on_CurrentAvailableRowWidthChanged: if (_ready) availableRowWidthUpdater.enqueueUpdate()
 
     // Functions
 
@@ -146,6 +174,17 @@ FocusScope {
     function positionViewAtBeginning() {
         view.positionViewAtBeginning()
     }
+
+    function getItemY(index) {
+        var size = index * rowHeight + topMargin
+
+        if (tableHeaderItem)
+            size += tableHeaderItem.height
+
+        return size
+    }
+
+    // Private
 
     function _qtAvoidSectionUpdate() {
         // Qt SEG. FAULT WORKAROUND
@@ -208,11 +247,19 @@ FocusScope {
 
         anchors.fill: parent
 
+        contentWidth: root.width - root.contentLeftMargin - root.contentRightMargin
+
         focus: true
 
         headerPositioning: ListView.OverlayHeader
 
-        fadeColor: VLCStyle.colors.bg
+        flickableDirection: Flickable.AutoFlickDirection
+
+        Navigation.parentItem: root
+
+        onSelectAll: selectionDelegateModel.selectAll()
+        onSelectionUpdated: selectionDelegateModel.updateSelection( keyModifiers, oldIndex, newIndex )
+        onActionAtIndex: root.actionForSelection( selectionDelegateModel.selectedIndexes )
 
         onDeselectAll: {
             if (selectionDelegateModel) {
@@ -226,16 +273,12 @@ FocusScope {
         }
 
         header: Rectangle {
-
-            readonly property alias contentX: row.x
-            readonly property alias contentWidth: row.width
             property alias loadedHeader: headerLoader.item
 
-            width: Math.max(view.width, root.usedRowSpace + root.sectionWidth)
+            width: view.width
             height: col.height
-            color: headerColor
-            visible: view.count > 0
             z: 3
+            color: root.headerColor
 
             // with inline header positioning and for `root.header` which changes it's height after loading,
             // in such cases after `root.header` completes, the ListView will try to maintain the relative contentY,
@@ -244,13 +287,16 @@ FocusScope {
             onHeightChanged: if (root.contentY < 0) root.positionViewAtBeginning()
 
             Widgets.ListLabel {
-                x: contentX - VLCStyle.table_section_width
-                y: row.y
                 height: row.height
+
+                // NOTE: We want the section label to be slightly shifted to the left.
+                x: row.x - VLCStyle.margin_small
+                y: row.y
+
                 topPadding: root.headerTopPadding
-                leftPadding: VLCStyle.table_section_text_margin
+
                 text: view.currentSection
-                color: VLCStyle.colors.accent
+                color: view.colorContext.accent
                 verticalAlignment: Text.AlignTop
                 visible: view.headerPositioning === ListView.OverlayHeader
                          && text !== ""
@@ -260,8 +306,8 @@ FocusScope {
             Column {
                 id: col
 
-                width: parent.width
-                height: implicitHeight
+                anchors.left: parent.left
+                anchors.right: parent.right
 
                 Loader {
                     id: headerLoader
@@ -272,23 +318,30 @@ FocusScope {
                 Row {
                     id: row
 
-                    x: Math.max(0, view.width - root.usedRowSpace) / 2 + root.sectionWidth
-                    leftPadding: VLCStyle.margin_xxxsmall
-                    rightPadding: VLCStyle.margin_xxxsmall
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+
+                    anchors.leftMargin: root.contentLeftMargin
+                    anchors.rightMargin: root.contentRightMargin
+
                     topPadding: root.headerTopPadding
                     bottomPadding: VLCStyle.margin_xsmall
 
-                    spacing: root.horizontalSpacing
+                    spacing: VLCStyle.column_spacing
 
                     Repeater {
                         model: sortModel
                         MouseArea {
-                            height: childrenRect.height
-                            width: modelData.width || 1
-                            //Layout.alignment: Qt.AlignVCenter
+
+                            height: VLCStyle.dp(20, VLCStyle.scale)
+                            width: VLCStyle.colWidth(modelData.size) || 1
 
                             Loader {
-                                property var model: modelData
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+
+                                property var model: modelData.model
+                                readonly property ColorContext colorContext: view.colorContext
 
                                 sourceComponent: model.headerDelegate || root.tableHeaderDelegate
                             }
@@ -297,8 +350,11 @@ FocusScope {
                                 text: (root.model.sortOrder === Qt.AscendingOrder) ? "▼" : "▲"
                                 visible: root.model.sortCriteria === modelData.criteria
                                 font.pixelSize: VLCStyle.fontSize_normal
-                                color: VLCStyle.colors.accent
+                                color: root.colorContext.accent
+
                                 anchors {
+                                    top: parent.top
+                                    bottom: parent.bottom
                                     right: parent.right
                                     leftMargin: VLCStyle.margin_xsmall
                                     rightMargin: VLCStyle.margin_xsmall
@@ -325,12 +381,13 @@ FocusScope {
         }
 
         section.delegate: Widgets.ListLabel {
-            x: view.headerItem.contentX - VLCStyle.table_section_width
+            // NOTE: We want the section label to be slightly shifted to the left.
+            leftPadding: root.contentLeftMargin - VLCStyle.margin_small
+
             topPadding: VLCStyle.margin_xsmall
-            bottomPadding: VLCStyle.margin_xxsmall
-            leftPadding: VLCStyle.table_section_text_margin
+
             text: section
-            color: VLCStyle.colors.accent
+            color: root.colorContext.accent
         }
 
         delegate: TableViewDelegate {
@@ -339,8 +396,8 @@ FocusScope {
             width: view.width
             height: root.rowHeight
 
-            horizontalSpacing: root.horizontalSpacing
-            leftPadding: Math.max(0, view.width - root.usedRowSpace) / 2 + root.sectionWidth
+            leftPadding: root.contentLeftMargin
+            rightPadding: root.contentRightMargin
 
             dragItem: root.dragItem
 
@@ -379,14 +436,5 @@ FocusScope {
                 }
             }
         }
-
-        flickableDirection: Flickable.AutoFlickDirection
-        contentWidth: root.usedRowSpace + root.sectionWidth
-
-        onSelectAll: selectionDelegateModel.selectAll()
-        onSelectionUpdated: selectionDelegateModel.updateSelection( keyModifiers, oldIndex, newIndex )
-        onActionAtIndex: root.actionForSelection( selectionDelegateModel.selectedIndexes )
-
-        Navigation.parentItem: root
     }
 }

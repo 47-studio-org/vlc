@@ -15,10 +15,12 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
+
 import QtQuick 2.11
 import QtQuick.Controls 2.4
 import QtQuick.Templates 2.4 as T
 
+import org.videolan.vlc 0.1
 import org.videolan.medialib 0.1
 
 import "qrc:///style/"
@@ -26,102 +28,128 @@ import "qrc:///style/"
 T.ProgressBar {
     id: control
 
+    implicitWidth: Math.max(background ? background.implicitWidth : 0,
+                            contentItem.implicitWidth + leftPadding + rightPadding)
+    implicitHeight: Math.max(background ? background.implicitHeight : 0,
+                             contentItem.implicitHeight + topPadding + bottomPadding)
+
+    rightPadding: VLCStyle.margin_large
+    leftPadding: VLCStyle.margin_large
+    bottomPadding: VLCStyle.margin_small
+    topPadding: VLCStyle.margin_small
+
     from: 0
     to: 100
+
     value: MediaLib.parsingProgress
+
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Window
+    }
+
     indeterminate: MediaLib.discoveryPending
-    visible: !MediaLib.idle
-    height: contentItem.implicitHeight
-    width: implicitWidth
+
+    background: Rectangle {
+        color: theme.bg.primary
+    }
 
     contentItem: Column {
-        spacing: VLCStyle.margin_normal
-        width: control.width
-        height: implicitHeight
-        visible: control.visible
 
-        Rectangle {
-            id: bg
+        spacing: VLCStyle.margin_small
 
-            width: parent.width
-            height: VLCStyle.heightBar_xsmall
-            color: VLCStyle.colors.bgAlt
+        Item {
+            anchors.left: parent.left
+            anchors.right: parent.right
 
-            function fromRGB(r, g, b, a) {
-                return Qt.rgba( r / 255, g / 255, b / 255, a / 255)
+            implicitHeight: VLCStyle.heightBar_xxsmall
+            implicitWidth: 200
+
+            ColorContext {
+                id: progressBarTheme
+                colorSet: ColorContext.Slider
             }
 
             Rectangle {
-                id: progressBar
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
 
-                width: parent.height
-                height: parent.width * control.visualPosition
-                rotation: -90
-                y: width
-                transformOrigin: Item.TopLeft
+                implicitHeight: VLCStyle.heightBar_xxxsmall
+
+                color: progressBarTheme.bg.primary
+            }
+
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+
+                implicitWidth: parent.width * control.visualPosition
+                implicitHeight: VLCStyle.heightBar_xxsmall
+
+                // NOTE: We want round corners.
+                radius: height
+
                 visible: !control.indeterminate
-                gradient: Gradient {
-                    GradientStop { position: 0.00; color: bg.fromRGB(248, 154, 6, 200) }
-                    GradientStop { position: 0.48; color: bg.fromRGB(226, 90, 1, 255) }
-                    GradientStop { position: 0.89; color: bg.fromRGB(248, 124, 6, 255) }
-                    GradientStop { position: 1.00; color: bg.fromRGB(255, 136, 0, 100) }
-                }
+
+
+                color: progressBarTheme.accent
             }
 
             Rectangle {
-                id: indeterminateBar
+                property real position: 0
 
-                property real pos: 0
+                anchors.verticalCenter: parent.verticalCenter
 
-                anchors.centerIn: parent
-                anchors.horizontalCenterOffset: ((bg.width - indeterminateBar.height) / 2) * pos
-                width: parent.height
-                height: parent.width * .24
-                rotation: 90
+                // NOTE: Why 0.24 though ?
+                implicitWidth: parent.width * 0.24
+                implicitHeight: VLCStyle.heightBar_xxsmall
+
+                x: Math.round((parent.width - width) * position)
+
+                // NOTE: We want round corners.
+                radius: height
                 visible: control.indeterminate
-                gradient: Gradient {
-                    GradientStop { position: 0.00; color: bg.fromRGB(248, 154, 6, 0) }
-                    GradientStop { position: 0.09; color: bg.fromRGB(253, 136, 0, 0) }
-                    GradientStop { position: 0.48; color: bg.fromRGB(226, 90, 1, 255) }
-                    GradientStop { position: 0.89; color: bg.fromRGB(248, 124, 6, 255) }
-                    GradientStop { position: 1.00; color: bg.fromRGB(255, 136, 0, 0) }
-                }
 
-                SequentialAnimation on pos {
-                    id: loadingAnim
+                color: progressBarTheme.accent
 
+                SequentialAnimation on position {
                     loops: Animation.Infinite
-                    running: control.indeterminate
+
+                    running: visible
 
                     NumberAnimation {
-                        from: - 1
-                        to: 1
+                        from: 0
+                        to: 1.0
+
                         duration: VLCStyle.durationSliderBouncing
                         easing.type: Easing.OutBounce
                     }
 
-                    PauseAnimation {
-                        duration: VLCStyle.duration_veryLong
-                    }
-
                     NumberAnimation {
-                        to: - 1
-                        from: 1
+                        from: 1.0
+                        to: 0
+
                         duration: VLCStyle.durationSliderBouncing
                         easing.type: Easing.OutBounce
-                    }
-
-                    PauseAnimation {
-                        duration: VLCStyle.duration_veryLong
                     }
                 }
             }
         }
 
         SubtitleLabel {
-            text:  MediaLib.discoveryPending ? MediaLib.discoveryEntryPoint : (MediaLib.parsingProgress + "%")
+            anchors.left: parent.left
+            anchors.right: parent.right
+
+            text: (MediaLib.discoveryPending) ? I18n.qtr("Scanning %1")
+                                                .arg(MediaLib.discoveryEntryPoint)
+                                              : I18n.qtr("Indexing Medias (%1%)")
+                                                .arg(MediaLib.parsingProgress)
+
+            elide: Text.ElideMiddle
+
+            font.pixelSize: VLCStyle.fontSize_large
             font.weight: Font.Normal
-            width: parent.width
+            color: theme.fg.primary
         }
     }
 }

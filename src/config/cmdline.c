@@ -39,9 +39,8 @@
 #include "modules/modules.h"
 
 #include <assert.h>
+#include <unistd.h>             /* STDERR_FILENO */
 
-#ifdef HAVE_DYNAMIC_PLUGINS
-#undef config_CmdLineEarlyScan
 /**
  * Perform early scan of arguments for a small subset of simple options.
  *
@@ -96,8 +95,11 @@
  * @param argc number of command line arguments
  * @param argv command line arguments
  */
-void config_CmdLineEarlyScan( vlc_object_t *p_this, int argc, const char *argv[] )
+void config_CmdLineEarlyScan( libvlc_int_t *p_this, int argc, const char *argv[] )
 {
+#if !defined(HAVE_DYNAMIC_PLUGINS) && !defined(_WIN32)
+    VLC_UNUSED(p_this); VLC_UNUSED(argc); VLC_UNUSED(argv);
+#else
     for( int i = 0; i < argc; i++ )
     {
         const char *arg = argv[i];
@@ -117,18 +119,35 @@ void config_CmdLineEarlyScan( vlc_object_t *p_this, int argc, const char *argv[]
     check_option_variant("--"   option_name, option_name, true)  \
     check_option_variant("--no-"option_name, option_name, false) \
     check_option_variant("--no" option_name, option_name, false)
+#define check_string(option_name) \
+    if( strncmp( arg, "--" option_name "=", strlen("--" option_name "=") ) == 0 ) \
+    { \
+        const char *value = arg + strlen("--" option_name "="); \
+        var_Create (p_this, option_name, VLC_VAR_STRING); \
+        var_SetString (p_this, option_name, value); \
+        continue; \
+    }
 
+#ifdef HAVE_DYNAMIC_PLUGINS
         check_option("plugins-cache")
         check_option("plugins-scan")
         check_option("reset-plugins-cache")
+#endif
+
+#if defined(_WIN32) || defined(__OS2__)
+        check_option("high-priority")
+#endif
+#ifdef _WIN32
+        check_string("clock-source")
+#endif
 
 #undef check_option
 #undef check_option_variant
+#undef check_string
     }
-}
 #endif
+}
 
-#undef config_LoadCmdLine
 /**
  * Parse command line for configuration options.
  *
@@ -143,7 +162,7 @@ void config_CmdLineEarlyScan( vlc_object_t *p_this, int argc, const char *argv[]
  * @param pindex index of the first non-option argument [OUT]
  * @return 0 on success, -1 on error.
  */
-int config_LoadCmdLine( vlc_object_t *p_this, int i_argc,
+int config_LoadCmdLine( libvlc_int_t *p_this, int i_argc,
                         const char *ppsz_argv[], int *pindex )
 {
     int i_cmd, i_index, i_opts, i_shortopts, flag, i_verbose = 0;
@@ -252,7 +271,7 @@ int config_LoadCmdLine( vlc_object_t *p_this, int i_argc,
 
     int ret = -1;
     bool color = false;
-#ifndef _WIN32
+#ifdef HAVE_ISATTY
     color = (isatty(STDERR_FILENO));
 #endif
 
@@ -360,12 +379,16 @@ int config_LoadCmdLine( vlc_object_t *p_this, int i_argc,
 
         /* Internal error: unknown option or missing option value */
         char *optlabel;
-        if ( (state.opt && asprintf(&optlabel, "%s-%c%s",
-                                    color ? TS_YELLOW : "", state.opt,
-                                    color ? TS_RESET : "") < 0)
-          || (!state.opt && asprintf(&optlabel, "%s%s%s",
-                                     color ? TS_YELLOW : "", ppsz_argv[state.ind-1],
-                                     color ? TS_RESET : "") < 0) )
+        int aspret;
+        if ( state.opt )
+            aspret = asprintf(&optlabel, "%s-%c%s", color ? TS_YELLOW : "",
+                              state.opt,
+                              color ? TS_RESET : "");
+        else
+            aspret = asprintf(&optlabel, "%s%s%s", color ? TS_YELLOW : "",
+                              ppsz_argv[state.ind-1],
+                              color ? TS_RESET : "");
+        if ( aspret < 0 )
         {
             /* just ignore failure - unlikely and not worth trying to handle in some way */
             optlabel = NULL;

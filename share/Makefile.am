@@ -16,7 +16,7 @@ EXTRA_DIST += vlc-openbd.desktop.in vlc-opendvd.desktop.in vlc-openvcd.desktop.i
 CLEANFILES += $(desktop_DATA) $(appdata_DATA)
 
 %.desktop: %.desktop.in $(top_builddir)/config.status
-	$(AM_V_GEN)mimetypes="$$(sed 's/\s*#.*$$//g' $(srcdir)/vlc.desktop.mimetypes | egrep -v '^$$' | tr "\n" ';')"; \
+	$(AM_V_GEN)mimetypes="$$(sed 's/\s*#.*$$//g' $(srcdir)/vlc.desktop.mimetypes | $(EGREP) -v '^$$' | tr "\n" ';')"; \
 	sed \
 		-e 's,\@bindir\@,$(bindir),g' \
 		 -e "s,\@MIMETYPES\@,$$mimetypes,g" < "$<" > tmp-$@
@@ -47,7 +47,6 @@ dist_icons128_DATA = icons/128x128/vlc.png icons/128x128/vlc-xmas.png \
 dist_icons256_DATA = icons/256x256/vlc.png
 
 nobase_dist_pkgdata_SCRIPTS = \
-	utils/gnome-vlc-default.sh \
 	utils/audio-vlc-default.sh \
 	utils/video-vlc-default.sh \
 	$(NULL)

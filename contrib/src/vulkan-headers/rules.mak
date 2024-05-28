@@ -1,5 +1,5 @@
 VULKAN_HEADERS_VERSION := 1.3.219
-VULKAN_HEADERS_URL := https://github.com/KhronosGroup/Vulkan-Headers/archive/v$(VULKAN_HEADERS_VERSION).tar.gz
+VULKAN_HEADERS_URL := $(GITHUB)/KhronosGroup/Vulkan-Headers/archive/v$(VULKAN_HEADERS_VERSION).tar.gz
 
 DEPS_vulkan-headers =
 
@@ -13,6 +13,8 @@ vulkan-headers: Vulkan-Headers-$(VULKAN_HEADERS_VERSION).tar.gz .sum-vulkan-head
 	$(MOVE)
 
 .vulkan-headers: vulkan-headers toolchain.cmake
-	cd $< && $(HOSTVARS) $(CMAKE)
-	+$(CMAKEBUILD) $< --target install
+	$(CMAKECLEAN)
+	$(HOSTVARS) $(CMAKE)
+	+$(CMAKEBUILD)
+	$(CMAKEINSTALL)
 	touch $@

@@ -1,5 +1,5 @@
 # aom
-AOM_VERSION := 3.3.0
+AOM_VERSION := 3.6.0
 AOM_URL := https://storage.googleapis.com/aom-releases/libaom-$(AOM_VERSION).tar.gz
 
 PKGS += aom
@@ -25,10 +25,8 @@ endif
 
 DEPS_aom =
 ifdef HAVE_WIN32
-DEPS_aom += pthreads $(DEPS_pthreads)
+DEPS_aom += winpthreads $(DEPS_winpthreads)
 endif
-
-AOM_LDFLAGS := $(LDFLAGS)
 
 AOM_CONF := \
 	-DCONFIG_RUNTIME_CPU_DETECT=1 \
@@ -79,9 +77,9 @@ endif
 # libaom doesn't allow in-tree builds
 .aom: aom toolchain.cmake
 	rm -rf $(PREFIX)/include/aom
-	cd $< && rm -rf aom_build && mkdir -p aom_build
-	cd $</aom_build && LDFLAGS="$(AOM_LDFLAGS)" $(HOSTVARS) $(CMAKE) ../ $(AOM_CONF)
-	+$(CMAKEBUILD) $</aom_build
-	$(call pkg_static,"aom_build/aom.pc")
-	+$(CMAKEBUILD) $</aom_build --target install
+	$(CMAKECLEAN)
+	$(HOSTVARS) $(CMAKE) $(AOM_CONF)
+	+$(CMAKEBUILD)
+	$(call pkg_static,"$(BUILD_DIRUNPACK)/aom.pc")
+	$(CMAKEINSTALL)
 	touch $@

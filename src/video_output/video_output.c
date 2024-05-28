@@ -75,6 +75,11 @@ typedef struct vout_thread_sys_t
     char            *splitter_name;
 
     const char      *str_id;
+
+    vlc_mutex_t clock_lock;
+    bool clock_nowait; /* protected by vlc_clock_Lock()/vlc_clock_Unlock() */
+    bool wait_interrupted;
+
     vlc_clock_t     *clock;
     float           rate;
     vlc_tick_t      delay;
@@ -112,11 +117,6 @@ typedef struct vout_thread_sys_t
     } displayed;
 
     struct {
-        vlc_tick_t  last;
-        vlc_tick_t  timestamp;
-    } step;
-
-    struct {
         bool        is_on;
         vlc_tick_t  date;
     } pause;
@@ -144,7 +144,7 @@ typedef struct vout_thread_sys_t
     /* Video output display */
     vout_display_cfg_t display_cfg;
     vout_display_t *display;
-    vlc_mutex_t     display_lock;
+    vlc_queuedmutex_t display_lock;
 
     /* Video filter2 chain */
     struct {
@@ -163,6 +163,8 @@ typedef struct vout_thread_sys_t
         vout_chrono_t static_filter;
         vout_chrono_t render;         /**< picture render time estimator */
     } chrono;
+
+    unsigned frame_next_count;
 
     vlc_atomic_rc_t rc;
 
@@ -194,7 +196,7 @@ static inline struct vlc_tracer *GetTracer(vout_thread_sys_t *sys)
 
 static inline void VoutResetChronoLocked(vout_thread_sys_t *sys)
 {
-    vlc_mutex_assert(&sys->display_lock);
+    vlc_queuedmutex_assert(&sys->display_lock);
 
     /* Arbitrary initial time */
     vout_chrono_Init(&sys->chrono.render, 5, VLC_TICK_FROM_MS(10));
@@ -217,6 +219,22 @@ static void VoutFixFormat(video_format_t *dst, const video_format_t *src)
     dst->i_chroma = vlc_fourcc_GetCodec(VIDEO_ES, src->i_chroma);
     VoutFixFormatAR( dst );
     video_format_FixRgb(dst);
+    vlc_viewpoint_clip( &dst->pose );
+}
+
+static void VoutRenderWakeUpUrgent(vout_thread_sys_t *sys)
+{
+    /* The assignment to sys->clock is protected by sys->lock */
+    vlc_mutex_lock(&sys->clock_lock);
+    if (sys->clock)
+    {
+        /* Wake up the clock-wait between prepare() and display() */
+        vlc_clock_Lock(sys->clock);
+        sys->clock_nowait = true;
+        vlc_clock_Wake(sys->clock);
+        vlc_clock_Unlock(sys->clock);
+    }
+    vlc_mutex_unlock(&sys->clock_lock);
 }
 
 static bool VideoFormatIsCropArEqual(video_format_t *dst,
@@ -359,30 +377,7 @@ void vout_SetSpuHighlight( vout_thread_t *vout,
 }
 
 /**
- * Allocates a video output picture buffer.
- *
- * Either vout_PutPicture() or picture_Release() must be used to return the
- * buffer to the video output free buffer pool.
- *
- * You may use picture_Hold() (paired with picture_Release()) to keep a
- * read-only reference.
- */
-picture_t *vout_GetPicture(vout_thread_t *vout)
-{
-    vout_thread_sys_t *sys = VOUT_THREAD_TO_SYS(vout);
-    assert(!sys->dummy);
-    picture_t *picture = picture_pool_Wait(sys->private.display_pool);
-    if (likely(picture != NULL)) {
-        picture_Reset(picture);
-        video_format_CopyCropAr(&picture->format, &sys->original);
-    }
-    return picture;
-}
-
-/**
  * It gives to the vout a picture to be displayed.
- *
- * The given picture MUST comes from vout_GetPicture.
  *
  * Becareful, after vout_PutPicture is called, picture_t::p_next cannot be
  * read/used.
@@ -470,8 +465,10 @@ void vout_ChangeDisplaySize(vout_thread_t *vout,
 
     assert(!sys->dummy);
 
+    VoutRenderWakeUpUrgent(sys);
+
     /* DO NOT call this outside the vout window callbacks */
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
 
     sys->window_width = width;
     sys->window_height = height;
@@ -481,7 +478,7 @@ void vout_ChangeDisplaySize(vout_thread_t *vout,
 
     if (cb != NULL)
         cb(opaque);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 }
 
 void vout_ChangeDisplayFitting(vout_thread_t *vout, enum vlc_video_fitting fit)
@@ -493,12 +490,12 @@ void vout_ChangeDisplayFitting(vout_thread_t *vout, enum vlc_video_fitting fit)
     sys->display_cfg.display.fitting = fit;
     /* no window size update here */
 
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
     vlc_mutex_unlock(&sys->window_lock);
 
     if (sys->display != NULL)
         vout_SetDisplayFitting(sys->display, fit);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 }
 
 void vout_ChangeZoom(vout_thread_t *vout, unsigned num, unsigned den)
@@ -527,12 +524,12 @@ void vout_ChangeZoom(vout_thread_t *vout, unsigned num, unsigned den)
 
     vout_UpdateWindowSizeLocked(sys);
 
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
     vlc_mutex_unlock(&sys->window_lock);
 
     if (sys->display != NULL)
         vout_SetDisplayZoom(sys->display, num, den);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 }
 
 static void vout_SetAspectRatio(vout_thread_sys_t *sys,
@@ -553,12 +550,12 @@ void vout_ChangeDisplayAspectRatio(vout_thread_t *vout,
 
     vout_UpdateWindowSizeLocked(sys);
 
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
     vlc_mutex_unlock(&sys->window_lock);
 
     if (sys->display != NULL)
         vout_SetDisplayAspect(sys->display, dar_num, dar_den);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 }
 
 void vout_ChangeCrop(vout_thread_t *vout,
@@ -571,12 +568,12 @@ void vout_ChangeCrop(vout_thread_t *vout,
     sys->source.crop = *crop;
     vout_UpdateWindowSizeLocked(sys);
 
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
     vlc_mutex_unlock(&sys->window_lock);
 
     if (sys->display != NULL)
         vout_SetDisplayCrop(sys->display, crop);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 }
 
 void vout_ControlChangeFilters(vout_thread_t *vout, const char *filters)
@@ -646,10 +643,25 @@ void vout_ChangeViewpoint(vout_thread_t *vout,
     /* no window size update here */
     vlc_mutex_unlock(&sys->window_lock);
 
-    vlc_mutex_lock(&sys->display_lock);
+    VoutRenderWakeUpUrgent(sys);
+    vlc_queuedmutex_lock(&sys->display_lock);
     if (sys->display != NULL)
         vout_SetDisplayViewpoint(sys->display, p_viewpoint);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
+}
+
+void vout_ChangeIccProfile(vout_thread_t *vout,
+                           vlc_icc_profile_t *profile)
+{
+    vout_thread_sys_t *sys = VOUT_THREAD_TO_SYS(vout);
+    assert(!sys->dummy);
+
+    vlc_queuedmutex_lock(&sys->display_lock);
+    free(sys->display_cfg.icc_profile);
+    sys->display_cfg.icc_profile = profile;
+    if (sys->display != NULL)
+        vout_SetDisplayIccProfile(sys->display, profile);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 }
 
 /* */
@@ -703,7 +715,8 @@ static int FilterRestartCallback(vlc_object_t *p_this, char const *psz_var,
 
 static int DelFilterCallbacks(filter_t *filter, void *opaque)
 {
-    filter_DelProxyCallbacks((vlc_object_t*)opaque, filter,
+    vout_thread_sys_t *sys = opaque;
+    filter_DelProxyCallbacks(VLC_OBJECT(sys), filter,
                              FilterRestartCallback);
     return VLC_SUCCESS;
 }
@@ -747,6 +760,7 @@ static void FilterFlush(vout_thread_sys_t *sys, bool is_locked)
     {
         picture_Release( sys->displayed.current );
         sys->displayed.current = NULL;
+        sys->displayed.date = VLC_TICK_INVALID;
     }
 
     if (!is_locked)
@@ -855,13 +869,37 @@ static void ChangeFilters(vout_thread_sys_t *vout)
     }
 
     if (!es_format_IsSimilar(p_fmt_current, &fmt_target)) {
-        msg_Dbg(&vout->obj, "Adding a filter to compensate for format changes");
-        if (filter_chain_AppendConverter(sys->filter.chain_interactive,
-                                         &fmt_target) != 0) {
-            msg_Err(&vout->obj, "Failed to compensate for the format changes, removing all filters");
-            DelAllFilterCallbacks(vout);
-            filter_chain_Reset(sys->filter.chain_static,      &fmt_target, vctx_target, &fmt_target);
-            filter_chain_Reset(sys->filter.chain_interactive, &fmt_target, vctx_target, &fmt_target);
+        /* Shallow local copy */
+        es_format_t tmp = *p_fmt_current;
+        /* Assign the same chroma to compare everything except the chroma */
+        tmp.i_codec = fmt_target.i_codec;
+        tmp.video.i_chroma = fmt_target.video.i_chroma;
+
+        int ret = VLC_EGENERIC;
+
+        bool only_chroma_changed = es_format_IsSimilar(&tmp, &fmt_target);
+        if (only_chroma_changed)
+        {
+            msg_Dbg(&vout->obj, "Changing vout format to %4.4s",
+                                (const char *) &p_fmt_current->video.i_chroma);
+            /* Only the chroma changed, request the vout to update the format */
+            ret = vout_SetDisplayFormat(sys->display, &p_fmt_current->video,
+                                        vctx_current);
+            if (ret != VLC_SUCCESS)
+                msg_Dbg(&vout->obj, "Changing vout format to %4.4s failed",
+                        (const char *) &p_fmt_current->video.i_chroma);
+        }
+
+        if (ret != VLC_SUCCESS)
+        {
+            msg_Dbg(&vout->obj, "Adding a filter to compensate for format changes");
+            if (filter_chain_AppendConverter(sys->filter.chain_interactive,
+                                             &fmt_target) != 0) {
+                msg_Err(&vout->obj, "Failed to compensate for the format changes, removing all filters");
+                DelAllFilterCallbacks(vout);
+                filter_chain_Reset(sys->filter.chain_static,      &fmt_target, vctx_target, &fmt_target);
+                filter_chain_Reset(sys->filter.chain_interactive, &fmt_target, vctx_target, &fmt_target);
+            }
         }
     }
 
@@ -936,7 +974,7 @@ static picture_t *PreparePicture(vout_thread_sys_t *vout, bool reuse_decoded,
                         continue;
                     }
                 }
-                vlc_video_context *pic_vctx = picture_GetVideoContext(decoded);
+
                 if (!VideoFormatIsCropArEqual(&decoded->format, &sys->filter.src_fmt))
                 {
                     // we received an aspect ratio change
@@ -945,6 +983,7 @@ static picture_t *PreparePicture(vout_thread_sys_t *vout, bool reuse_decoded,
                     video_format_Copy(&sys->filter.src_fmt, &decoded->format);
                     if (sys->filter.src_vctx)
                         vlc_video_context_Release(sys->filter.src_vctx);
+                    vlc_video_context *pic_vctx = picture_GetVideoContext(decoded);
                     sys->filter.src_vctx = pic_vctx ? vlc_video_context_Hold(pic_vctx) : NULL;
 
                     ChangeFilters(vout);
@@ -1230,14 +1269,17 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
     if (!filtered)
         return VLC_EGENERIC;
 
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_clock_Lock(sys->clock);
+    sys->clock_nowait = false;
+    vlc_clock_Unlock(sys->clock);
+    vlc_queuedmutex_lock(&sys->display_lock);
 
     picture_t *todisplay;
     subpicture_t *subpic;
     int ret = PrerenderPicture(sys, filtered, &render_now, &todisplay, &subpic);
     if (ret != VLC_SUCCESS)
     {
-        vlc_mutex_unlock(&sys->display_lock);
+        vlc_queuedmutex_unlock(&sys->display_lock);
         return ret;
     }
 
@@ -1262,13 +1304,13 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
 
     vout_chrono_Stop(&sys->chrono.render);
 
+    struct vlc_tracer *tracer = GetTracer(sys);
     system_now = vlc_tick_now();
     if (!render_now)
     {
         const vlc_tick_t late = system_now - system_pts;
         if (unlikely(late > 0))
         {
-            struct vlc_tracer *tracer = GetTracer(sys);
             if (tracer != NULL)
                 vlc_tracer_TraceEvent(tracer, "RENDER", sys->str_id, "late");
             msg_Dbg(vd, "picture displayed late (missing %"PRId64" ms)", MS_FROM_VLC_TICK(late));
@@ -1287,6 +1329,7 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
             vlc_clock_Lock(sys->clock);
 
             bool timed_out = false;
+            sys->wait_interrupted = false;
             while (!timed_out)
             {
                 vlc_tick_t deadline;
@@ -1300,10 +1343,17 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
                         deadline = max_deadline;
                 }
 
+                if (sys->clock_nowait)
+                {
+                    /* A caller (the UI thread) awaits for the rendering to
+                     * complete urgently, do not wait. */
+                    sys->wait_interrupted = true;
+                    break;
+                }
+
                 system_pts = deadline;
                 timed_out = vlc_clock_Wait(sys->clock, deadline);
             }
-
             vlc_clock_Unlock(sys->clock);
         }
         sys->displayed.date = system_pts;
@@ -1314,12 +1364,12 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
         /* Tell the clock that the pts was forced */
         system_pts = VLC_TICK_MAX;
     }
-    vlc_clock_UpdateVideo(sys->clock, system_pts, pts, sys->rate,
-                          frame_rate, frame_rate_base);
+    vlc_tick_t drift = vlc_clock_UpdateVideo(sys->clock, system_pts, pts, sys->rate,
+                                             frame_rate, frame_rate_base);
 
     /* Display the direct buffer returned by vout_RenderPicture */
     vout_display_Display(vd, todisplay);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 
     picture_Release(todisplay);
 
@@ -1327,6 +1377,11 @@ static int RenderPicture(vout_thread_sys_t *sys, bool render_now)
         subpicture_Delete(subpic);
 
     vout_statistic_AddDisplayed(&sys->statistic, 1);
+
+    if (tracer != NULL && system_pts != VLC_TICK_MAX)
+        vlc_tracer_TraceWithTs(tracer, system_pts, VLC_TRACE("type", "RENDER"),
+                               VLC_TRACE("id", sys->str_id),
+                               VLC_TRACE("drift", drift), VLC_TRACE_END);
 
     return VLC_SUCCESS;
 }
@@ -1356,7 +1411,7 @@ static int DisplayNextFrame(vout_thread_sys_t *sys)
         sys->displayed.current = next;
     }
 
-    if (!sys->displayed.current)
+    if (!next)
         return VLC_EGENERIC;
 
     return RenderPicture(sys, true);
@@ -1366,13 +1421,20 @@ static bool UpdateCurrentPicture(vout_thread_sys_t *sys)
 {
     assert(sys->clock);
 
+    if (sys->frame_next_count > 0)
+    {
+        if (DisplayNextFrame(sys) == VLC_SUCCESS)
+            --sys->frame_next_count;
+        return false;
+    }
+
     if (sys->displayed.current == NULL)
     {
         sys->displayed.current = PreparePicture(sys, true, false);
         return sys->displayed.current != NULL;
     }
 
-    if (sys->pause.is_on)
+    if (sys->pause.is_on || sys->wait_interrupted)
         return false;
 
     const vlc_tick_t system_now = vlc_tick_now();
@@ -1394,8 +1456,12 @@ static bool UpdateCurrentPicture(vout_thread_sys_t *sys)
     picture_t *next = PreparePicture(sys, false, false);
     if (next == NULL)
         return false;
+    /* We might have reset the current picture when preparing the next one,
+     * because filters had to be changed. In this case, avoid releasing the
+     * picture since it will lead to null pointer dereference errors. */
+    if (sys->displayed.current != NULL)
+        picture_Release(sys->displayed.current);
 
-    picture_Release(sys->displayed.current);
     sys->displayed.current = next;
 
     return true;
@@ -1409,7 +1475,6 @@ static vlc_tick_t DisplayPicture(vout_thread_sys_t *vout)
 
     UpdateDeinterlaceFilter(sys);
 
-
     bool current_changed = UpdateCurrentPicture(sys);
     if (current_changed)
     {
@@ -1422,6 +1487,12 @@ static vlc_tick_t DisplayPicture(vout_thread_sys_t *vout)
         if (!render_now)
             /* Prepare the next picture immediately without waiting */
             return VLC_TICK_INVALID;
+    }
+    else if (sys->wait_interrupted)
+    {
+        sys->wait_interrupted = false;
+        RenderPicture(vout, true);
+        return VLC_TICK_INVALID;
     }
     else if (likely(sys->displayed.date != VLC_TICK_INVALID))
     {
@@ -1460,10 +1531,7 @@ void vout_ChangePause(vout_thread_t *vout, bool is_paused, vlc_tick_t date)
 
     if (sys->pause.is_on)
         FilterFlush(sys, false);
-    else {
-        sys->step.timestamp = VLC_TICK_INVALID;
-        sys->step.last      = VLC_TICK_INVALID;
-    }
+
     sys->pause.is_on = is_paused;
     sys->pause.date  = date;
     vout_control_Release(&sys->control);
@@ -1483,9 +1551,6 @@ static void vout_FlushUnlocked(vout_thread_sys_t *vout, bool below,
 {
     vout_thread_sys_t *sys = vout;
 
-    sys->step.timestamp = VLC_TICK_INVALID;
-    sys->step.last      = VLC_TICK_INVALID;
-
     FilterFlush(vout, false); /* FIXME too much */
 
     picture_t *last = sys->displayed.decoded;
@@ -1503,12 +1568,12 @@ static void vout_FlushUnlocked(vout_thread_sys_t *vout, bool below,
 
     picture_fifo_Flush(sys->decoder_fifo, date, below);
 
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
     if (sys->display != NULL)
         vout_FilterFlush(sys->display);
     /* Reinitialize chrono to ensure we re-compute any new render timing. */
     VoutResetChronoLocked(sys);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 
     if (sys->clock != NULL)
     {
@@ -1531,27 +1596,16 @@ void vout_Flush(vout_thread_t *vout, vlc_tick_t date)
         vlc_tracer_TraceEvent(tracer, "RENDER", sys->str_id, "flushed");
 }
 
-void vout_NextPicture(vout_thread_t *vout, vlc_tick_t *duration)
+void vout_NextPicture(vout_thread_t *vout)
 {
     vout_thread_sys_t *sys = VOUT_THREAD_TO_SYS(vout);
     assert(!sys->dummy);
-    *duration = 0;
 
     vout_control_Hold(&sys->control);
-    if (sys->step.last == VLC_TICK_INVALID)
-        sys->step.last = sys->displayed.timestamp;
 
-    if (DisplayNextFrame(sys) == VLC_SUCCESS) {
-        sys->step.timestamp = sys->displayed.timestamp;
+    sys->frame_next_count++;
 
-        if (sys->step.last != VLC_TICK_INVALID &&
-            sys->step.timestamp > sys->step.last) {
-            *duration = sys->step.timestamp - sys->step.last;
-            sys->step.last = sys->step.timestamp;
-            /* TODO advance subpicture by the duration ... */
-        }
-    }
-    vout_control_Release(&sys->control);
+    vout_control_ReleaseAndWake(&sys->control);
 }
 
 void vout_ChangeDelay(vout_thread_t *vout, vlc_tick_t delay)
@@ -1653,7 +1707,7 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
     crop = sys->source.crop;
     num = sys->source.dar.num;
     den = sys->source.dar.den;
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
     vlc_mutex_unlock(&sys->window_lock);
 
     /* Reinitialize chrono to ensure we re-compute any new render timing. */
@@ -1666,7 +1720,7 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
     sys->display = vout_OpenWrapper(&vout->obj, &sys->private, sys->splitter_name, &dcfg,
                                     &sys->original, vctx);
     if (sys->display == NULL) {
-        vlc_mutex_unlock(&sys->display_lock);
+        vlc_queuedmutex_unlock(&sys->display_lock);
         goto error;
     }
 
@@ -1674,7 +1728,7 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
 
     if (num != 0 && den != 0)
         vout_SetDisplayAspect(sys->display, num, den);
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 
     assert(sys->private.display_pool != NULL && sys->private.private_pool != NULL);
 
@@ -1683,9 +1737,6 @@ static int vout_Start(vout_thread_sys_t *vout, vlc_video_context *vctx, const vo
     sys->displayed.date          = VLC_TICK_INVALID;
     sys->displayed.timestamp     = VLC_TICK_INVALID;
     sys->displayed.is_interlaced = false;
-
-    sys->step.last               = VLC_TICK_INVALID;
-    sys->step.timestamp          = VLC_TICK_INVALID;
 
     sys->pause.is_on = false;
     sys->pause.date  = VLC_TICK_INVALID;
@@ -1777,10 +1828,10 @@ static void vout_ReleaseDisplay(vout_thread_sys_t *vout)
     if (sys->private.display_pool != NULL)
         vout_FlushUnlocked(vout, true, VLC_TICK_MAX);
 
-    vlc_mutex_lock(&sys->display_lock);
+    vlc_queuedmutex_lock(&sys->display_lock);
     vout_CloseWrapper(&vout->obj, &sys->private, sys->display);
     sys->display = NULL;
-    vlc_mutex_unlock(&sys->display_lock);
+    vlc_queuedmutex_unlock(&sys->display_lock);
 
     /* Destroy the video filters */
     DelAllFilterCallbacks(vout);
@@ -1813,7 +1864,10 @@ static void vout_ReleaseDisplay(vout_thread_sys_t *vout)
 
     if (sys->spu)
         spu_Detach(sys->spu);
+
+    vlc_mutex_lock(&sys->clock_lock);
     sys->clock = NULL;
+    vlc_mutex_unlock(&sys->clock_lock);
     sys->str_id = NULL;
 }
 
@@ -1883,6 +1937,7 @@ void vout_Release(vout_thread_t *vout)
     }
 
     free(sys->splitter_name);
+    free(sys->display_cfg.icc_profile);
 
     if (sys->dec_device)
         vlc_decoder_device_Release(sys->dec_device);
@@ -1987,9 +2042,14 @@ vout_thread_t *vout_Create(vlc_object_t *object)
 
     vlc_mutex_init(&sys->filter.lock);
 
+    vlc_mutex_init(&sys->clock_lock);
+    sys->clock_nowait = false;
+    sys->wait_interrupted = false;
+
     /* Display */
     sys->display = NULL;
-    vlc_mutex_init(&sys->display_lock);
+    sys->display_cfg.icc_profile = NULL;
+    vlc_queuedmutex_init(&sys->display_lock);
 
     /* Window */
     sys->window_width = sys->window_height = 0;
@@ -2004,6 +2064,7 @@ vout_thread_t *vout_Create(vlc_object_t *object)
     if (sys->splitter_name != NULL)
         var_Destroy(vout, "window");
     sys->window_enabled = false;
+    sys->frame_next_count = 0;
     vlc_mutex_init(&sys->window_lock);
 
     if (var_InheritBool(vout, "video-wallpaper"))
@@ -2127,26 +2188,35 @@ int vout_Request(const vout_configuration_t *cfg, vlc_video_context *vctx, input
     sys->delay = 0;
     sys->rate = 1.f;
     sys->str_id = cfg->str_id;
+
+    vlc_mutex_lock(&sys->clock_lock);
     sys->clock = cfg->clock;
+    vlc_mutex_unlock(&sys->clock_lock);
+
     sys->delay = 0;
 
     if (vout_Start(vout, vctx, cfg))
     {
         msg_Err(cfg->vout, "video output display creation failed");
-        vout_DisableWindow(vout);
-        return -1;
+        goto error_display;
     }
     atomic_store(&sys->control_is_terminated, false);
-    if (vlc_clone(&sys->thread, Thread, vout)) {
-        vout_ReleaseDisplay(vout);
-        vout_DisableWindow(vout);
-        return -1;
-    }
+    if (vlc_clone(&sys->thread, Thread, vout))
+        goto error_thread;
 
     if (input != NULL && sys->spu)
         spu_Attach(sys->spu, input);
     vout_IntfReinit(cfg->vout);
     return 0;
+
+error_thread:
+    vout_ReleaseDisplay(vout);
+error_display:
+    vout_DisableWindow(vout);
+    vlc_mutex_lock(&sys->clock_lock);
+    sys->clock = NULL;
+    vlc_mutex_unlock(&sys->clock_lock);
+    return -1;
 }
 
 vlc_decoder_device *vout_GetDevice(vout_thread_t *vout)

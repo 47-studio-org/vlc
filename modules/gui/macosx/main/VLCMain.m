@@ -44,6 +44,7 @@
 #include <vlc_variables.h>
 
 #import "library/VLCLibraryWindow.h"
+#import "library/VLCLibraryWindowController.h"
 
 #import "main/CompatibilityFixes.h"
 #import "main/VLCMain+OldPrefs.h"
@@ -113,7 +114,6 @@ NSString *VLCConfigurationChangedNotification = @"VLCConfigurationChangedNotific
     VLCAudioEffectsWindowController *_audioEffectsPanel;
     VLCVideoEffectsWindowController *_videoEffectsPanel;
     VLCConvertAndSaveWindowController *_convertAndSaveWindow;
-    VLCLibraryWindowController *_libraryWindowController;
     VLCClickerManager *_clickerManager;
 
     bool _interfaceIsTerminating; /* Makes sure applicationWillTerminate will be called only once */
@@ -253,7 +253,11 @@ static VLCMain *sharedInstance = nil;
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification
 {
     _launched = YES;
-    _libraryWindowController = [[VLCLibraryWindowController alloc] initWithLibraryWindow];
+
+    if (_libraryWindowController == nil) {
+        _libraryWindowController = [[VLCLibraryWindowController alloc] initWithLibraryWindow];
+    }
+    
     [_libraryWindowController.window makeKeyAndOrderFront:nil];
 
     if (!_p_intf)
@@ -417,11 +421,6 @@ static VLCMain *sharedInstance = nil;
 - (VLCMainMenu *)mainMenu
 {
     return _mainmenu;
-}
-
-- (VLCLibraryWindowController *)libraryWindowController
-{
-    return _libraryWindowController;
 }
 
 - (VLCLibraryWindow *)libraryWindow

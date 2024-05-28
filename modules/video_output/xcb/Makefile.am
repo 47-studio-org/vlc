@@ -28,9 +28,10 @@ libxcb_window_plugin_la_SOURCES = video_output/xcb/window.c
 libxcb_window_plugin_la_CFLAGS = $(AM_CFLAGS) \
 	$(CFLAGS_xcb_window) \
 	$(XPROTO_CFLAGS) $(XCB_CFLAGS) \
-	$(XCB_XKB_CFLAGS) $(XKBCOMMON_X11_CFLAGS)
+	$(XCB_XKB_CFLAGS) $(XKBCOMMON_X11_CFLAGS) \
+	$(XCB_RANDR_CFLAGS)
 libxcb_window_plugin_la_LIBADD = $(XPROTO_LIBS) $(XCB_LIBS) \
-	$(XCB_XKB_LIBS) $(XKBCOMMON_X11_LIBS)
+	$(XCB_XKB_LIBS) $(XKBCOMMON_X11_LIBS) $(XCB_RANDR_LIBS)
 
 libxcb_egl_plugin_la_SOURCES = video_output/opengl/egl.c
 libxcb_egl_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DUSE_PLATFORM_XCB=1
@@ -42,7 +43,7 @@ libvk_x11_plugin_la_SOURCES = $(VULKAN_COMMONSOURCES) \
 libvk_x11_plugin_la_CFLAGS = $(AM_CFLAGS) \
 	$(XCB_CFLAGS) $(VULKAN_COMMONCFLAGS) \
 	-DVK_USE_PLATFORM_XCB_KHR -DPLATFORM_NAME=X11
-libvk_x11_plugin_la_LIBADD = $(VULKAN_COMMONLIBS) $(XCB_LIBS)
+libvk_x11_plugin_la_LIBADD = $(XCB_LIBS)
 
 libegl_x11_plugin_la_SOURCES = video_output/opengl/egl.c
 libegl_x11_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DUSE_PLATFORM_X11=1

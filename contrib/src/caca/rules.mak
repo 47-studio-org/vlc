@@ -1,6 +1,6 @@
 # CACA
 CACA_VERSION := 0.99.beta20
-CACA_URL := https://github.com/cacalabs/libcaca/releases/download/v$(CACA_VERSION)/libcaca-$(CACA_VERSION).tar.gz
+CACA_URL := $(GITHUB)/cacalabs/libcaca/releases/download/v$(CACA_VERSION)/libcaca-$(CACA_VERSION).tar.gz
 
 ifndef HAVE_DARWIN_OS
 ifndef HAVE_LINUX # see VLC Trac 17251
@@ -46,6 +46,9 @@ CACA_CONF := \
 ifdef HAVE_MACOSX
 CACA_CONF += --disable-x11
 endif
+ifndef WITH_OPTIMIZATION
+CACA_CONF += --enable-debug
+endif
 ifdef HAVE_WIN32
 CACA_CONF += --disable-ncurses \
     ac_cv_func_vsnprintf_s=yes \
@@ -62,6 +65,8 @@ CACA_CONF += \
 	CPPFLAGS="$(CPPFLAGS) -DCACA_STATIC"
 
 .caca: caca
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) $(CACA_CONF)
-	cd $< && $(MAKE) -C $< install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(CACA_CONF)
+	+$(MAKEBUILD) -C $<
+	+$(MAKEBUILD) -C $< install
 	touch $@

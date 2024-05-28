@@ -29,15 +29,12 @@ Widgets.IconToolButton {
 
     enabled: !paintOnly && Player.isPlaying
 
-    size: VLCStyle.icon_medium
-    color: VLCStyle.colors.record
+    color: "red" //red means recording
     text: I18n.qtr("record")
 
     onClicked: Player.toggleRecord()
 
     contentItem: T.Label {
-        id: content
-
         anchors.centerIn: parent
 
         verticalAlignment: Text.AlignVCenter
@@ -56,11 +53,11 @@ Widgets.IconToolButton {
             running: control.enabled && Player.recording
 
             onStopped: {
-                content.color = control.color
+                control.contentItem.color = control.color
             }
         }
 
-        font.pixelSize: VLCIcons.pixelSize(size)
+        font.pixelSize: control.size
         font.family: VLCIcons.fontFamily
         font.underline: control.font.underline
 

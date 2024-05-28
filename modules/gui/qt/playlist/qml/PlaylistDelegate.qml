@@ -22,6 +22,7 @@ import QtQuick.Templates 2.4 as T
 import QtQuick.Layouts 1.11
 
 import org.videolan.vlc 0.1
+import org.videolan.compat 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///style/"
@@ -40,8 +41,6 @@ T.Control {
     readonly property bool bottomContainsDrag: lowerDropArea.containsDrag
 
     readonly property bool containsDrag: (topContainsDrag || bottomContainsDrag)
-
-    readonly property VLCColors colors: root.colors
 
     // Settings
 
@@ -75,28 +74,42 @@ T.Control {
 
     // Functions
 
+    function moveSelected() {
+        var selectedIndexes = root.model.getSelection()
+        if (selectedIndexes.length === 0)
+            return
+        var preTarget = index
+        /* move to _above_ the clicked item if move up, but
+         * _below_ the clicked item if move down */
+        if (preTarget > selectedIndexes[0])
+            preTarget++
+        listView.currentIndex = selectedIndexes[0]
+        root.model.moveItemsPre(selectedIndexes, preTarget)
+    }
+
     // Childs
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Item
+
+        focused: delegate.activeFocus
+        hovered: delegate.hovered
+        enabled: delegate.enabled
+    }
+
     background: Widgets.AnimatedBackground {
-        color: {
-            if (selected)
-                return colors.gridSelect;
-            else if (hovered)
-                return colors.listHover;
-            else
-                return colors.setColorAlpha(colors.gridSelect, 0);
-        }
+        backgroundColor: selected ? theme.bg.highlight : theme.bg.primary
 
-        active: visualFocus
+        active: delegate.visualFocus
+        animate: theme.initialized
 
-        activeBorderColor: colors.bgFocus
+        activeBorderColor: theme.visualFocus
 
         visible: animationRunning || active || selected || hovered
     }
 
     contentItem: RowLayout {
-        id: content
-
         spacing: 0
 
         Item {
@@ -123,11 +136,9 @@ T.Control {
                     z: -1
 
                     primaryBlurRadius: VLCStyle.dp(3)
-                    primaryColor: Qt.rgba(0, 0, 0, 0.18)
                     primaryVerticalOffset: VLCStyle.dp(1)
 
                     secondaryBlurRadius: VLCStyle.dp(14)
-                    secondaryColor: Qt.rgba(0, 0, 0, 0.22)
                     secondaryVerticalOffset: VLCStyle.dp(6)
                 }
             }
@@ -137,7 +148,7 @@ T.Control {
 
                 anchors.centerIn: parent
                 visible: (model.isCurrent && text !== "")
-                color: colors.accent
+                color: theme.accent
                 text: {
                     if (Player.playingState === Player.PLAYING_STATE_PLAYING)
                         return VLCIcons.volume_high
@@ -165,7 +176,7 @@ T.Control {
 
                 font.weight: model.isCurrent ? Font.Bold : Font.DemiBold
                 text: model.title
-                color: colors.text
+                color: theme.fg.primary
                 verticalAlignment: Text.AlignTop
             }
 
@@ -177,7 +188,7 @@ T.Control {
 
                 font.weight: model.isCurrent ? Font.DemiBold : Font.Normal
                 text: (model.artist ? model.artist : I18n.qtr("Unknown Artist"))
-                color: colors.text
+                color: theme.fg.primary
                 verticalAlignment: Text.AlignBottom
             }
         }
@@ -185,10 +196,10 @@ T.Control {
         Widgets.ListLabel {
             id: textDuration
 
-            text: model.duration
+            text: model.duration.formatHMS()
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
-            color: colors.text
+            color: theme.fg.primary
             opacity: 0.5
         }
     }
@@ -206,16 +217,7 @@ T.Control {
             /* to receive keys events */
             listView.forceActiveFocus()
             if (root.mode === PlaylistListView.Mode.Move) {
-                var selectedIndexes = root.model.getSelection()
-                if (selectedIndexes.length === 0)
-                    return
-                var preTarget = index
-                /* move to _above_ the clicked item if move up, but
-                 * _below_ the clicked item if move down */
-                if (preTarget > selectedIndexes[0])
-                    preTarget++
-                listView.currentIndex = selectedIndexes[0]
-                root.model.moveItemsPre(selectedIndexes, preTarget)
+                moveSelected()
                 return
             } else if (root.mode === PlaylistListView.Mode.Select) {
             } else if (!(root.model.isSelected(index) && mouse.button === Qt.RightButton)) {
@@ -261,6 +263,20 @@ T.Control {
                 var pos = mapToItem(dragItem.parent, mouseX, mouseY)
                 dragItem.x = pos.x + VLCStyle.dp(15)
                 dragItem.y = pos.y
+            }
+        }
+
+        TouchScreenTapHandlerCompat {
+            onTapped: {
+                if (root.mode === PlaylistListView.Mode.Normal) {
+                    mainPlaylistController.goTo(index, true)
+                } else if (root.mode === PlaylistListView.Mode.Move) {
+                    moveSelected()
+                }
+            }
+
+            onLongPressed: {
+                contextMenu.popup(index, point.scenePosition)
             }
         }
     }

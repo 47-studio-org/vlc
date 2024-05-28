@@ -35,11 +35,17 @@ QtObject {
 
     property alias self: vlc_style
 
-    readonly property VLCColors colors: VLCColors {}
+    readonly property SystemPalette palette:  SystemPalette {
+        objectName: "themePalette"
+        source: MainCtx.colorScheme.scheme
+        ctx: MainCtx
+    }
 
-    // When trying to force night/dark theme colors for items,
-    // this can be used:
-    readonly property VLCColors nightColors: VLCColors { state: "night" }
+    readonly property SystemPalette darkPalette: SystemPalette {
+        objectName: "darkPalette"
+        source: ColorSchemeModel.Night
+        ctx: MainCtx
+    }
 
     // Sizes
     readonly property double margin_xxxsmall: dp(2, scale);
@@ -89,14 +95,25 @@ QtObject {
     readonly property int tableRow_height: fontHeight_normal + margin_small * 2
 
     readonly property int icon_xsmall: dp(8, scale);
-    readonly property int icon_small: dp(16, scale);
-    readonly property int icon_normal: dp(32, scale);
+    readonly property int icon_small: dp(12, scale);
+    readonly property int icon_normal: dp(24, scale);
     readonly property int icon_medium: dp(48, scale);
     readonly property int icon_large: dp(64, scale);
     readonly property int icon_xlarge: dp(128, scale);
 
-    readonly property int icon_topbar: dp(38, scale)
-    readonly property int icon_checkedDelegate: dp(40, scale)
+    readonly property int icon_topbar: icon_normal
+    readonly property int icon_toolbar: icon_normal
+    readonly property int icon_audioPlayerButton: dp(32, scale)
+    readonly property int icon_playlist: icon_normal
+    readonly property int icon_track: icon_normal
+    readonly property int icon_tableHeader: icon_normal
+    readonly property int icon_playlistHeader: icon_normal
+    readonly property int icon_banner: dp(28, scale)
+    readonly property int icon_play: dp(28, scale)
+    readonly property int icon_addressBar: icon_normal
+    readonly property int icon_actionButton: icon_normal
+    readonly property int icon_PIP: icon_normal
+    readonly property int icon_CSD: icon_small
 
     readonly property int play_cover_small: dp(24, scale)
     readonly property int play_cover_normal: dp(48, scale)
@@ -150,6 +167,12 @@ QtObject {
     readonly property int button_width_normal: dp(96, scale)
     readonly property int button_width_large: dp(128, scale)
 
+    readonly property int checkButton_width: dp(56, scale)
+    readonly property int checkButton_height: dp(32, scale)
+
+    readonly property int checkButton_margins: dp(4, scale)
+    readonly property int checkButton_handle_margins: dp(2, scale)
+
     readonly property int table_section_width: dp(32, scale)
     readonly property int table_section_text_margin: dp(10, scale)
 
@@ -189,7 +212,11 @@ QtObject {
     readonly property int gridItem_newIndicator: dp(8, scale)
 
     readonly property int column_width: dp(114, scale)
-    readonly property int column_margin_width: dp(32, scale)
+
+    // NOTE: This property should be applied on ExpandGridView and TableView. We should provision
+    //       enough space to fit the TableView section labels and 'contextButton'.
+    readonly property int column_margin: dp(32, scale)
+    readonly property int column_spacing: column_margin
 
     readonly property int table_cover_border: dp(2, scale)
 
@@ -199,19 +226,21 @@ QtObject {
     property int appWidth: 0
     property int appHeight: 0
 
+    readonly property int smallWidth: dp(600, scale)
+    readonly property bool isScreenSmall: appWidth <= smallWidth
+
     //global application margin "safe area"
     readonly property int applicationHorizontalMargin: 0
     readonly property int applicationVerticalMargin: 0
 
     readonly property int globalToolbar_height: dp(40, scale)
     readonly property int localToolbar_height: dp(48, scale)
-    readonly property int banner_icon_size: dp(28, scale)
 
-    readonly property int bannerTabButton_width_small: banner_icon_size
+    readonly property int bannerTabButton_width_small: icon_banner
     readonly property int bannerTabButton_width_large: column_width
 
-    readonly property int bannerButton_height: dp(32, scale)
-    readonly property int bannerButton_width: dp(40, scale)
+    readonly property int bannerButton_height: icon_banner
+    readonly property int bannerButton_width: icon_banner
 
     // Drag and drop
 
@@ -251,43 +280,35 @@ QtObject {
     readonly property int durationSliderBouncing: 2000
 
     //default arts
-    readonly property url noArtAlbum: "qrc:///noart_album.svg";
-    readonly property url noArtArtist: "qrc:///noart_artist.svg";
-    readonly property url noArtArtistSmall: "qrc:///noart_artist_small.svg";
-    readonly property url noArtAlbumCover: "qrc:///noart_albumCover.svg";
-    readonly property url noArtArtistCover: "qrc:///noart_artistCover.svg";
-    readonly property url noArtVideoCover: "qrc:///noart_videoCover.svg";
+    readonly property url noArtAlbum: "qrc:///placeholder/noart_album.svg";
+    readonly property url noArtArtist: "qrc:///placeholder/noart_artist.svg";
+    readonly property url noArtArtistSmall: "qrc:///placeholder/noart_artist_small.svg";
+    readonly property url noArtAlbumCover: "qrc:///placeholder/noart_albumCover.svg";
+    readonly property url noArtArtistCover: "qrc:///placeholder/noart_artistCover.svg";
+    readonly property url noArtVideoCover: "qrc:///placeholder/noart_videoCover.svg";
 
     // Play shadow
-    readonly property url playShadow: "qrc:///play_shadow.png";
+    readonly property url playShadow: "qrc:///misc/play_shadow.png";
 
     // New indicator
-    readonly property url newIndicator: "qrc:///new_indicator.svg";
+    readonly property url newIndicator: "qrc:///misc/new_indicator.svg";
 
     // Player controlbar
     readonly property int maxControlbarControlHeight: dp(64, scale)
 
-    //device pixel
-    function dp(px, scale) {
-        if (typeof scale === "undefined")
-            scale = MainCtx.intfScaleFactor
+    readonly property var dp: MainCtx.dp
 
-        var scaledPx = Math.round(px * scale)
-        if (scaledPx < 0)
-            return Math.min(-1, scaledPx)
-        else if (scaledPx > 0)
-            return Math.max(1, scaledPx)
-        else // scaledPx == 0
-            return 0
-    }
+    //"alias" ColorHelper functions
+    readonly property var blendColors: vlc_style.palette.blendColors
+    readonly property var setColorAlpha: vlc_style.palette.setColorAlpha
 
     function colWidth(nb) {
-      return nb * VLCStyle.column_width + ( nb - 1 ) * VLCStyle.column_margin_width;
+      return nb * VLCStyle.column_width + ( nb - 1 ) * VLCStyle.column_spacing;
     }
 
     //Returns the number columns fitting in given width
     function gridColumnsForWidth(width) {
-        return Math.floor((width + column_margin_width) / (column_width + column_margin_width))
+        return Math.floor((width + column_spacing) / (column_width + column_spacing))
     }
 
 }

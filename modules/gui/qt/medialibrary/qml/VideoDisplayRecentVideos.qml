@@ -30,10 +30,12 @@ import "qrc:///style/"
 FocusScope {
     id: root
 
-    property alias leftPadding: recentVideosColumn.leftPadding
-    property alias rightPadding: recentVideosColumn.rightPadding
-    property alias topPadding: recentVideosColumn.topPadding
+    // Aliases
+
     property alias bottomPadding: recentVideosColumn.bottomPadding
+
+    property alias displayMarginBeginning: listView.displayMarginBeginning
+    property alias displayMarginEnd: listView.displayMarginEnd
 
     property alias subtitleText : subtitleLabel.text
 
@@ -45,9 +47,9 @@ FocusScope {
 
     // Functions
 
-    function _actionAtIndex(index) {
+    function _play(id) {
+        MediaLib.addAndPlay( id, [":restore-playback-pos=2"] )
         g_mainDisplay.showPlayer()
-        MediaLib.addAndPlay( model.getIdForIndexes(index), [":restore-playback-pos=2"] )
     }
 
     // Childs
@@ -60,33 +62,37 @@ FocusScope {
         showPlayAsAudioAction: true
     }
 
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.View
+    }
+
     Column {
         id: recentVideosColumn
 
         width: root.width
 
-        spacing: VLCStyle.margin_xsmall
+        spacing: VLCStyle.margin_normal
 
         Widgets.SubtitleLabel {
             text: I18n.qtr("Continue Watching")
 
+            // NOTE: Setting this to listView.visible seems to causes unnecessary implicitHeight
+            //       calculations in the Column parent.
             visible: listView.count > 0
+            color: theme.fg.primary
         }
 
         Widgets.KeyNavigableListView {
             id: listView
 
-            width: root.width - root.leftPadding - root.rightPadding
+            width: parent.width
 
             implicitHeight: VLCStyle.gridItem_video_height + VLCStyle.gridItemSelectedBorder
                             +
                             VLCStyle.margin_xlarge
 
-            spacing: VLCStyle.column_margin_width
-
-            // NOTE: Sometimes, we want items to be visible on the sides.
-            displayMarginBeginning: root.leftPadding
-            displayMarginEnd: root.rightPadding
+            spacing: VLCStyle.column_spacing
 
             // NOTE: We want navigation buttons to be centered on the item cover.
             buttonMargin: VLCStyle.margin_xsmall + VLCStyle.gridCover_video_height / 2 - buttonLeft.height / 2
@@ -95,7 +101,8 @@ FocusScope {
 
             focus: true
 
-            fadeColor: VLCStyle.colors.bg
+            // NOTE: We want a gentle fade at the beginning / end of the history.
+            enableFade: true
 
             Navigation.parentItem: root
 
@@ -105,15 +112,8 @@ FocusScope {
                 ml: MediaLib
             }
 
-            header: Item {
-                width: VLCStyle.margin_normal
-            }
-
             delegate: VideoGridItem {
                 id: gridItem
-
-                x: selectedBorderWidth
-                y: selectedBorderWidth
 
                 pictureWidth: VLCStyle.gridCover_video_width
                 pictureHeight: VLCStyle.gridCover_video_height
@@ -158,23 +158,21 @@ FocusScope {
 
                 function play() {
                     if (model.id !== undefined) {
-                        g_mainDisplay.showPlayer()
-                        MediaLib.addAndPlay( model.id, [":restore-playback-pos=2"] )
+                        root._play(model.id)
                     }
                 }
             }
 
-            footer: Item {
-                width: VLCStyle.margin_normal
+            onActionAtIndex: {
+                root._play(model.getIdForIndex(index))
             }
-
-            onActionAtIndex: root._actionAtIndex(index)
         }
 
         Widgets.SubtitleLabel {
             id: subtitleLabel
 
             visible: text !== ""
+            color: theme.fg.primary
         }
     }
 }

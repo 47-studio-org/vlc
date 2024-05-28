@@ -16,6 +16,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
+#include <QQmlFile>
+
 #include "networksourcesmodel.hpp"
 #include "networkmediamodel.hpp"
 
@@ -74,7 +76,7 @@ void NetworkSourcesModel::setCtx(MainCtx* ctx)
         m_ctx = ctx;
     }
     if (m_ctx) {
-        initializeMediaSources();
+        initializeMediaTree();
     }
     emit ctxChanged();
 }
@@ -95,7 +97,7 @@ QMap<QString, QVariant> NetworkSourcesModel::getDataAt(int idx)
     return dataDict;
 }
 
-bool NetworkSourcesModel::initializeMediaSources()
+bool NetworkSourcesModel::initializeMediaTree()
 {
     auto libvlc = vlc_object_instance(m_ctx->getIntf());
 
@@ -129,15 +131,15 @@ bool NetworkSourcesModel::initializeMediaSources()
 
         if ( item.name.startsWith( "podcast" ) )
         {
-            item.artworkUrl = QUrl::fromLocalFile(":/sidebar/podcast.svg");
+            item.artworkUrl = QUrl("qrc:///sd/podcast.svg");
         }
         else if ( item.name.startsWith("lua{") )
         {
             int i_head = item.name.indexOf( "sd='" ) + 4;
             int i_tail = item.name.indexOf( '\'', i_head );
-            const QString iconName = QString( ":/sidebar/sd/%1.svg" ).arg( item.name.mid( i_head, i_tail - i_head ) );
-            item.artworkUrl = QFileInfo::exists( iconName ) ? QUrl::fromLocalFile( iconName )
-                                                            : QUrl::fromLocalFile( ":/sidebar/network.svg" );
+            const QString iconName = QString( "qrc:///sd/%1.svg" ).arg( item.name.mid( i_head, i_tail - i_head ) );
+            item.artworkUrl = QFileInfo::exists( QQmlFile::urlToLocalFileOrQrc(iconName) ) ? QUrl(iconName)
+                                                            : QUrl("qrc:///sd/network.svg");
         }
 
         m_items.push_back( std::move(item) );

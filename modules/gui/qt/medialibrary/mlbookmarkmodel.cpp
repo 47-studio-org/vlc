@@ -28,98 +28,54 @@
 #include "medialib.hpp"
 #include "mlhelper.hpp"
 
-MLBookmarkModel::MLBookmarkModel( MediaLib* medialib, vlc_player_t *player,
-                                  QObject *parent )
+#include "util/vlctick.hpp"
+#include "player/player_controller.hpp"
+
+MLBookmarkModel::MLBookmarkModel( QObject *parent )
     : QAbstractListModel( parent )
-    , m_mediaLib( medialib )
-    , m_player( player )
     , m_currentItem( nullptr, &input_item_Release )
-{
-    static const vlc_player_cbs cbs {
-        &onCurrentMediaChanged,
-        &onPlaybackStateChanged,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-    };
-    QString uri;
-    {
-        vlc_player_locker lock{ m_player };
-        vlc::threads::mutex_locker selflock{ m_mutex };
-        m_listener = vlc_player_AddListener( m_player, &cbs, this );
-        if ( m_listener == nullptr )
-            throw std::bad_alloc{};
-        auto currentItem = vlc_player_GetCurrentMedia( m_player );
-        m_currentItem = vlc::wrap_cptr( currentItem ? input_item_Hold( currentItem ) : nullptr,
-                                        &input_item_Release );
-        if (m_currentItem)
-        {
-            uri = m_currentItem->psz_uri;
-        }
-    }
-    updateMediaId(0, uri);
-}
+    , m_ml_event_handle( nullptr, [this](vlc_ml_event_callback_t* cb ) {
+        if (!cb)
+            return;
+        if ( m_mediaLib )
+            m_mediaLib->unregisterEventListener(cb);
+    })
+{}
 
 MLBookmarkModel::~MLBookmarkModel()
 {
-    vlc_player_locker lock{ m_player };
-    vlc_player_RemoveListener( m_player, m_listener );
+    if(m_player && m_listener){
+        vlc_player_locker lock{ m_player };
+        vlc_player_RemoveListener( m_player, m_listener );
+    }
 }
 
 QVariant MLBookmarkModel::data( const QModelIndex &index, int role ) const
 {
-    if ( !index.isValid() || index.row() < 0 ||
-         !m_bookmarks ||
-         (uint32_t)index.row() >= m_bookmarks->i_nb_items )
-    {
+    if ( !index.isValid() || index.row() < 0 || m_player == nullptr ||
+         !m_bookmarks || (uint32_t)index.row() >= m_bookmarks->i_nb_items )
         return QVariant{};
-    }
 
     const auto& bookmark = m_bookmarks->p_items[index.row()];
 
-    // NOTE: We want to keep the current value when editing.
-    if ( role != Qt::DisplayRole && role != Qt::EditRole )
-        return QVariant{};
+    if (role == Qt::DisplayRole || role == Qt::EditRole)
+        role = columnToRole(index.column());
 
-    switch ( index.column() )
-    {
-    case 0:
-        return QVariant::fromValue( QString::fromUtf8( bookmark.psz_name ) );
-    case 1:
-        return QVariant::fromValue( MsToString( bookmark.i_time ) );
-    case 2:
-        return QVariant::fromValue( QString::fromUtf8( bookmark.psz_description ) );
-    default:
-        return QVariant{};
+    switch(role){
+        case BookmarkRoles::NameRole:
+            return QVariant::fromValue( qfu( bookmark.psz_name ) );
+        case BookmarkRoles::TimeRole:
+            return QVariant::fromValue( VLCTick::fromMS( bookmark.i_time ).formatHMS() );
+        case BookmarkRoles::PositionRole:
+        {
+            vlc_player_locker lock{ m_player };
+            return !vlc_player_GetLength( m_player ) ? QVariant{} :
+                    QVariant::fromValue<float> ((float) VLC_TICK_FROM_MS(bookmark.i_time) / vlc_player_GetLength( m_player ));
+        }
+        case BookmarkRoles::DescriptionRole:
+            return QVariant::fromValue( qfu( bookmark.psz_description ) );
+        default:
+            return QVariant{};
     }
 }
 
@@ -127,17 +83,16 @@ bool MLBookmarkModel::setData(const QModelIndex &index, const QVariant &value, i
 {
     if ( index.isValid() == false )
         return false;
-    if ( role != Qt::EditRole )
-        return false;
-    if ( index.column() == 1 )
-        /* Disable editing the Time value through the listing */
+    if ( role == Qt::EditRole )
+        role = columnToRole(index.column());
+    if ( role != BookmarkRoles::NameRole && role != BookmarkRoles::DescriptionRole )
         return false;
     if ( value.canConvert<QString>() == false )
         return false;
+
     size_t row = index.row();
     bool updateName = (index.column() == 0);
 
-    assert( index.column() == 0 || index.column() == 2 );
     if ( ! m_bookmarks || row >= m_bookmarks->i_nb_items )
         return false;
 
@@ -174,20 +129,42 @@ bool MLBookmarkModel::setData(const QModelIndex &index, const QVariant &value, i
         {
             free( b.psz_name );
             b.psz_name = strdup( qtu( str ) );
+            emit dataChanged(this->index(row, 0), this->index(row, 0),
+                             {Qt::DisplayRole, BookmarkRoles::NameRole});
         }
         else
         {
             free( b.psz_description );
             b.psz_description = strdup( qtu( str ) );
+            emit dataChanged(this->index(row, 2), this->index(row, 2),
+                             {Qt::DisplayRole, BookmarkRoles::DescriptionRole});
         }
-
-        if (updateName)
-            emit dataChanged(this->index(row, 0), this->index(row, 0), {Qt::DisplayRole});
-        else
-            emit dataChanged(this->index(row, 2), this->index(row, 2), {Qt::DisplayRole});
     });
 
     return true;
+}
+
+QHash<int, QByteArray> MLBookmarkModel::roleNames() const{
+    return QHash<int, QByteArray>{
+        {BookmarkRoles::NameRole, "name"},
+        {BookmarkRoles::TimeRole, "time"},
+        {BookmarkRoles::PositionRole, "position"},
+        {BookmarkRoles::DescriptionRole, "description"}
+    };
+}
+
+int MLBookmarkModel::columnToRole(int column) const{
+    switch (column)
+    {
+      case 0:
+         return BookmarkRoles::NameRole;
+      case 1:
+         return BookmarkRoles::TimeRole;
+      case 2:
+        return BookmarkRoles::DescriptionRole;
+      default:
+         return -1;
+    }
 }
 
 Qt::ItemFlags MLBookmarkModel::flags( const QModelIndex& index ) const
@@ -223,10 +200,9 @@ QModelIndex MLBookmarkModel::parent(const QModelIndex &) const
 QVariant MLBookmarkModel::headerData( int section, Qt::Orientation orientation,
                                       int role ) const
 {
-    if ( role != Qt::DisplayRole )
+    if (role != Qt::DisplayRole || orientation == Qt::Vertical)
         return QVariant{};
-    if ( orientation == Qt::Vertical )
-        return QVariant{};
+
     switch ( section )
     {
         case 0:
@@ -265,7 +241,6 @@ void MLBookmarkModel::sort( int column, Qt::SortOrder order )
 
 void MLBookmarkModel::add()
 {
-
     vlc_tick_t currentTime;
     {
         vlc_player_locker lock{ m_player };
@@ -287,7 +262,7 @@ void MLBookmarkModel::add()
 
         if (media)
         {
-            QString name = QString("%1 #%2").arg(media->psz_title).arg(count);
+            QString name = qtr("Bookmark at %1").arg(VLCTick::fromMS( time ).formatHMS());
 
             vlc_ml_media_update_bookmark(ml, mediaId, time, qtu(name), nullptr);
         }
@@ -296,7 +271,6 @@ void MLBookmarkModel::add()
     [this](){
         refresh( MLBOOKMARKMODEL_REFRESH );
     });
-
 }
 
 void MLBookmarkModel::remove( const QModelIndexList &indexes )
@@ -394,6 +368,9 @@ void MLBookmarkModel::onPlaybackStateChanged( vlc_player_t *, vlc_player_state s
 {
     auto self = static_cast<MLBookmarkModel*>( data );
 
+    if(self->m_currentMediaId == 0)
+        return;
+
     QMetaObject::invokeMethod(self, [self, state](){
         if ( state == VLC_PLAYER_STATE_STARTED )
             self->refresh( MLBOOKMARKMODEL_REFRESH );
@@ -444,12 +421,11 @@ void MLBookmarkModel::updateMediaId(uint64_t revision, const QString mediaUri)
             beginResetModel();
             m_bookmarks = std::move(ctx.newBookmarks);
             m_currentMediaId = ctx.newMLid;
+            refresh(MLBOOKMARKMODEL_REFRESH);
             endResetModel();
         }
     });
 }
-
-
 
 void MLBookmarkModel::refresh(MLBookmarkModel::RefreshOperation forceClear )
 {
@@ -485,5 +461,149 @@ void MLBookmarkModel::refresh(MLBookmarkModel::RefreshOperation forceClear )
                 m_bookmarks.reset();
             endResetModel();
         });
+    }
+}
+
+vlc_player_t * MLBookmarkModel::player() const
+{
+    return m_player;
+}
+
+void MLBookmarkModel::setPlayer(vlc_player_t * player)
+{
+    if (m_player == player) return;
+
+    if(m_player && m_listener){
+        vlc_player_locker lock{ m_player };
+        vlc_player_RemoveListener( m_player, m_listener );
+    }
+
+    m_player = player;
+
+    if (m_player && m_mediaLib)
+        initModel();
+}
+
+
+PlayerController * MLBookmarkModel::playerController() const
+{
+    return m_player_controller;
+}
+
+void MLBookmarkModel::setPlayer(PlayerController * player)
+{
+    if (m_player_controller == player) return;
+
+    if (m_player_controller)
+        disconnect(m_player_controller, nullptr, this, nullptr);
+
+    m_player_controller = player;
+
+    connect(m_player_controller, &PlayerController::lengthChanged, this, &MLBookmarkModel::playerLengthChanged);
+
+    setPlayer(player->getPlayer());
+}
+
+MediaLib* MLBookmarkModel::ml() const
+{
+    return m_mediaLib;
+}
+
+void MLBookmarkModel::playerLengthChanged()
+{
+    refresh(MLBOOKMARKMODEL_REFRESH);
+}
+
+void MLBookmarkModel::setMl(MediaLib* medialib)
+{
+    if(m_mediaLib == medialib) return;
+
+    if(m_mediaLib)
+        m_ml_event_handle.reset(nullptr);
+
+    m_mediaLib = medialib;
+
+    if (m_player && m_mediaLib)
+        initModel();
+}
+
+void MLBookmarkModel::initModel()
+{
+    static const vlc_player_cbs cbs {
+        &onCurrentMediaChanged,
+        &onPlaybackStateChanged,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+    };
+    QString uri;
+    {
+        vlc_player_locker lock{ m_player };
+        vlc::threads::mutex_locker selflock{ m_mutex };
+        m_listener = vlc_player_AddListener( m_player, &cbs, this );
+        if ( m_listener == nullptr )
+            throw std::bad_alloc{};
+        auto currentItem = vlc_player_GetCurrentMedia( m_player );
+        m_currentItem = vlc::wrap_cptr( currentItem ? input_item_Hold( currentItem ) : nullptr,
+                                        &input_item_Release );
+        if (m_currentItem)
+        {
+            uri = m_currentItem->psz_uri;
+        }
+    }
+    updateMediaId(0, uri);
+
+    if (m_ml_event_handle == nullptr)
+        m_ml_event_handle.reset(m_mediaLib->registerEventListener(onVlcMlEvent, this));
+}
+
+void MLBookmarkModel::onVlcMlEvent(void* data, const vlc_ml_event_t* event)
+{
+    auto self = static_cast<MLBookmarkModel*>(data);
+    auto  mlEvent = std::make_shared<MLEvent>(event);
+    QMetaObject::invokeMethod(self, [self, mlEvent] () mutable {
+        self->onVlcMlEvent(*mlEvent);
+    });
+}
+
+void MLBookmarkModel::onVlcMlEvent(const MLEvent &event){
+    switch (event.i_type)
+    {
+        case VLC_ML_EVENT_BOOKMARKS_ADDED:
+        case VLC_ML_EVENT_BOOKMARKS_DELETED:
+        case VLC_ML_EVENT_BOOKMARKS_UPDATED:
+            refresh(MLBOOKMARKMODEL_REFRESH);
+        break;
+        default:
+            break;
     }
 }

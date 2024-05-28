@@ -34,12 +34,15 @@
 #include <gst/gst.h>
 #include <gst/video/video.h>
 #include <gst/video/gstvideometa.h>
+#include <gst/allocators/gstdmabuf.h>
 
 #include <gst/app/gstappsrc.h>
 #include <gst/gstatomicqueue.h>
 
 #include "gstvlcpictureplaneallocator.h"
 #include "gstvlcvideosink.h"
+#include "gstcopypicture.h"
+#include "gst_mem.h"
 
 typedef struct
 {
@@ -56,6 +59,8 @@ typedef struct
     GstAtomicQueue *p_que;
     bool b_prerolled;
     bool b_running;
+
+    vlc_video_context *vctx;
 } decoder_sys_t;
 
 typedef struct
@@ -71,6 +76,7 @@ static int  OpenDecoder( vlc_object_t* );
 static void CloseDecoder( vlc_object_t* );
 static int  DecodeBlock( decoder_t*, block_t* );
 static void Flush( decoder_t * );
+static int OpenDecoderDevice( vlc_decoder_device*, vlc_window_t* );
 
 #define MODULE_DESCRIPTION N_( "Uses GStreamer framework's plugins " \
         "to decode the media codecs" )
@@ -104,7 +110,36 @@ vlc_module_begin( )
         USEDECODEBIN_LONGTEXT )
     add_bool( "use-vlcpool", false, USEVLCPOOL_TEXT,
         USEVLCPOOL_LONGTEXT )
+    add_submodule( )
+        set_callback_dec_device( OpenDecoderDevice, 100 )
+        add_shortcut( "gstdecode" )
 vlc_module_end( )
+
+static void gst_mem_pic_context_Destroy( struct picture_context_t *ctx )
+{
+    struct gst_mem_pic_context *gst_mem_ctx = container_of( ctx,
+            struct gst_mem_pic_context, s );
+
+    gst_buffer_unref( gst_mem_ctx->p_buf );
+    free( gst_mem_ctx );
+}
+
+static picture_context_t *gst_mem_pic_context_Copy(
+        struct picture_context_t *ctx )
+{
+    struct gst_mem_pic_context *gst_mem_ctx = container_of( ctx,
+            struct gst_mem_pic_context, s );
+    struct gst_mem_pic_context *gst_mem_ctx_copy = calloc( 1,
+            sizeof( *gst_mem_ctx_copy ) );
+    if( unlikely( gst_mem_ctx_copy == NULL ) )
+        return NULL;
+
+    *gst_mem_ctx_copy = *gst_mem_ctx;
+    vlc_video_context_Hold( gst_mem_ctx_copy->s.vctx );
+    gst_buffer_ref( gst_mem_ctx_copy->p_buf );
+
+    return &gst_mem_ctx_copy->s;
+}
 
 void gst_vlc_dec_ensure_empty_queue( decoder_t *p_dec )
 {
@@ -146,6 +181,35 @@ static gboolean seek_data_cb( GstAppSrc *p_src, guint64 l_offset,
     decoder_t *p_dec = p_data;
     msg_Dbg( p_dec, "appsrc seeking to %"G_GUINT64_FORMAT, l_offset );
     return TRUE;
+}
+
+/* Emitted by decodebin when an autoplugged element not yet
+ * downstream-linked does a query.
+ * Used here for format and allocator negotiation. */
+static gboolean autoplug_query_cb( GstElement *p_bin, GstPad *p_pad,
+                                   GstElement *p_element, GstQuery *p_query,
+                                   gpointer p_data )
+{
+    VLC_UNUSED( p_bin );
+    decoder_t *p_dec = p_data;
+    decoder_sys_t *p_sys = p_dec->p_sys;
+
+    if( ( p_pad->direction == GST_PAD_SRC ) &&
+        GST_IS_VIDEO_DECODER( p_element ) )
+    {
+        switch( GST_QUERY_TYPE ( p_query ) ){
+        case GST_QUERY_CAPS:
+            return gst_vlc_video_sink_query_caps( p_query );
+        case GST_QUERY_ALLOCATION:
+            GstBaseSink *p_bsink = GST_BASE_SINK_CAST( p_sys->p_decode_out );
+            GstBaseSinkClass *p_bclass = GST_BASE_SINK_GET_CLASS( p_bsink );
+            return p_bclass->propose_allocation( p_bsink, p_query );
+        default:
+            return FALSE;
+        }
+    }
+
+    return FALSE;
 }
 
 /* Emitted by decodebin and links decodebin to vlcvideosink.
@@ -213,39 +277,6 @@ static void frame_handoff_cb( GstElement *p_ele, GstBuffer *p_buf,
 
     /* Push the buffer to the queue */
     gst_atomic_queue_push( p_sys->p_que, gst_buffer_ref( p_buf ) );
-}
-
-/* Copy the frame data from the GstBuffer (from decoder)
- * to the picture obtained from downstream in VLC.
- * This function should be avoided as much
- * as possible, since it involves a complete frame copy. */
-static void gst_CopyPicture( picture_t *p_pic, GstVideoFrame *p_frame )
-{
-    int i_plane, i_planes, i_line, i_dst_stride, i_src_stride;
-    uint8_t *p_dst, *p_src;
-    int i_w, i_h;
-
-    i_planes = p_pic->i_planes;
-    for( i_plane = 0; i_plane < i_planes; i_plane++ )
-    {
-        p_dst = p_pic->p[i_plane].p_pixels;
-        p_src = GST_VIDEO_FRAME_PLANE_DATA( p_frame, i_plane );
-        i_dst_stride = p_pic->p[i_plane].i_pitch;
-        i_src_stride = GST_VIDEO_FRAME_PLANE_STRIDE( p_frame, i_plane );
-
-        i_w = GST_VIDEO_FRAME_COMP_WIDTH( p_frame,
-                i_plane ) * GST_VIDEO_FRAME_COMP_PSTRIDE( p_frame, i_plane );
-        i_h = GST_VIDEO_FRAME_COMP_HEIGHT( p_frame, i_plane );
-
-        for( i_line = 0;
-                i_line < __MIN( p_pic->p[i_plane].i_lines, i_h );
-                i_line++ )
-        {
-            memcpy( p_dst, p_src, i_w );
-            p_src += i_src_stride;
-            p_dst += i_dst_stride;
-        }
-    }
 }
 
 /* Check if the element can use this caps */
@@ -477,7 +508,7 @@ static int OpenDecoder( vlc_object_t *p_this )
         return VLC_EGENERIC;
     }
 
-    p_str = vlc_to_gst_fmt( &p_dec->fmt_in );
+    p_str = vlc_to_gst_fmt( p_dec->fmt_in );
     if( !p_str )
         return VLC_EGENERIC;
 
@@ -564,6 +595,8 @@ static int OpenDecoder( vlc_object_t *p_this )
         g_signal_connect( G_OBJECT( p_sys->p_decode_in ), "pad-added",
                 G_CALLBACK( pad_added_cb ), p_dec );
 
+        g_signal_connect( G_OBJECT( p_sys->p_decode_in ), "autoplug-query",
+                G_CALLBACK( autoplug_query_cb ), p_dec );
     }
 
     /* videosink: will emit signal for every available buffer */
@@ -622,6 +655,20 @@ static int OpenDecoder( vlc_object_t *p_this )
     /* Set callbacks */
     p_dec->pf_decode = DecodeBlock;
     p_dec->pf_flush  = Flush;
+
+    vlc_decoder_device *dec_device = decoder_GetDecoderDevice( p_dec );
+    if( dec_device == NULL )
+    {
+        msg_Err( p_dec, "failed to get a decoder device" );
+        goto fail;
+    }
+    p_sys->vctx = vlc_video_context_Create( dec_device, VLC_VIDEO_CONTEXT_GSTDECODE, 0, NULL );
+    vlc_decoder_device_Release( dec_device );
+    if( unlikely( p_sys->vctx == NULL ) )
+    {
+        msg_Err( p_dec, "failed to create a video context" );
+        goto fail;
+    }
 
     return VLC_SUCCESS;
 
@@ -710,11 +757,11 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             GST_BUFFER_DURATION( p_buf ) = gst_util_uint64_scale(
                     p_block->i_length, GST_SECOND, GST_MSECOND );
 
-        if( p_dec->fmt_in.video.i_frame_rate  &&
-                p_dec->fmt_in.video.i_frame_rate_base )
+        if( p_dec->fmt_in->video.i_frame_rate  &&
+                p_dec->fmt_in->video.i_frame_rate_base )
             GST_BUFFER_DURATION( p_buf ) = gst_util_uint64_scale( GST_SECOND,
-                    p_dec->fmt_in.video.i_frame_rate_base,
-                    p_dec->fmt_in.video.i_frame_rate );
+                    p_dec->fmt_in->video.i_frame_rate_base,
+                    p_dec->fmt_in->video.i_frame_rate );
 
         /* Give the input buffer to GStreamer Bin.
          *
@@ -775,22 +822,84 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
         GstBuffer *p_buf = GST_BUFFER_CAST(
                 gst_atomic_queue_pop( p_sys->p_que ));
         GstMemory *p_mem;
+        p_mem = gst_buffer_peek_memory( p_buf, 0 );
 
-        if(( p_mem = gst_buffer_peek_memory( p_buf, 0 )) &&
+        bool b_copy_picture = true;
+
+        if( p_mem &&
             GST_IS_VLC_PICTURE_PLANE_ALLOCATOR( p_mem->allocator ))
         {
+            b_copy_picture = false;
             p_pic = picture_Hold(( (GstVlcPicturePlane*) p_mem )->p_pic );
         }
-        else
+        else if( p_mem && gst_is_dmabuf_memory(p_mem) )
+        {
+            b_copy_picture = false;
+
+            switch( p_dec->fmt_out.video.i_chroma ) {
+            case VLC_CODEC_NV12:
+                p_dec->fmt_out.video.i_chroma = p_dec->fmt_out.i_codec =
+                    VLC_CODEC_GST_MEM_OPAQUE;
+                break;
+            case VLC_CODEC_GST_MEM_OPAQUE:
+                break;
+            /* fallback */
+            default:
+                b_copy_picture = true;
+            }
+
+            if( !b_copy_picture )
+            {
+                /* Get a new picture */
+                if( decoder_UpdateVideoOutput( p_dec, p_sys->vctx ) )
+                {
+                    gst_buffer_unref( p_buf );
+                    goto done;
+                }
+                p_pic = decoder_NewPicture( p_dec );
+                if( !p_pic )
+                {
+                    gst_buffer_unref( p_buf );
+                    goto done;
+                }
+
+                struct gst_mem_pic_context *pctx = calloc( 1, sizeof( *pctx ) );
+                if( unlikely( pctx == NULL ) )
+                {
+                    gst_buffer_unref( p_buf );
+                    return VLCDEC_ECRITICAL;
+                }
+
+                pctx->s = ( picture_context_t ) {
+                    gst_mem_pic_context_Destroy, gst_mem_pic_context_Copy,
+                    p_sys->vctx,
+                };
+                vlc_video_context_Hold( pctx->s.vctx );
+
+                pctx->p_buf = p_buf;
+                gst_buffer_ref( p_buf );
+
+                pctx->p_vinfo = &p_sys->vinfo;
+                p_pic->context = &pctx->s;
+            }
+        }
+
+        if( b_copy_picture )
         {
             GstVideoFrame frame;
 
             /* Get a new picture */
             if( decoder_UpdateVideoFormat( p_dec ) )
+            {
+                gst_buffer_unref( p_buf );
                 goto done;
+            }
             p_pic = decoder_NewPicture( p_dec );
             if( !p_pic )
+            {
+                gst_buffer_unref( p_buf );
                 goto done;
+            }
 
             if( unlikely( !gst_video_frame_map( &frame,
                             &p_sys->vinfo, p_buf, GST_MAP_READ ) ) )
@@ -803,6 +912,10 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             gst_CopyPicture( p_pic, &frame );
             gst_video_frame_unmap( &frame );
         }
+
+        if( p_pic != NULL )
+            p_pic->b_progressive = ( p_sys->vinfo.interlace_mode ==
+                                     GST_VIDEO_INTERLACE_MODE_PROGRESSIVE );
 
         if( likely( GST_BUFFER_PTS_IS_VALID( p_buf ) ) )
             p_pic->date = gst_util_uint64_scale(
@@ -892,5 +1005,22 @@ static void CloseDecoder( vlc_object_t *p_this )
     if( p_sys->p_decoder )
         gst_object_unref( p_sys->p_decoder );
 
+    if( p_sys->vctx )
+        vlc_video_context_Release( p_sys->vctx );
+
     free( p_sys );
+}
+
+static const struct vlc_decoder_device_operations gstdecode_device_ops = {
+    .close = NULL,
+};
+
+static int OpenDecoderDevice(vlc_decoder_device *device, vlc_window_t *window)
+{
+    VLC_UNUSED(window);
+
+    device->ops = &gstdecode_device_ops;
+    device->type = VLC_DECODER_DEVICE_GSTDECODE;
+
+    return VLC_SUCCESS;
 }

@@ -790,7 +790,7 @@ static int  Open ( vlc_object_t *p_this )
 #else
     p_enc->fmt_out.i_codec = VLC_CODEC_H264;
 #endif
-    p_enc->p_sys = p_sys = vlc_obj_malloc( p_this, sizeof( encoder_sys_t ) );
+    p_sys = vlc_obj_malloc( p_this, sizeof( encoder_sys_t ) );
     if( !p_sys )
         return VLC_ENOMEM;
 
@@ -1348,6 +1348,7 @@ static int  Open ( vlc_object_t *p_this )
         }
     }
     free(psz_opts);
+    p_enc->p_sys = p_sys;
 
     /* Open the encoder */
     p_sys->h = x264_encoder_open( &p_sys->param );
@@ -1404,6 +1405,7 @@ static int  Open ( vlc_object_t *p_this )
     };
 
     p_enc->ops = &ops;
+
     return VLC_SUCCESS;
 }
 
@@ -1526,4 +1528,5 @@ static void CloseEncoder( encoder_t *p_enc )
         msg_Dbg( p_enc, "framecount still in libx264 buffer: %d", x264_encoder_delayed_frames( p_sys->h ) );
         x264_encoder_close( p_sys->h );
     }
+    p_enc->p_sys = NULL;
 }

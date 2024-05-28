@@ -8,6 +8,8 @@ ifeq ($(call need_pkg,"libmodplug >= 0.8.9.0"),)
 PKGS_FOUND += modplug
 endif
 
+MODPLUG_CXXFLAGS := $(CXXFLAGS) -std=gnu++98
+
 $(TARBALLS)/libmodplug-$(MODPLUG_VERSION).tar.gz:
 	$(call download_pkg,$(MODPLUG_URL),modplug)
 
@@ -24,8 +26,12 @@ endif
 	$(call pkg_static,"libmodplug.pc.in")
 	$(MOVE)
 
+MODPLUG_CONF := CXXFLAGS="$(MODPLUG_CXXFLAGS)"
+
 .modplug: libmodplug
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF)
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(MODPLUG_CONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

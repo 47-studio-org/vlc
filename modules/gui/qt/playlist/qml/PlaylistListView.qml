@@ -20,9 +20,9 @@ import QtQuick.Controls 2.4
 import QtQuick.Templates 2.4 as T
 import QtQuick.Layouts 1.11
 import QtQml.Models 2.2
-import QtGraphicalEffects 1.0
 
 import org.videolan.vlc 0.1
+import org.videolan.compat 0.1
 
 import "qrc:///widgets/" as Widgets
 import "qrc:///util/Helpers.js" as Helpers
@@ -33,7 +33,7 @@ Control {
 
     property alias model: listView.model
 
-    property alias useAcrylic: acrylicBackground.enabled
+    property bool useAcrylic: true
 
     readonly property real minimumWidth: noContentInfoColumn.implicitWidth +
                                          leftPadding +
@@ -45,7 +45,14 @@ Control {
 
     onActiveFocusChanged: if (activeFocus) listView.forceActiveFocus(focusReason)
 
-    property VLCColors colors: VLCStyle.colors
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.View
+
+        focused: root.activeFocus
+        hovered: root.hovered
+        enabled: root.enabled
+    }
 
     property int mode: PlaylistListView.Mode.Normal
 
@@ -98,7 +105,7 @@ Control {
                     console.warn("can't convert items to input items");
                     return
                 }
-                mainPlaylistController.insert(index, inputItems)
+                mainPlaylistController.insert(index, inputItems, false)
             })
 
         // NOTE: Dropping an external item (i.e. filesystem) into the queue.
@@ -139,13 +146,9 @@ Control {
         }
 
         sourceComponent: PlaylistOverlayMenu {
-            colors: root.colors
-
             isRight: true
             rightPadding: VLCStyle.margin_xsmall + VLCStyle.applicationHorizontalMargin
             bottomPadding: VLCStyle.margin_large + root.bottomPadding
-
-            effectSource: contentItem
         }
     }
 
@@ -155,8 +158,6 @@ Control {
         parent: (typeof g_mainDisplay !== 'undefined') ? g_mainDisplay : root
 
         property var selection: null // make this indexes alias?
-
-        colors: root.colors
 
         indexes: selection
 
@@ -171,6 +172,10 @@ Control {
                 }
             }))
         }
+
+        function getSelectedInputItem(cb) {
+            cb(root.model.getItemsForIndexes(root.model.getSelection()))
+        }
     }
 
     PlaylistContextMenu {
@@ -180,9 +185,8 @@ Control {
     }
 
     background: Widgets.AcrylicBackground {
-        id: acrylicBackground
-
-        alternativeColor: colors.bgAlt
+        enabled: root.useAcrylic
+        tintColor: theme.bg.primary
     }
 
     contentItem: ColumnLayout {
@@ -198,14 +202,14 @@ Control {
 
             Widgets.SubtitleLabel {
                 text: I18n.qtr("Playqueue")
-                color: colors.text
+                color: theme.fg.primary
                 font.weight: Font.Bold
                 font.pixelSize: VLCStyle.dp(24, VLCStyle.scale)
             }
 
             Widgets.CaptionLabel {
                 color: (root.mode === PlaylistListView.Mode.Select || root.mode === PlaylistListView.Mode.Move)
-                       ? colors.accent : colors.caption
+                       ? theme.accent : theme.fg.secondary
                 visible: model.count !== 0
                 text: {
                     switch (root.mode) {
@@ -215,26 +219,8 @@ Control {
                         return I18n.qtr("Moving tracks: %1").arg(model.selectedCount)
                     case PlaylistListView.Mode.Normal:
                     default:
-                        return I18n.qtr("%1 elements, %2").arg(model.count).arg(getHoursMinutesText(model.duration))
+                        return I18n.qtr("%1 elements, %2").arg(model.count).arg(model.duration.formatLong())
                     }
-                }
-
-                function getHoursMinutesText(duration) {
-                    var hours = duration.toHours()
-                    var minutes = duration.toMinutes()
-                    var text
-                    if (hours >= 1) {
-                        minutes = minutes % 60
-                        text = I18n.qtr("%1h %2 min").arg(hours).arg(minutes)
-                    }
-                    else if (minutes > 0) {
-                        text = I18n.qtr("%1 min").arg(minutes)
-                    }
-                    else {
-                        text = I18n.qtr("%1 sec").arg(duration.toSeconds())
-                    }
-
-                    return text
                 }
             }
         }
@@ -250,12 +236,14 @@ Control {
             spacing: VLCStyle.margin_large
 
             Widgets.IconLabel {
-                Layout.preferredWidth: VLCStyle.icon_normal
+                Layout.preferredWidth: VLCStyle.icon_playlistHeader
 
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 text: VLCIcons.album_cover
-                color: colors.caption
+                font.pixelSize: VLCStyle.icon_playlistHeader
+
+                color: theme.fg.secondary
             }
 
             Widgets.CaptionLabel {
@@ -263,16 +251,17 @@ Control {
 
                 verticalAlignment: Text.AlignVCenter
                 text: I18n.qtr("Title")
-                color: colors.caption
+                color: theme.fg.secondary
             }
 
             Widgets.IconLabel {
                 Layout.preferredWidth: durationMetric.width
 
                 text: VLCIcons.time
-                color: colors.caption
+                color: theme.fg.secondary
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
+                font.pixelSize: VLCStyle.icon_playlistHeader
 
                 TextMetrics {
                     id: durationMetric
@@ -300,11 +289,13 @@ Control {
 
             dragAutoScrollDragItem: dragItem
 
-            fadeColor: background.usingAcrylic ? undefined
-                                               : background.alternativeColor
+            // NOTE: We want a gentle fade at the beginning / end of the playqueue.
+            enableFade: true
+
+            backgroundColor: root.background.usingAcrylic ? "transparent"
+                                                          : listView.colorContext.bg.primary
 
             property int shiftIndex: -1
-
             property Item itemContainsDrag: null
 
             onDeselectAll: {
@@ -330,8 +321,12 @@ Control {
             }
 
             footer: Item {
-                width: parent.width
-                height: Math.max(VLCStyle.icon_normal, listView.height - y)
+                implicitWidth: parent.width
+
+                BindingCompat on implicitHeight {
+                    delayed: true
+                    value: Math.max(VLCStyle.icon_normal, listView.height - y)
+                }
 
                 property alias firstItemIndicatorVisible: firstItemIndicator.visible
 
@@ -354,7 +349,7 @@ Control {
                     anchors.margins: VLCStyle.margin_small
 
                     border.width: VLCStyle.dp(2)
-                    border.color: colors.accent
+                    border.color: theme.accent
 
                     color: "transparent"
 
@@ -370,7 +365,7 @@ Control {
                         font.pointSize: VLCStyle.fontHeight_xxxlarge
 
                         font.family: VLCIcons.fontFamily
-                        color: colors.accent
+                        color: theme.accent
                     }
                 }
 
@@ -409,7 +404,7 @@ Control {
                 implicitHeight: VLCStyle.dp(1)
 
                 visible: !!parent
-                color: colors.accent
+                color: theme.accent
             }
 
             function updateItemContainsDrag(item, set) {
@@ -438,21 +433,29 @@ Control {
             }
 
             add: Transition {
-                NumberAnimation {
-                    property: "opacity"; from: 0; to: 1.0
+                SequentialAnimation {
+                    PropertyAction {
+                        // TODO: Remove this >= Qt 5.15
+                        property: "opacity"
+                        value: 0.0
+                    }
 
-                    duration: VLCStyle.duration_long
+                    OpacityAnimator {
+                        from: 0.0 // QTBUG-66475
+                        to: 1.0
+                        duration: VLCStyle.duration_long
+                        easing.type: Easing.OutSine
+                    }
                 }
             }
 
             displaced: Transition {
                 NumberAnimation {
-                    properties: "x,y"
-
-                    duration: VLCStyle.duration_long; easing.type: Easing.OutSine
+                    // TODO: Use YAnimator >= Qt 6.0 (QTBUG-66475)
+                    property: "y"
+                    duration: VLCStyle.duration_long
+                    easing.type: Easing.OutSine
                 }
-
-                NumberAnimation { property: "opacity"; to: 1.0 }
             }
 
             onSelectAll: root.model.selectAll()
@@ -590,8 +593,7 @@ Control {
 
                     text: VLCIcons.playlist
 
-                    color: (listView.activeFocus) ? colors.bgFocus
-                                                  : colors.text
+                    color: theme.fg.primary
 
                     font.pixelSize: VLCStyle.dp(48, VLCStyle.scale)
                 }

@@ -194,6 +194,16 @@ static int Create( filter_t *p_filter )
     if( p_sys->psz_path == NULL )
         p_sys->psz_path = config_GetUserDir( VLC_PICTURES_DIR );
 
+    if (unlikely(p_sys->psz_path == NULL))
+    {
+        msg_Err( p_filter, "could not create snapshot: no directory" );
+        image_HandlerDelete( p_sys->p_image );
+        free( p_sys->psz_prefix );
+        free( p_sys->psz_format );
+        free( p_sys );
+        return VLC_EGENERIC;
+    }
+
     static const struct vlc_filter_operations filter_ops =
     {
         .filter_video = Filter, .close = Destroy,
@@ -232,7 +242,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
 static void SnapshotRatio( filter_t *p_filter, picture_t *p_pic )
 {
-    filter_sys_t *p_sys = (filter_sys_t *)p_filter->p_sys;
+    filter_sys_t *p_sys = p_filter->p_sys;
 
     if( !p_pic ) return;
 
@@ -273,7 +283,7 @@ static void SnapshotRatio( filter_t *p_filter, picture_t *p_pic )
  *****************************************************************************/
 static void SavePicture( filter_t *p_filter, picture_t *p_pic )
 {
-    filter_sys_t *p_sys = (filter_sys_t *)p_filter->p_sys;
+    filter_sys_t *p_sys = p_filter->p_sys;
     video_format_t fmt_in, fmt_out;
     char *psz_filename = NULL;
     char *psz_temp = NULL;

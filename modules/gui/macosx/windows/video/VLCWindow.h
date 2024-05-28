@@ -38,11 +38,10 @@
 
 @property (nonatomic, readwrite) BOOL hasActiveVideo;
 @property (nonatomic, readwrite) BOOL fullscreen;
+@property (readonly) BOOL isInNativeFullscreen;
 
 - (void)closeAndAnimate:(BOOL)animate;
 - (void)orderFront:(id)sender animate:(BOOL)animate;
 - (void)orderOut:(id)sender animate:(BOOL)animate;
-
-- (VLCVoutView *)videoView;
 
 @end

@@ -72,6 +72,9 @@
 #ifndef GL_R16
 # define GL_R16 0x822A
 #endif
+#ifndef GL_R16UI
+# define GL_R16UI 0x8234
+#endif
 #ifndef GL_BGRA
 # define GL_BGRA 0x80E1
 #endif
@@ -84,13 +87,33 @@
 #ifndef GL_LUMINANCE16
 # define GL_LUMINANCE16 0x8042
 #endif
+#ifndef GL_LUMINANCE16_ALPHA16
+# define GL_LUMINANCE16_ALPHA16 0x8048
+#endif
+#ifndef GL_R8
+# define GL_R8 0x8229
+#endif
+#ifndef GL_RG8
+# define GL_RG8 0x822B
+#endif
+#ifndef GL_RG_INTEGER
+# define GL_RG_INTEGER 0x8228
+#endif
+#ifndef GL_RED_INTEGER
+# define GL_RED_INTEGER 0x8D94
+#endif
+#ifndef GL_RG16UI
+# define GL_RG16UI 0x823A
+#endif
 #ifndef GL_TEXTURE_RED_SIZE
 # define GL_TEXTURE_RED_SIZE 0x805C
 #endif
 #ifndef GL_TEXTURE_LUMINANCE_SIZE
 # define GL_TEXTURE_LUMINANCE_SIZE 0x8060
 #endif
-
+#ifndef GL_TEXTURE_WRAP_R
+# define GL_TEXTURE_WRAP_R 0x8072
+#endif
 #ifndef GL_CLAMP_TO_EDGE
 # define GL_CLAMP_TO_EDGE 0x812F
 #endif
@@ -252,6 +275,9 @@ typedef void (APIENTRY *PFNGLREADPIXELSPROC) (GLint, GLint, GLsizei, GLsizei, GL
 #   define PFNGLUNIFORMMATRIX3FVPROC         typeof(glUniformMatrix3fv)*
 #   define PFNGLUNIFORMMATRIX2FVPROC         typeof(glUniformMatrix2fv)*
 #   define PFNGLUNIFORM4FVPROC               typeof(glUniform4fv)*
+#   define PFNGLUNIFORM3FVPROC               typeof(glUniform3fv)*
+#   define PFNGLUNIFORM2FVPROC               typeof(glUniform2fv)*
+#   define PFNGLUNIFORM1FVPROC               typeof(glUniform1fv)*
 #   define PFNGLUNIFORM4FPROC                typeof(glUniform4f)*
 #   define PFNGLUNIFORM3FPROC                typeof(glUniform3f)*
 #   define PFNGLUNIFORM2FPROC                typeof(glUniform2f)*
@@ -356,6 +382,9 @@ typedef struct {
     PFNGLUNIFORMMATRIX3FVPROC        UniformMatrix3fv;
     PFNGLUNIFORMMATRIX2FVPROC        UniformMatrix2fv;
     PFNGLUNIFORM4FVPROC              Uniform4fv;
+    PFNGLUNIFORM3FVPROC              Uniform3fv;
+    PFNGLUNIFORM2FVPROC              Uniform2fv;
+    PFNGLUNIFORM1FVPROC              Uniform1fv;
     PFNGLUNIFORM4FPROC               Uniform4f;
     PFNGLUNIFORM3FPROC               Uniform3f;
     PFNGLUNIFORM2FPROC               Uniform2f;

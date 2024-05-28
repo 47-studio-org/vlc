@@ -25,9 +25,9 @@
 #define LIBVLC_VOUT_INTERNAL_H 1
 
 #include <vlc_vout_display.h>
+#include <vlc_clock.h>
 
 typedef struct input_thread_t input_thread_t;
-typedef struct vlc_clock_t vlc_clock_t;
 
 /* It should be high enough to absorbe jitter due to difficult picture(s)
  * to decode but not too high as memory is not that cheap.
@@ -164,6 +164,7 @@ void vout_ControlChangeSubSources(vout_thread_t *, const char *);
 void vout_ControlChangeSubFilters(vout_thread_t *, const char *);
 void vout_ChangeSpuChannelMargin(vout_thread_t *, enum vlc_vout_order order, int);
 void vout_ChangeViewpoint( vout_thread_t *, const vlc_viewpoint_t *);
+void vout_ChangeIccProfile(vout_thread_t *, vlc_icc_profile_t *);
 
 void vout_FilterMouse(vout_thread_t *vout, vlc_mouse_t *mouse);
 
@@ -225,7 +226,7 @@ void vout_GetResetStatistic( vout_thread_t *p_vout, unsigned *pi_displayed,
 /**
  * This function will force to display the next picture while paused
  */
-void vout_NextPicture( vout_thread_t *p_vout, vlc_tick_t *pi_duration );
+void vout_NextPicture( vout_thread_t *p_vout );
 
 /**
  * This function will ask the display of the input title

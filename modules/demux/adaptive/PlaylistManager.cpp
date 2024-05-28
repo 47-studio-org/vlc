@@ -158,6 +158,8 @@ bool PlaylistManager::init(bool b_preparsing)
     playlist->playbackStart.Set(time(nullptr));
     nextPlaylistupdate = playlist->playbackStart.Get();
 
+    if(b_preparsing)
+        preparsePlaylist();
     updateControlsPosition();
 
     return true;
@@ -269,7 +271,7 @@ AbstractStream::BufferingStatus PlaylistManager::bufferize(Times deadline,
             break;
     }
 
-    vlc_mutex_lock(&demux.lock);
+    vlc_mutex_locker locker(&demux.lock);
     if(demux.times.continuous == VLC_TICK_INVALID &&
         /* don't wait minbuffer on simple discontinuity or restart */
        (demux.pcr_syncpoint == TimestampSynchronizationPoint::Discontinuity ||
@@ -278,7 +280,6 @@ AbstractStream::BufferingStatus PlaylistManager::bufferize(Times deadline,
     {
         demux.times = getFirstTimes();
     }
-    vlc_mutex_unlock(&demux.lock);
 
     return i_return;
 }
@@ -411,6 +412,11 @@ bool PlaylistManager::updatePlaylist()
 
     updateControlsPosition();
     return true;
+}
+
+void PlaylistManager::preparsePlaylist()
+{
+
 }
 
 Times PlaylistManager::getTimes(bool b_first) const

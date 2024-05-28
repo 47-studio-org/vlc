@@ -79,7 +79,7 @@ static inline void SubpictureUpdaterSysRegionInit(substext_updater_region_t *p_u
     p_updtregion->inner_align = 0;
 }
 
-static inline substext_updater_region_t *SubpictureUpdaterSysRegionNew( )
+static inline substext_updater_region_t *SubpictureUpdaterSysRegionNew( void )
 {
     substext_updater_region_t *p_region = malloc(sizeof(*p_region));
     if(p_region)
@@ -299,7 +299,7 @@ static inline subpicture_t *decoder_NewSubpictureText(decoder_t *decoder)
         .p_sys       = sys,
     };
     SubpictureUpdaterSysRegionInit( &sys->region );
-    sys->margin_ratio = 0.04;
+    sys->margin_ratio = 0.04f;
     sys->p_default_style = text_style_Create( STYLE_NO_DEFAULTS );
     if(unlikely(!sys->p_default_style))
     {

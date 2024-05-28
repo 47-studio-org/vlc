@@ -17,6 +17,7 @@
  *****************************************************************************/
 import QtQuick 2.11
 import QtQuick.Controls 2.4
+import QtQuick.Templates 2.4 as T
 import QtQuick.Layouts 1.11
 import QtQml.Models 2.11
 
@@ -78,6 +79,11 @@ FocusScope {
     Component.onCompleted: {
         visibleChanged.connect(_handleFocus)
         activeFocusChanged.connect(_handleFocus)
+    }
+
+    readonly property ColorContext colorContext: ColorContext {
+        id: theme
+        colorSet: ColorContext.Window
     }
 
     RowLayout {
@@ -158,14 +164,12 @@ FocusScope {
                     // so it can be set here unlike leftItem and rightItem:
                     item.Navigation.parentItem = controlLayout
 
+                    if (item instanceof Control || item instanceof T.Control)
+                        item.activeFocusOnTab = true
+
                     // FIXME: Do we really need to enforce a defaultSize ?
                     if (item.size !== undefined)
                         item.size = Qt.binding(function() { return defaultSize; })
-
-                    // force colors:
-                    if (!!colors && !!item.colors) {
-                        item.colors = Qt.binding(function() { return colors; })
-                    }
 
                     item.width = Qt.binding(function() { return loader.width } )
 

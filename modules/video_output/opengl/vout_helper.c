@@ -95,6 +95,85 @@ ResizeFormatToGLMaxTexSize(video_format_t *fmt, unsigned int max_tex_size)
     }
 }
 
+static struct vlc_gl_filters *
+CreateFilters(vlc_gl_t *gl, const struct vlc_gl_api *api,
+              struct vlc_gl_interop *interop,
+              struct vlc_gl_renderer **out_renderer)
+{
+    struct vlc_gl_filters *filters = vlc_gl_filters_New(gl, api, interop);
+    if (!filters)
+    {
+        msg_Err(gl, "Could not create filters");
+        return NULL;
+    }
+
+    const opengl_vtable_t *vt = &api->vt;
+    const video_format_t *fmt_in = &interop->fmt_in;
+
+    int upscaler = var_InheritInteger(gl, "gl-upscaler");
+    int downscaler = var_InheritInteger(gl, "gl-downscaler");
+    int has_dovi = fmt_in->dovi.rpu_present && !fmt_in->dovi.el_present; /* can't handle EL yet */
+
+    if (upscaler || downscaler || has_dovi)
+    {
+        char upscaler_value[12];
+        char downscaler_value[12];
+
+        snprintf(upscaler_value, sizeof(upscaler_value), "%d", upscaler);
+        snprintf(downscaler_value, sizeof(downscaler_value), "%d", downscaler);
+        upscaler_value[sizeof(upscaler_value) - 1] = '\0';
+        downscaler_value[sizeof(downscaler_value) - 1] = '\0';
+
+        config_chain_t cfg = {
+            .psz_name = (char *) "upscaler",
+            .psz_value = upscaler_value,
+            .p_next = &(config_chain_t) {
+                .psz_name = (char *) "downscaler",
+                .psz_value = downscaler_value,
+            },
+        };
+
+        struct vlc_gl_filter *scale_filter =
+            vlc_gl_filters_Append(filters, "pl_scale", &cfg);
+        if (!scale_filter)
+        {
+            if (upscaler)
+                msg_Err(gl, "Could not apply upscaler filter, "
+                            "ignoring --gl-upscaler=%d", upscaler);
+            if (downscaler)
+                msg_Err(gl, "Could not apply downscaler filter, "
+                            "ignoring --gl-downscaler=%d", downscaler);
+        }
+    }
+
+    struct vlc_gl_filter *renderer_filter =
+        vlc_gl_filters_Append(filters, "renderer", NULL);
+    if (!renderer_filter)
+    {
+        msg_Warn(gl, "Could not create renderer for %4.4s",
+                 (const char *) &fmt_in->i_chroma);
+        goto error;
+    }
+    GL_ASSERT_NOERROR(vt);
+
+    int ret = vlc_gl_filters_InitFramebuffers(filters);
+    if (ret != VLC_SUCCESS)
+    {
+        msg_Err(gl, "Could not init filters framebuffers");
+        goto error;
+    }
+
+    /* The renderer is a special filter: we need its concrete instance to
+     * forward SetViewpoint() */
+    *out_renderer = renderer_filter->sys;
+
+    return filters;
+
+error:
+    vlc_gl_filters_Delete(filters);
+    return NULL;
+}
+
 vout_display_opengl_t *vout_display_opengl_New(video_format_t *fmt,
                                                const vlc_fourcc_t **subpicture_chromas,
                                                vlc_gl_t *gl,
@@ -141,69 +220,11 @@ vout_display_opengl_t *vout_display_opengl_New(video_format_t *fmt,
     }
     GL_ASSERT_NOERROR(vt);
 
-    vgl->filters = vlc_gl_filters_New(gl, api, vgl->interop);
+    vgl->filters = CreateFilters(gl, api, vgl->interop, &vgl->renderer);
     if (!vgl->filters)
     {
         msg_Err(gl, "Could not create filters");
         goto delete_interop;
-    }
-    GL_ASSERT_NOERROR(vt);
-
-    int upscaler = var_InheritInteger(gl, "gl-upscaler");
-    int downscaler = var_InheritInteger(gl, "gl-downscaler");
-
-    if (upscaler || downscaler)
-    {
-        char upscaler_value[12];
-        char downscaler_value[12];
-
-        snprintf(upscaler_value, sizeof(upscaler_value), "%d", upscaler);
-        snprintf(downscaler_value, sizeof(downscaler_value), "%d", downscaler);
-        upscaler_value[sizeof(upscaler_value) - 1] = '\0';
-        downscaler_value[sizeof(downscaler_value) - 1] = '\0';
-
-        config_chain_t cfg = {
-            .psz_name = (char *) "upscaler",
-            .psz_value = upscaler_value,
-            .p_next = &(config_chain_t) {
-                .psz_name = (char *) "downscaler",
-                .psz_value = downscaler_value,
-            },
-        };
-
-        struct vlc_gl_filter *scale_filter =
-            vlc_gl_filters_Append(vgl->filters, "pl_scale", &cfg);
-        if (!scale_filter)
-        {
-            if (upscaler)
-                msg_Err(gl, "Could not apply upscaler filter, "
-                            "ignoring --gl-upscaler=%d", upscaler);
-            if (downscaler)
-                msg_Err(gl, "Could not apply downscaler filter, "
-                            "ignoring --gl-downscaler=%d", downscaler);
-        }
-    }
-
-    /* The renderer is the only filter, for now */
-    struct vlc_gl_filter *renderer_filter =
-        vlc_gl_filters_Append(vgl->filters, "renderer", NULL);
-    if (!renderer_filter)
-    {
-        msg_Warn(gl, "Could not create renderer for %4.4s",
-                 (const char *) &fmt->i_chroma);
-        goto delete_filters;
-    }
-    GL_ASSERT_NOERROR(vt);
-
-    /* The renderer is a special filter: we need its concrete instance to
-     * forward SetViewpoint() */
-    vgl->renderer = renderer_filter->sys;
-
-    ret = vlc_gl_filters_InitFramebuffers(vgl->filters);
-    if (ret != VLC_SUCCESS)
-    {
-        msg_Err(gl, "Could not init filters framebuffers");
-        goto delete_filters;
     }
     GL_ASSERT_NOERROR(vt);
 
@@ -227,7 +248,7 @@ vout_display_opengl_t *vout_display_opengl_New(video_format_t *fmt,
 
     if (fmt->projection_mode != PROJECTION_MODE_RECTANGULAR
      && vout_display_opengl_SetViewpoint(vgl, viewpoint) != VLC_SUCCESS)
-        goto delete_sub_renderer;
+        msg_Err(gl, "Could not set viewpoint");
 
     /* Forward to the core the changes to the input format requested by the
      * interop */
@@ -252,6 +273,55 @@ free_vgl:
     free(vgl);
 
     return NULL;
+}
+
+int vout_display_opengl_UpdateFormat(vout_display_opengl_t *vgl,
+                                     const video_format_t *fmt,
+                                     vlc_video_context *vctx)
+{
+    /* If the format can't be changed, the state must remain valid to accept the
+     * initial format. */
+
+    vlc_gl_t *gl = vgl->gl;
+    const struct vlc_gl_api *api = &vgl->api;
+
+    assert(!fmt->p_palette);
+    video_format_t in_fmt = *fmt;
+
+    struct vlc_gl_interop *interop = vlc_gl_interop_New(gl, vctx, &in_fmt);
+    if (!interop)
+    {
+        msg_Err(gl, "Could not create interop");
+        return VLC_EGENERIC;
+    }
+
+    if (in_fmt.i_chroma != fmt->i_chroma)
+    {
+        msg_Warn(gl, "Could not update format, the interop changed the "
+                     "requested chroma from %4.4s to %4.4s\n",
+                     (char *) &fmt->i_chroma, (char *) &in_fmt.i_chroma);
+        vlc_gl_interop_Delete(interop);
+        return VLC_EGENERIC;
+    }
+
+    struct vlc_gl_renderer *renderer;
+    struct vlc_gl_filters *filters = CreateFilters(gl, api, interop, &renderer);
+    if (!filters)
+    {
+        vlc_gl_interop_Delete(interop);
+        return VLC_EGENERIC;
+    }
+
+    /* We created everything necessary, it worked, now the old ones could be
+     * replaced. */
+    vlc_gl_filters_Delete(vgl->filters);
+    vlc_gl_interop_Delete(vgl->interop);
+
+    vgl->interop = interop;
+    vgl->filters = filters;
+    vgl->renderer = renderer;
+
+    return VLC_SUCCESS;
 }
 
 void vout_display_opengl_Delete(vout_display_opengl_t *vgl)

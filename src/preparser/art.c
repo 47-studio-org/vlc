@@ -61,6 +61,9 @@ static char* ArtCacheGetDirPath( const char *psz_arturl, const char *psz_artist,
     char *psz_dir;
     char *psz_cachedir = config_GetUserDir(VLC_CACHE_DIR);
 
+    if (unlikely(psz_cachedir == NULL))
+        return NULL;
+
     if( !EMPTY_STR(psz_artist) && !EMPTY_STR(psz_album) )
     {
         char *psz_album_sanitized = strdup( psz_album );
@@ -185,7 +188,7 @@ int input_FindArtInCache( input_item_t *p_item )
         return VLC_EGENERIC;
 
     /* Check if file exists */
-    DIR *p_dir = vlc_opendir( psz_path );
+    vlc_DIR *p_dir = vlc_opendir( psz_path );
     if( !p_dir )
     {
         free( psz_path );
@@ -216,7 +219,7 @@ int input_FindArtInCache( input_item_t *p_item )
     }
 
     /* */
-    closedir( p_dir );
+    vlc_closedir( p_dir );
     free( psz_path );
     return b_found ? VLC_SUCCESS : VLC_EGENERIC;
 }
@@ -225,6 +228,8 @@ static char * GetDirByItemUIDs( char *psz_uid )
 {
     char *psz_cachedir = config_GetUserDir(VLC_CACHE_DIR);
     char *psz_dir;
+    if (unlikely(psz_cachedir == NULL))
+        return NULL;
     if( asprintf( &psz_dir, "%s" DIR_SEP
                   "by-iiuid" DIR_SEP
                   "%s",

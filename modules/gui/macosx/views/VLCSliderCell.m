@@ -22,6 +22,8 @@
 
 #import "VLCSliderCell.h"
 
+#import <CoreVideo/CoreVideo.h>
+
 #import "extensions/NSGradient+VLCAdditions.h"
 #import "extensions/NSColor+VLCAdditions.h"
 #import "main/CompatibilityFixes.h"
@@ -31,6 +33,8 @@
     double _lastTime;
     double _deltaToLastFrame;
     CVDisplayLinkRef _displayLink;
+
+    NSColor *_emptySliderBackgroundColor;
 }
 @end
 
@@ -50,74 +54,12 @@
 
 - (void)setSliderStyleLight
 {
-    // Color Declarations
-    _gradientColor = [NSColor colorWithCalibratedRed: 0.663 green: 0.663 blue: 0.663 alpha: 1];
-    _gradientColor2 = [NSColor colorWithCalibratedRed: 0.749 green: 0.749 blue: 0.753 alpha: 1];
-    _trackStrokeColor = [NSColor colorWithCalibratedRed: 0.619 green: 0.624 blue: 0.623 alpha: 1];
-    _filledTrackColor = [NSColor VLCSliderFillColor];
-    _knobFillColor = [NSColor colorWithCalibratedRed: 1 green: 1 blue: 1 alpha: 1];
-    _activeKnobFillColor = [NSColor colorWithCalibratedRed: 0.95 green: 0.95 blue: 0.95 alpha: 1];
-    _shadowColor = [NSColor colorWithCalibratedRed: 0.32 green: 0.32 blue: 0.32 alpha: 1];
-    _knobStrokeColor = [NSColor colorWithCalibratedRed: 0.592 green: 0.596 blue: 0.596 alpha: 1];
-
-    // Gradient Declarations
-    _trackGradient = [[NSGradient alloc] initWithColorsAndLocations:
-                      _gradientColor, 0.0,
-                      [_gradientColor blendedColorWithFraction:0.5 ofColor:_gradientColor2], 0.60,
-                      _gradientColor2, 1.0, nil];
-
-    // Shadow Declarations
-    _knobShadow = [[NSShadow alloc] init];
-    _knobShadow.shadowColor = _shadowColor;
-    _knobShadow.shadowOffset = NSMakeSize(0, 0);
-    _knobShadow.shadowBlurRadius = 2;
-
-    _highlightBackground = [NSColor colorWithCalibratedRed:0.20 green:0.55 blue:0.91 alpha:1.0];
-    NSColor *highlightAccent = [NSColor colorWithCalibratedRed:0.4588235294 green:0.7254901961 blue:0.9882352941 alpha:1.0];
-    _highlightGradient = [[NSGradient alloc] initWithColors:@[
-                                                              _highlightBackground,
-                                                              highlightAccent,
-                                                              _highlightBackground
-                                                              ]];
+    _emptySliderBackgroundColor = [NSColor VLCSliderLightBackgroundColor];
 }
 
 - (void)setSliderStyleDark
 {
-    // Color Declarations
-    if (@available(macOS 10.14, *)) {
-        _gradientColor2 = [NSColor colorWithCalibratedRed: 0.20 green: 0.20 blue: 0.20 alpha: 1];
-        _knobFillColor = [NSColor colorWithCalibratedRed: 0.81 green: 0.81 blue: 0.81 alpha: 1];
-        _activeKnobFillColor = [NSColor colorWithCalibratedRed: 0.76 green: 0.76 blue: 0.76 alpha: 1];
-    } else {
-        _gradientColor2 = [NSColor colorWithCalibratedRed: 0.24 green: 0.24 blue: 0.24 alpha: 1];
-        _knobFillColor = [NSColor colorWithCalibratedRed: 1 green: 1 blue: 1 alpha: 1];
-        _activeKnobFillColor = [NSColor colorWithCalibratedRed: 0.95 green: 0.95 blue: 0.95 alpha: 1];
-    }
-    _gradientColor = [NSColor colorWithCalibratedRed: 0.15 green: 0.15 blue: 0.15 alpha: 1];
-    _trackStrokeColor = [NSColor colorWithCalibratedRed: 0.23 green: 0.23 blue: 0.23 alpha: 1];
-    _filledTrackColor = [NSColor VLCSliderFillColor];
-    _shadowColor = [NSColor colorWithCalibratedRed: 0.32 green: 0.32 blue: 0.32 alpha: 1];
-    _knobStrokeColor = [NSColor colorWithCalibratedRed: 0.592 green: 0.596 blue: 0.596 alpha: 1];
-
-    // Gradient Declarations
-    _trackGradient = [[NSGradient alloc] initWithColorsAndLocations:
-                      _gradientColor, 0.0,
-                      [_gradientColor blendedColorWithFraction:0.5 ofColor:_gradientColor2], 0.60,
-                      _gradientColor2, 1.0, nil];
-
-    // Shadow Declarations
-    _knobShadow = [[NSShadow alloc] init];
-    _knobShadow.shadowColor = _shadowColor;
-    _knobShadow.shadowOffset = NSMakeSize(0, 0);
-    _knobShadow.shadowBlurRadius = 2;
-
-    _highlightBackground = [NSColor colorWithCalibratedRed:0.20 green:0.55 blue:0.91 alpha:1.0];
-    NSColor *highlightAccent = [NSColor colorWithCalibratedRed:0.4588235294 green:0.7254901961 blue:0.9882352941 alpha:1.0];
-    _highlightGradient = [[NSGradient alloc] initWithColors:@[
-                                                              _highlightBackground,
-                                                              highlightAccent,
-                                                              _highlightBackground
-                                                              ]];
+    _emptySliderBackgroundColor = [NSColor VLCSliderDarkBackgroundColor];
 }
 
 - (void)dealloc
@@ -157,81 +99,30 @@ static CVReturn DisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     CVDisplayLinkSetOutputCallback(_displayLink, DisplayLinkCallback, (__bridge void*) self);
 }
 
-- (double)myNormalizedDouble
-{
-    double min;
-    double max;
-    double current;
-
-    min = [self minValue];
-    max = [self maxValue];
-    current = [self doubleValue];
-
-    max -= min;
-    current -= min;
-
-    return current / max;
-}
-
-- (NSRect)knobRectFlipped:(BOOL)flipped
-{
-    NSRect barRect = [self barRectFlipped:NO];
-    CGFloat knobThickness = barRect.size.height;
-    double val = [self myNormalizedDouble];
-
-    NSRect rect = NSMakeRect((NSWidth(barRect) - knobThickness) * val, 0, knobThickness, knobThickness);
-    return [[self controlView] backingAlignedRect:rect options:NSAlignAllEdgesNearest];
-}
-
 #pragma mark -
 #pragma mark Normal slider drawing
 
 - (void)drawKnob:(NSRect)knobRect
 {
-    if (_isKnobHidden)
+    if (_isKnobHidden) {
         return;
-
-    // Draw knob
-    NSBezierPath* knobPath = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(knobRect, 1.0, 1.0)];
-    if (self.isHighlighted) {
-        [_activeKnobFillColor setFill];
-    } else {
-        [_knobFillColor setFill];
     }
 
-    [knobPath fill];
-
-    [_knobStrokeColor setStroke];
-    knobPath.lineWidth = 0.5;
-
-    [NSGraphicsContext saveGraphicsState];
-    if (self.isHighlighted)
-        [_knobShadow set];
-    [knobPath stroke];
-    [NSGraphicsContext restoreGraphicsState];
-}
-
-- (NSRect)barRectFlipped:(BOOL)flipped
-{
-    return [[self controlView] bounds];
+    [super drawKnob:knobRect];
 }
 
 - (void)drawBarInside:(NSRect)rect flipped:(BOOL)flipped
 {
-    // Inset rect
-    rect = NSInsetRect(rect, 1.0, 1.0);
-
-    rect = [[self controlView] backingAlignedRect:rect options:NSAlignAllEdgesNearest];
+    const CGFloat trackBorderRadius = 1;
 
     // Empty Track Drawing
-    NSBezierPath* emptyTrackPath = [NSBezierPath bezierPathWithRoundedRect:rect xRadius:3 yRadius:3];
-
-    [_trackGradient vlc_safeDrawInBezierPath:emptyTrackPath angle:-90];
+    NSBezierPath* emptyTrackPath = [NSBezierPath bezierPathWithRoundedRect:rect
+                                                                   xRadius:trackBorderRadius
+                                                                   yRadius:trackBorderRadius];
+    [_emptySliderBackgroundColor setFill];
+    [emptyTrackPath fill];
 
     if (_isKnobHidden) {
-        [_trackStrokeColor setStroke];
-        emptyTrackPath.lineWidth = 1;
-        [emptyTrackPath stroke];
         return;
     }
 
@@ -241,17 +132,12 @@ static CVReturn DisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     filledTrackRect.size.width = knobRect.origin.x + (knobRect.size.width / 2);
 
     // Filled Track Drawing
-    CGFloat filledTrackCornerRadius = 2;
     NSBezierPath* filledTrackPath = [NSBezierPath bezierPathWithRoundedRect:filledTrackRect
-                                                                    xRadius:filledTrackCornerRadius
-                                                                    yRadius:filledTrackCornerRadius];
+                                                                    xRadius:trackBorderRadius
+                                                                    yRadius:trackBorderRadius];
 
-    [_filledTrackColor setFill];
+    [[NSColor VLCAccentColor] setFill];
     [filledTrackPath fill];
-
-    [_trackStrokeColor setStroke];
-    emptyTrackPath.lineWidth = 1;
-    [emptyTrackPath stroke];
 }
 
 #pragma mark -

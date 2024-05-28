@@ -45,7 +45,7 @@ typedef struct
 {
     char *base_uri;
     bool need_separator;
-    DIR *dir;
+    vlc_DIR *dir;
 } access_sys_t;
 
 static int DirRead (stream_t *access, input_item_node_t *node);
@@ -67,7 +67,7 @@ static int DirControl( stream_t *p_access, int i_query, va_list args )
 /*****************************************************************************
  * DirInit: Init the directory access with a directory stream
  *****************************************************************************/
-int DirInit (stream_t *access, DIR *dir)
+int DirInit (stream_t *access, vlc_DIR *dir)
 {
     access_sys_t *sys = vlc_obj_malloc(VLC_OBJECT(access), sizeof (*sys));
     if (unlikely(sys == NULL))
@@ -98,7 +98,7 @@ int DirInit (stream_t *access, DIR *dir)
     return VLC_SUCCESS;
 
 error:
-    closedir(dir);
+    vlc_closedir(dir);
     return VLC_ENOMEM;
 }
 
@@ -112,7 +112,7 @@ int DirOpen (vlc_object_t *obj)
     if (access->psz_filepath == NULL)
         return VLC_EGENERIC;
 
-    DIR *dir = vlc_opendir(access->psz_filepath);
+    vlc_DIR *dir = vlc_opendir(access->psz_filepath);
     if (dir == NULL)
         return VLC_EGENERIC;
 
@@ -128,7 +128,7 @@ void DirClose(vlc_object_t *obj)
     access_sys_t *sys = access->p_sys;
 
     free(sys->base_uri);
-    closedir(sys->dir);
+    vlc_closedir(sys->dir);
 }
 
 static int DirRead (stream_t *access, input_item_node_t *node)

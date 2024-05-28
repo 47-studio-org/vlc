@@ -1315,9 +1315,9 @@ static void
 vlc_player_ChangeRateOffset(vlc_player_t *player, bool increment)
 {
     static const float rates[] = {
-        1.0/64, 1.0/32, 1.0/16, 1.0/8, 1.0/4, 1.0/3, 1.0/2, 2.0/3,
-        1.0/1,
-        3.0/2, 2.0/1, 3.0/1, 4.0/1, 8.0/1, 16.0/1, 32.0/1, 64.0/1,
+        1.0f/64, 1.0f/32, 1.0f/16, 1.0f/8, 1.0f/4, 1.0f/3, 1.0f/2, 2.0f/3,
+        1.0f/1,
+        3.0f/2, 2.0f/1, 3.0f/1, 4.0f/1, 8.0f/1, 16.0f/1, 32.0f/1, 64.0f/1,
     };
     float rate = vlc_player_GetRate(player) * (increment ? 1.1f : 0.9f);
 
@@ -1365,7 +1365,7 @@ vlc_player_GetTime(vlc_player_t *player)
     return vlc_player_input_GetTime(input);
 }
 
-float
+double
 vlc_player_GetPosition(vlc_player_t *player)
 {
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
@@ -1391,13 +1391,13 @@ vlc_player_DisplayPosition(vlc_player_t *player)
     if (!input)
         return;
     vlc_player_osd_Position(player, input,
-                                vlc_player_input_GetTime(input),
-                                vlc_player_input_GetPos(input),
-                                VLC_PLAYER_WHENCE_ABSOLUTE);
+                            vlc_player_input_GetTime(input),
+                            vlc_player_input_GetPos(input),
+                            VLC_PLAYER_WHENCE_ABSOLUTE);
 }
 
 void
-vlc_player_SeekByPos(vlc_player_t *player, float position,
+vlc_player_SeekByPos(vlc_player_t *player, double position,
                      enum vlc_player_seek_speed speed,
                      enum vlc_player_whence whence)
 {
@@ -1617,14 +1617,25 @@ vlc_player_IsRecording(vlc_player_t *player)
 }
 
 void
-vlc_player_SetRecordingEnabled(vlc_player_t *player, bool enable)
+vlc_player_SetRecordingEnabled(vlc_player_t *player, bool enable,
+                               const char *dir_path_)
 {
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
     if (!input)
         return;
-    int ret = input_ControlPushHelper(input->thread,
-                                      INPUT_CONTROL_SET_RECORD_STATE,
-                                      &(vlc_value_t) { .b_bool = enable });
+    char *dir_path;
+    if (dir_path_ != NULL)
+    {
+        dir_path = strdup(dir_path_);
+        if (dir_path == NULL)
+            return;
+    }
+    else
+        dir_path = NULL;
+
+    const input_control_param_t param = { .record_state = { enable, dir_path } };
+    int ret = input_ControlPush(input->thread,
+                                INPUT_CONTROL_SET_RECORD_STATE, &param);
 
     if (ret == VLC_SUCCESS)
         vlc_player_osd_Message(player, enable ?
@@ -1853,7 +1864,7 @@ vlc_player_GetV4l2Object(vlc_player_t *player)
 {
     struct vlc_player_input *input = vlc_player_get_input_locked(player);
     return input && var_Type(input->thread, "controls") != 0 ?
-           (vlc_object_t*) input->thread : NULL;
+           VLC_OBJECT(input->thread) : NULL;
 }
 
 static void

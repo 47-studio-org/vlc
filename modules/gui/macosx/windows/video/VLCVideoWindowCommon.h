@@ -30,8 +30,8 @@ extern NSString *VLCVideoWindowDidEnterFullscreen;
 extern NSString *VLCWindowShouldShowController;
 extern const CGFloat VLCVideoWindowCommonMinimalHeight;
 
-@class VLCVoutView;
-@class VLCControlsBarCommon;
+@class VLCMainVideoViewController;
+@class VLCPlayerController;
 
 /*****************************************************************************
  * VLCVideoWindowCommon
@@ -41,27 +41,19 @@ extern const CGFloat VLCVideoWindowCommonMinimalHeight;
 
 @interface VLCVideoWindowCommon : VLCWindow <NSWindowDelegate, NSAnimationDelegate>
 
-@property (weak) IBOutlet NSLayoutConstraint *videoViewBottomConstraint;
-
-@property (nonatomic, strong) IBOutlet VLCVoutView* videoView;
-@property (nonatomic, weak) IBOutlet VLCControlsBarCommon* controlsBar;
+@property (nonatomic, strong) IBOutlet VLCMainVideoViewController* videoViewController;
 @property (readonly) BOOL inFullscreenTransition;
 @property (readonly) BOOL windowShouldExitFullscreenWhenFinished;
 @property (readwrite, assign) NSRect previousSavedFrame;
-@property (nonatomic, readwrite, assign) NSSize nativeVideoSize;
+@property (readonly) VLCPlayerController *playerController;
+
+- (void)setup;
 
 - (void)setWindowLevel:(NSInteger)i_state;
-- (void)resizeWindow;
-
-- (NSRect)getWindowRectForProposedVideoViewSize:(NSSize)size;
 
 /* fullscreen handling */
 - (void)enterFullscreenWithAnimation:(BOOL)b_animation;
 - (void)leaveFullscreenWithAnimation:(BOOL)b_animation;
-
-/* lion fullscreen handling */
-- (void)hideControlsBar;
-- (void)showControlsBar;
 
 - (void)windowWillEnterFullScreen:(NSNotification *)notification;
 - (void)windowDidEnterFullScreen:(NSNotification *)notification;

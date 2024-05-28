@@ -24,11 +24,16 @@ iconv: libiconv-$(LIBICONV_VERSION).tar.gz .sum-iconv
 	$(UNPACK)
 	$(APPLY) $(SRC)/iconv/win32.patch
 	$(APPLY) $(SRC)/iconv/bins.patch
-	$(UPDATE_AUTOCONFIG) && cd $(UNPACK_DIR) && mv config.guess config.sub build-aux
-	$(UPDATE_AUTOCONFIG) && cd $(UNPACK_DIR) && mv config.guess config.sub libcharset/build-aux
+	$(UPDATE_AUTOCONFIG)
+	cd $(UNPACK_DIR) && cp config.guess config.sub build-aux \
+	                 && mv config.guess config.sub libcharset/build-aux
 	$(MOVE)
 
+ICONV_CONF := --disable-nls
+
 .iconv: iconv
-	cd $< && $(HOSTVARS) ./configure CFLAGS="$(CFLAGS) -fgnu89-inline" $(HOSTCONF) --disable-nls
-	cd $< && $(MAKE) install
+	$(MAKEBUILDDIR)
+	$(MAKECONFIGURE) $(ICONV_CONF)
+	+$(MAKEBUILD)
+	+$(MAKEBUILD) install
 	touch $@

@@ -21,6 +21,9 @@
  *****************************************************************************/
 
 #import "VLCImageView.h"
+
+#import <QuartzCore/QuartzCore.h>
+
 #import "extensions/NSColor+VLCAdditions.h"
 #import "extensions/NSView+VLCAdditions.h"
 
@@ -81,10 +84,8 @@
 {
     if (self.shouldShowDarkAppearance) {
         self.layer.borderColor = [NSColor VLClibraryItemBorderDarkColor].CGColor;
-        self.layer.backgroundColor = [NSColor VLClibraryCollectionViewItemBackgroundDarkColor].CGColor;
     } else {
         self.layer.borderColor = [NSColor VLClibraryItemBorderLightColor].CGColor;
-        self.layer.backgroundColor = [NSColor VLClibraryCollectionViewItemBackgroundLightColor].CGColor ;
     }
 }
 
